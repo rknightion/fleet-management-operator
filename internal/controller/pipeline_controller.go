@@ -82,6 +82,20 @@ type PipelineReconciler struct {
 // Ensure PipelineReconciler implements reconcile.Reconciler at compile time
 var _ reconcile.Reconciler = &PipelineReconciler{}
 
+// emitEvent safely emits an event, checking if Recorder is not nil
+func (r *PipelineReconciler) emitEvent(object runtime.Object, eventtype, reason, message string) {
+	if r.Recorder != nil {
+		r.Recorder.Event(object, eventtype, reason, message)
+	}
+}
+
+// emitEventf safely emits an event with formatting, checking if Recorder is not nil
+func (r *PipelineReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+	if r.Recorder != nil {
+		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+	}
+}
+
 // +kubebuilder:rbac:groups=fleetmanagement.grafana.com,resources=pipelines,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=fleetmanagement.grafana.com,resources=pipelines/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=fleetmanagement.grafana.com,resources=pipelines/finalizers,verbs=update
@@ -166,17 +180,17 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 			// Check if it's a 404 (already deleted)
 			if apiErr, ok := err.(*fleetclient.FleetAPIError); ok && apiErr.StatusCode == http.StatusNotFound {
 				log.Info("pipeline already deleted from Fleet Management")
-				r.Recorder.Event(pipeline, corev1.EventTypeNormal, eventReasonDeleted,
+				r.emitEvent(pipeline, corev1.EventTypeNormal, eventReasonDeleted,
 					"Pipeline already deleted from Fleet Management")
 			} else {
 				log.Error(err, "failed to delete pipeline from Fleet Management")
-				r.Recorder.Eventf(pipeline, corev1.EventTypeWarning, eventReasonDeleteFailed,
+				r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonDeleteFailed,
 					"Failed to delete pipeline from Fleet Management: %v", err)
 				return r.updateStatusError(ctx, pipeline, reasonDeleteFailed, err)
 			}
 		} else {
 			log.Info("successfully deleted pipeline from Fleet Management")
-			r.Recorder.Eventf(pipeline, corev1.EventTypeNormal, eventReasonDeleted,
+			r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonDeleted,
 				"Successfully deleted pipeline from Fleet Management (ID: %s)", pipeline.Status.ID)
 		}
 	}
@@ -242,14 +256,14 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 		case http.StatusBadRequest:
 			// Validation error - update status and don't retry immediately
 			log.Info("validation error from Fleet Management API", "message", apiErr.Message)
-			r.Recorder.Eventf(pipeline, corev1.EventTypeWarning, eventReasonValidationFail,
+			r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonValidationFail,
 				"Fleet Management API validation failed: %s", apiErr.Message)
 			return r.updateStatusError(ctx, pipeline, reasonValidationError, err)
 
 		case http.StatusNotFound:
 			// Pipeline was deleted externally, recreate it
 			log.Info("pipeline not found in Fleet Management, will recreate")
-			r.Recorder.Event(pipeline, corev1.EventTypeWarning, eventReasonRecreated,
+			r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonRecreated,
 				"Pipeline was deleted externally, recreating in Fleet Management")
 			pipeline.Status.ID = "" // Clear the ID so it's created fresh
 			return r.reconcileNormal(ctx, pipeline)
@@ -257,7 +271,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 		case http.StatusTooManyRequests:
 			// Rate limit - requeue with delay
 			log.Info("rate limited by Fleet Management API, requeueing")
-			r.Recorder.Event(pipeline, corev1.EventTypeWarning, eventReasonRateLimited,
+			r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonRateLimited,
 				"Rate limited by Fleet Management API, will retry in 10 seconds")
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 
@@ -268,7 +282,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 				"operation", apiErr.Operation,
 				"pipelineID", pipeline.Status.ID,
 				"message", apiErr.Message)
-			r.Recorder.Eventf(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
+			r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
 				"Fleet Management API error (HTTP %d): %s", apiErr.StatusCode, apiErr.Message)
 			return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err)
 		}
@@ -276,7 +290,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 
 	// Network or other errors - return for exponential backoff
 	log.Error(err, "failed to sync with Fleet Management")
-	r.Recorder.Eventf(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
+	r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
 		"Failed to sync with Fleet Management: %v", err)
 	return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err)
 }
@@ -331,14 +345,14 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 
 	// Emit appropriate event
 	if wasCreated {
-		r.Recorder.Eventf(pipeline, corev1.EventTypeNormal, eventReasonCreated,
+		r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonCreated,
 			"Pipeline created in Fleet Management (ID: %s)", apiPipeline.ID)
 	} else if isUpdate {
-		r.Recorder.Eventf(pipeline, corev1.EventTypeNormal, eventReasonUpdated,
+		r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonUpdated,
 			"Pipeline updated in Fleet Management (ID: %s)", apiPipeline.ID)
 	}
 
-	r.Recorder.Eventf(pipeline, corev1.EventTypeNormal, eventReasonSynced,
+	r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonSynced,
 		"Pipeline successfully synced to Fleet Management")
 
 	log.Info("successfully synced pipeline", "id", apiPipeline.ID, "generation", pipeline.Generation)
