@@ -205,8 +205,15 @@ func main() {
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
 		FleetClient: fleetClient,
+		Recorder:    mgr.GetEventRecorderFor("pipeline-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pipeline")
+		os.Exit(1)
+	}
+
+	// Setup webhooks
+	if err := fleetmanagementv1alpha1.SetupPipelineWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "Pipeline")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
