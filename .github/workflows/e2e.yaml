@@ -1,0 +1,64 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: fm-crd-e2e
+          wait: 5m
+
+      - name: Verify cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E tests
+        run: make test-e2e
+        env:
+          KIND_CLUSTER: fm-crd-e2e
+        timeout-minutes: 15
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          mkdir -p logs
+          kubectl logs -n fm-crd-system -l control-plane=controller-manager --tail=-1 > logs/controller.log 2>&1 || true
+          kubectl logs -n fm-crd-system -l app=mock-fleet-api --tail=-1 > logs/mock-api.log 2>&1 || true
+          kubectl describe pods -n fm-crd-system > logs/pods.txt 2>&1 || true
+          kubectl get events -n fm-crd-system --sort-by=.lastTimestamp > logs/events.txt 2>&1 || true
+          kubectl get pipelines -n fm-crd-system -o yaml > logs/pipelines.yaml 2>&1 || true
+
+      - name: Export Kind logs on failure
+        if: failure()
+        run: |
+          kind export logs logs/kind-export --name fm-crd-e2e || true
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-logs
+          path: logs/
+          retention-days: 7
