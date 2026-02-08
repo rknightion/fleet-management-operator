@@ -18,15 +18,20 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 	"github.com/grafana/fleet-management-operator/pkg/fleetclient"
@@ -34,14 +39,15 @@ import (
 
 // Mock Fleet Management API client
 type mockFleetClient struct {
-	pipelines         map[string]*fleetclient.Pipeline
-	upsertError       error
-	deleteError       error
-	callCount         int
-	lastUpsertRequest *fleetclient.UpsertPipelineRequest
-	shouldReturn404   bool
-	shouldReturn400   bool
-	shouldReturn429   bool
+	pipelines              map[string]*fleetclient.Pipeline
+	upsertError            error
+	deleteError            error
+	callCount              int
+	lastUpsertRequest      *fleetclient.UpsertPipelineRequest
+	shouldReturn404        bool
+	shouldReturn400        bool
+	shouldReturn429        bool
+	shouldReturn404OnFirst bool // Return 404 on first call, then succeed
 }
 
 func newMockFleetClient() *mockFleetClient {
@@ -53,6 +59,14 @@ func newMockFleetClient() *mockFleetClient {
 func (m *mockFleetClient) UpsertPipeline(ctx context.Context, req *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error) {
 	m.callCount++
 	m.lastUpsertRequest = req
+
+	if m.shouldReturn404OnFirst && m.callCount == 1 {
+		return nil, &fleetclient.FleetAPIError{
+			StatusCode: http.StatusNotFound,
+			Operation:  "UpsertPipeline",
+			Message:    "pipeline not found",
+		}
+	}
 
 	if m.shouldReturn400 {
 		return nil, &fleetclient.FleetAPIError{
@@ -113,6 +127,28 @@ func (m *mockFleetClient) DeletePipeline(ctx context.Context, id string) error {
 	return nil
 }
 
+// statusErrorClient wraps a fake client to inject status update errors
+type statusErrorClient struct {
+	client.Client
+	statusUpdateErr error
+}
+
+type statusErrorWriter struct {
+	client.StatusWriter
+	err error
+}
+
+func (c *statusErrorClient) Status() client.StatusWriter {
+	if c.statusUpdateErr != nil {
+		return &statusErrorWriter{StatusWriter: c.Client.Status(), err: c.statusUpdateErr}
+	}
+	return c.Client.Status()
+}
+
+func (w *statusErrorWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	return w.err
+}
+
 var _ = Describe("Pipeline Controller", func() {
 	Context("When reconciling a Pipeline", func() {
 		const (
@@ -139,7 +175,7 @@ var _ = Describe("Pipeline Controller", func() {
 				// Wait for pipeline to be fully deleted
 				Eventually(func() bool {
 					err := k8sClient.Get(ctx, typeNamespacedName, pipeline)
-					return err != nil && errors.IsNotFound(err)
+					return err != nil && apierrors.IsNotFound(err)
 				}, timeout, interval).Should(BeTrue())
 			}
 		})
@@ -394,6 +430,253 @@ var _ = Describe("Pipeline Controller", func() {
 			// Verify pipeline was removed from mock's internal storage
 			_, exists := mock.pipelines[result.ID]
 			Expect(exists).To(BeFalse())
+		})
+	})
+
+	Context("Controller Error Handling", func() {
+		ctx := context.Background()
+
+		It("should preserve original error when status update fails", func() {
+			By("Setting up fake client with status update error")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "test",
+				},
+			}
+
+			// Create fake client with status subresource support
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			// Wrap with status error injector
+			statusErrClient := &statusErrorClient{
+				Client:          fakeClient,
+				statusUpdateErr: errors.New("status update failed"),
+			}
+
+			reconciler := &PipelineReconciler{
+				Client:      statusErrClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: newMockFleetClient(),
+			}
+
+			By("Calling updateStatusError with original error")
+			originalErr := errors.New("API connection failed")
+			result, err := reconciler.updateStatusError(ctx, pipeline, reasonSyncFailed, originalErr)
+
+			By("Verifying original error is returned")
+			Expect(err).To(Equal(originalErr))
+			Expect(result).To(Equal(ctrl.Result{}))
+
+			By("Verifying status fields were updated in-memory")
+			Expect(pipeline.Status.ObservedGeneration).To(Equal(pipeline.Generation))
+			Expect(len(pipeline.Status.Conditions)).To(BeNumerically(">", 0))
+
+			// Find Ready condition
+			var readyCondition *metav1.Condition
+			for i := range pipeline.Status.Conditions {
+				if pipeline.Status.Conditions[i].Type == conditionTypeReady {
+					readyCondition = &pipeline.Status.Conditions[i]
+					break
+				}
+			}
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal(reasonSyncFailed))
+		})
+
+		It("should trigger requeue on status conflict", func() {
+			By("Setting up fake client with conflict error")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "test",
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			// Create conflict error using k8s apierrors
+			conflictErr := apierrors.NewConflict(
+				fleetmanagementv1alpha1.GroupVersion.WithResource("pipelines").GroupResource(),
+				"test-pipeline",
+				errors.New("resource version conflict"),
+			)
+
+			statusErrClient := &statusErrorClient{
+				Client:          fakeClient,
+				statusUpdateErr: conflictErr,
+			}
+
+			reconciler := &PipelineReconciler{
+				Client:      statusErrClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: newMockFleetClient(),
+			}
+
+			By("Calling updateStatusError with status conflict")
+			originalErr := errors.New("API error")
+			result, err := reconciler.updateStatusError(ctx, pipeline, reasonSyncFailed, originalErr)
+
+			By("Verifying requeue is triggered and error is nil")
+			Expect(err).To(BeNil())
+			Expect(result.Requeue).To(BeTrue())
+		})
+
+		It("should not retry validation errors", func() {
+			By("Setting up fake client with working status update")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "invalid config",
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: newMockFleetClient(),
+			}
+
+			By("Calling updateStatusError with validation error")
+			validationErr := &fleetclient.FleetAPIError{
+				StatusCode: http.StatusBadRequest,
+				Operation:  "UpsertPipeline",
+				Message:    "validation failed",
+			}
+			result, err := reconciler.updateStatusError(ctx, pipeline, reasonValidationError, validationErr)
+
+			By("Verifying no retry is triggered")
+			Expect(err).To(BeNil())
+			Expect(result).To(Equal(ctrl.Result{}))
+		})
+
+		It("should recreate pipeline inline when 404 with existing ID", func() {
+			By("Setting up mock client with 404 on first call, success on second")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "test content",
+				},
+				Status: fleetmanagementv1alpha1.PipelineStatus{
+					ID: "old-id-123", // Existing ID indicates external deletion
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			// Create mock that returns 404 first, then succeeds
+			mock := newMockFleetClient()
+			mock.shouldReturn404OnFirst = true
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: mock,
+			}
+
+			By("Calling reconcileNormal which will trigger 404 handling")
+			result, err := reconciler.reconcileNormal(ctx, pipeline)
+
+			By("Verifying recreation was attempted")
+			Expect(mock.callCount).To(Equal(2), "UpsertPipeline should be called twice (initial 404 then recreation)")
+
+			By("Verifying success after recreation")
+			// After successful recreation, should return success result
+			Expect(err).To(BeNil())
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(pipeline.Status.ID).To(Equal("mock-id-123"))
+		})
+
+		It("should fail immediately when 404 with empty ID", func() {
+			By("Setting up pipeline with empty ID (already tried recreation)")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "test content",
+				},
+				Status: fleetmanagementv1alpha1.PipelineStatus{
+					ID: "", // Empty ID means we already tried recreation
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: newMockFleetClient(),
+			}
+
+			By("Calling handleAPIError with 404 and empty ID")
+			notFoundErr := &fleetclient.FleetAPIError{
+				StatusCode: http.StatusNotFound,
+				Operation:  "UpsertPipeline",
+				Message:    "pipeline not found",
+			}
+			result, err := reconciler.handleAPIError(ctx, pipeline, notFoundErr)
+
+			By("Verifying recreation attempt is not made and status is updated")
+			// When ID is empty, handleAPIError recognizes recreation already failed
+			// and returns error via updateStatusError. Since 404 is permanent,
+			// shouldRetry returns false, so updateStatusError returns nil (no exponential backoff)
+			Expect(err).To(BeNil())
+			Expect(result).To(Equal(ctrl.Result{}))
+
+			By("Verifying Ready condition reflects the failure")
+			var readyCondition *metav1.Condition
+			for i := range pipeline.Status.Conditions {
+				if pipeline.Status.Conditions[i].Type == conditionTypeReady {
+					readyCondition = &pipeline.Status.Conditions[i]
+					break
+				}
+			}
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal(reasonSyncFailed))
+			Expect(readyCondition.Message).To(ContainSubstring("recreation failed"))
 		})
 	})
 })
