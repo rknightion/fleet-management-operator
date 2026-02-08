@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 ## Current Position
 
 Phase: 4 of 4 (E2E Testing for GitHub Actions)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In progress
-Last activity: 2026-02-08 — Completed 04-01-PLAN.md (Mock Fleet Management API and E2E Test Fixtures)
+Last activity: 2026-02-08 — Completed 04-02-PLAN.md (Pipeline Lifecycle E2E Tests)
 
-Progress: [███████████████░░░░░] 78% (7 of 9 plans complete)
+Progress: [████████████████░░░░] 89% (8 of 9 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
+- Total plans completed: 8
 - Average duration: 3m
-- Total execution time: 0.29 hours
+- Total execution time: 0.33 hours
 
 **By Phase:**
 
@@ -30,14 +30,15 @@ Progress: [███████████████░░░░░] 78% (7 
 | 1 - Client Layer Error Foundation | 2 | 4m | 2m |
 | 2 - Controller Error Handling | 2 | 6m | 3m |
 | 3 - Logging Quality | 2 | 6m | 3m |
-| 4 - E2E Testing for GitHub Actions | 1 | 2m | 2m |
+| 4 - E2E Testing for GitHub Actions | 2 | 4m | 2m |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (4m), 03-01 (4m), 03-02 (2m), 04-01 (2m)
+- Last 5 plans: 03-01 (4m), 03-02 (2m), 04-01 (2m), 04-02 (2m)
 - Trend: Consistent velocity (2-4m per plan)
 
 *Updated after each plan completion*
 | Phase 04 P01 | 2 | 2 tasks | 10 files |
+| Phase 04 P02 | 2 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -64,9 +65,11 @@ Recent decisions affecting current work:
 - [Phase 04]: Use in-memory sync.Map for mock API pipeline storage (simple, sufficient for testing)
 - [Phase 04]: Start mock API IDs at 1000 (distinguishes from real API IDs)
 - [Phase 04]: Use standalone go.mod for mockapi (independent binary, not part of main project)
-- [Phase 04]: Use in-memory sync.Map for mock API pipeline storage (simple, sufficient for testing)
-- [Phase 04]: Start mock API IDs at 1000 (distinguishes from real API IDs)
-- [Phase 04]: Use standalone go.mod for mockapi (independent binary, not part of main project)
+- [Phase 04 P02]: Deploy mock API before controller in BeforeSuite (controller reads FLEET_MANAGEMENT_BASE_URL from secret at startup)
+- [Phase 04 P02]: Move all infrastructure setup to e2e_suite_test.go (suite-level is right place for shared infrastructure)
+- [Phase 04 P02]: Use docker-build-load instead of docker-build (E2E tests need --load to load into local Docker for Kind)
+- [Phase 04 P02]: Skip webhook test if CertManager disabled (webhook validation requires CertManager)
+- [Phase 04 P02]: Use Ordered context for Pipeline lifecycle tests (tests must run sequentially: create before update before delete)
 
 ### Pending Todos
 
@@ -83,8 +86,8 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-08 (plan execution)
-Stopped at: Completed 04-01-PLAN.md (Mock Fleet Management API and E2E Test Fixtures)
-Resume file: .planning/phases/04-e2e-for-github-actions/04-01-SUMMARY.md
+Stopped at: Completed 04-02-PLAN.md (Pipeline Lifecycle E2E Tests)
+Resume file: .planning/phases/04-e2e-for-github-actions/04-02-SUMMARY.md
 
 ---
-*Phase 4 (E2E Testing for GitHub Actions) in progress. 1 of 3 plans complete.*
+*Phase 4 (E2E Testing for GitHub Actions) in progress. 2 of 3 plans complete.*
