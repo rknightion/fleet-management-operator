@@ -1,0 +1,84 @@
+# Roadmap: Fleet Management Operator - Tech Debt Cleanup
+
+## Overview
+
+This roadmap addresses critical technical debt in the fleet-management-operator through a focused, three-phase approach. Starting with client layer error foundations, progressing through controller error handling fixes, and completing with logging and quality improvements, each phase delivers testable, production-ready reliability enhancements without changing external APIs.
+
+## Phases
+
+**Phase Numbering:**
+- Integer phases (1, 2, 3): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+
+Decimal phases appear between their surrounding integers in numeric order.
+
+- [ ] **Phase 1: Client Layer Error Foundation** - Enhance FleetAPIError and fix HTTP response handling
+- [ ] **Phase 2: Controller Error Handling** - Fix critical bugs in status updates and reconciliation
+- [ ] **Phase 3: Logging & Quality** - Standardize observability and finalize quality checks
+
+## Phase Details
+
+### Phase 1: Client Layer Error Foundation
+**Goal**: HTTP client reliably captures and reports all error conditions with structured error types
+**Depends on**: Nothing (first phase)
+**Requirements**: ERR-01, ERR-03, ERR-05, TEST-01, TEST-03
+**Success Criteria** (what must be TRUE):
+  1. HTTP response body read failures are caught and logged with full context
+  2. FleetAPIError instances indicate whether errors are transient (retriable) or permanent
+  3. FleetAPIError instances include PipelineID for distributed tracing
+  4. Error type assertions work correctly with wrapped errors (errors.As compatibility)
+  5. Unit tests verify all error handling paths in HTTP client
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (will be created during phase planning)
+
+### Phase 2: Controller Error Handling
+**Goal**: Controller reconciliation correctly handles all error types with proper retry semantics
+**Depends on**: Phase 1
+**Requirements**: ERR-02, ERR-04, STAT-01, STAT-02, STAT-03, REC-01, REC-02, REC-03, TEST-02, TEST-04
+**Success Criteria** (what must be TRUE):
+  1. Status update failures preserve original reconciliation error for exponential backoff
+  2. External deletion detection has recursion limit preventing infinite loops
+  3. Transient errors (network, 5xx) trigger requeue while permanent errors (validation) do not
+  4. Status update conflicts use proper requeue pattern without immediate retry
+  5. All reconciliation error paths return errors properly to controller-runtime
+  6. Unit tests demonstrate correct error classification and retry behavior
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (will be created during phase planning)
+
+### Phase 3: Logging & Quality
+**Goal**: All code paths have production-grade observability and pass quality gates
+**Depends on**: Phase 2
+**Requirements**: LOG-01, LOG-02, LOG-03, LOG-04, QUAL-01, QUAL-02, QUAL-03, QUAL-04, TEST-05
+**Success Criteria** (what must be TRUE):
+  1. All error paths use structured logging with consistent key-value pairs
+  2. Status condition messages include actionable troubleshooting hints
+  3. Condition state transitions are logged for debugging
+  4. All log statements include pipeline namespace and name
+  5. No breaking changes to Pipeline CRD or webhook behavior
+  6. All existing tests continue to pass
+  7. Code follows existing conventions from CLAUDE.md
+  8. Changes are documented in code comments
+  9. Git commit history is clean and ready for code review
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (will be created during phase planning)
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 1 → 2 → 3
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Client Layer Error Foundation | 0/TBD | Not started | - |
+| 2. Controller Error Handling | 0/TBD | Not started | - |
+| 3. Logging & Quality | 0/TBD | Not started | - |
+
+---
+*Roadmap created: 2026-02-08*
+*Last updated: 2026-02-08*
