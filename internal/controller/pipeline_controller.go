@@ -340,6 +340,10 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 		pipeline.Status.UpdatedAt = &metav1.Time{Time: *apiPipeline.UpdatedAt}
 	}
 
+	// Capture previous Ready condition state to detect transitions
+	oldCondition := meta.FindStatusCondition(pipeline.Status.Conditions, conditionTypeReady)
+	wasReady := oldCondition != nil && oldCondition.Status == metav1.ConditionTrue
+
 	// Set Ready condition
 	meta.SetStatusCondition(&pipeline.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
@@ -357,6 +361,19 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 		Message:            fmt.Sprintf("UpsertPipeline succeeded, ID: %s", apiPipeline.ID),
 		ObservedGeneration: pipeline.Generation,
 	})
+
+	// Log condition state transitions for debugging timeline
+	if !wasReady {
+		previousReason := "None"
+		if oldCondition != nil {
+			previousReason = oldCondition.Reason
+		}
+		log.Info("pipeline condition transitioned to Ready",
+			"namespace", pipeline.Namespace,
+			"name", pipeline.Name,
+			"previousReason", previousReason,
+			"generation", pipeline.Generation)
+	}
 
 	// Update status
 	if err := r.Status().Update(ctx, pipeline); err != nil {
@@ -392,12 +409,19 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	// Update observedGeneration to indicate we tried
 	pipeline.Status.ObservedGeneration = pipeline.Generation
 
+	// Capture previous Ready condition state to detect transitions
+	oldCondition := meta.FindStatusCondition(pipeline.Status.Conditions, conditionTypeReady)
+	wasReady := oldCondition != nil && oldCondition.Status == metav1.ConditionTrue
+
+	// Format error message with actionable troubleshooting hints instead of raw error strings
+	formattedMessage := formatConditionMessage(reason, originalErr)
+
 	// Set Ready condition to False
 	meta.SetStatusCondition(&pipeline.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
-		Message:            originalErr.Error(),
+		Message:            formattedMessage,
 		ObservedGeneration: pipeline.Generation,
 	})
 
@@ -406,11 +430,20 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 		Type:               conditionTypeSynced,
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
-		Message:            originalErr.Error(),
+		Message:            formattedMessage,
 		ObservedGeneration: pipeline.Generation,
 	})
 
-	// CRITICAL: Try to update status, but preserve original error
+	// Log condition state transitions for debugging timeline
+	if wasReady {
+		log.Error(originalErr, "pipeline condition transitioned to not Ready",
+			"namespace", pipeline.Namespace,
+			"name", pipeline.Name,
+			"reason", reason,
+			"generation", pipeline.Generation)
+	}
+
+	// CRITICAL: Try to update status, but preserve original error for exponential backoff
 	if updateErr := r.Status().Update(ctx, pipeline); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
 			// Cache is stale, requeue to get fresh copy
@@ -423,7 +456,7 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 			"reason", reason)
 	}
 
-	// For validation errors, don't retry
+	// Validation errors are permanent - user must fix spec before retry
 	if !shouldRetry(originalErr, reason) {
 		log.Info("validation error, not requeueing", "error", originalErr.Error())
 		return ctrl.Result{}, nil
