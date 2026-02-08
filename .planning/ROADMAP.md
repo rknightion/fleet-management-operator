@@ -45,10 +45,11 @@ Plans:
   4. Status update conflicts use proper requeue pattern without immediate retry
   5. All reconciliation error paths return errors properly to controller-runtime
   6. Unit tests demonstrate correct error classification and retry behavior
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD (will be created during phase planning)
+- [ ] 02-01-PLAN.md -- Fix updateStatusError, handleAPIError recursion, and add error classification helpers
+- [ ] 02-02-PLAN.md -- Unit tests for error classification, status error preservation, and recursion limits
 
 ### Phase 3: Logging & Quality
 **Goal**: All code paths have production-grade observability and pass quality gates
@@ -76,8 +77,8 @@ Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Client Layer Error Foundation | 0/2 | Planning complete | - |
-| 2. Controller Error Handling | 0/TBD | Not started | - |
+| 1. Client Layer Error Foundation | 2/2 | Complete | 2026-02-08 |
+| 2. Controller Error Handling | 0/2 | Planning complete | - |
 | 3. Logging & Quality | 0/TBD | Not started | - |
 
 ---
