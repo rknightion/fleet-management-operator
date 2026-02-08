@@ -116,10 +116,10 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, req.NamespacedName, pipeline); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Pipeline was deleted
-			log.Info("Pipeline not found, likely deleted")
+			log.Info("Pipeline not found, likely deleted", "namespace", req.Namespace, "name", req.Name)
 			return ctrl.Result{}, nil
 		}
-		log.Error(err, "failed to get Pipeline")
+		log.Error(err, "failed to get Pipeline", "namespace", req.Namespace, "name", req.Name)
 		return ctrl.Result{}, err
 	}
 
@@ -132,16 +132,16 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !controllerutil.ContainsFinalizer(pipeline, pipelineFinalizer) {
 		controllerutil.AddFinalizer(pipeline, pipelineFinalizer)
 		if err := r.Update(ctx, pipeline); err != nil {
-			log.Error(err, "failed to add finalizer")
+			log.Error(err, "failed to add finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			return ctrl.Result{}, err
 		}
-		log.Info("added finalizer")
+		log.Info("added finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
 		return ctrl.Result{}, nil
 	}
 
 	// 4. Check if reconciliation is needed (observedGeneration pattern)
 	if pipeline.Status.ObservedGeneration == pipeline.Generation {
-		log.V(1).Info("pipeline already reconciled, skipping", "generation", pipeline.Generation)
+		log.V(1).Info("pipeline already reconciled, skipping", "namespace", pipeline.Namespace, "name", pipeline.Name, "generation", pipeline.Generation)
 		return ctrl.Result{}, nil
 	}
 
@@ -173,24 +173,24 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 		return ctrl.Result{}, nil
 	}
 
-	log.Info("deleting Pipeline from Fleet Management", "id", pipeline.Status.ID)
+	log.Info("deleting Pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", pipeline.Status.ID)
 
 	// Delete from Fleet Management if we have an ID
 	if pipeline.Status.ID != "" {
 		if err := r.FleetClient.DeletePipeline(ctx, pipeline.Status.ID); err != nil {
 			// Check if it's a 404 (already deleted)
 			if apiErr, ok := err.(*fleetclient.FleetAPIError); ok && apiErr.StatusCode == http.StatusNotFound {
-				log.Info("pipeline already deleted from Fleet Management")
+				log.Info("pipeline already deleted from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
 				r.emitEvent(pipeline, corev1.EventTypeNormal, eventReasonDeleted,
 					"Pipeline already deleted from Fleet Management")
 			} else {
-				log.Error(err, "failed to delete pipeline from Fleet Management")
+				log.Error(err, "failed to delete pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
 				r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonDeleteFailed,
 					"Failed to delete pipeline from Fleet Management: %v", err)
 				return r.updateStatusError(ctx, pipeline, reasonDeleteFailed, err)
 			}
 		} else {
-			log.Info("successfully deleted pipeline from Fleet Management")
+			log.Info("successfully deleted pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonDeleted,
 				"Successfully deleted pipeline from Fleet Management (ID: %s)", pipeline.Status.ID)
 		}
@@ -199,11 +199,11 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 	// Remove finalizer
 	controllerutil.RemoveFinalizer(pipeline, pipelineFinalizer)
 	if err := r.Update(ctx, pipeline); err != nil {
-		log.Error(err, "failed to remove finalizer")
+		log.Error(err, "failed to remove finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
 		return ctrl.Result{}, err
 	}
 
-	log.Info("removed finalizer, pipeline will be deleted")
+	log.Info("removed finalizer, pipeline will be deleted", "namespace", pipeline.Namespace, "name", pipeline.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -248,6 +248,7 @@ func (r *PipelineReconciler) buildUpsertRequest(pipeline *fleetmanagementv1alpha
 }
 
 // handleAPIError handles errors from Fleet Management API
+// CRITICAL: Single-retry guard for 404 prevents infinite recursion by checking if ID is already empty
 func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, err error) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -257,17 +258,17 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 		switch apiErr.StatusCode {
 		case http.StatusBadRequest:
 			// Validation error - update status and don't retry immediately
-			log.Info("validation error from Fleet Management API", "message", apiErr.Message)
+			log.Info("validation error from Fleet Management API", "namespace", pipeline.Namespace, "name", pipeline.Name, "message", apiErr.Message)
 			r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonValidationFail,
 				"Fleet Management API validation failed: %s", apiErr.Message)
 			return r.updateStatusError(ctx, pipeline, reasonValidationError, err)
 
 		case http.StatusNotFound:
 			// Pipeline was deleted externally
-			// Check if we've already tried to recreate (ID is empty)
+			// CRITICAL: Check if we've already tried to recreate (ID is empty) to prevent infinite recursion
 			if pipeline.Status.ID == "" {
 				// Already tried recreation and still getting 404
-				log.Error(apiErr, "pipeline creation failed after external deletion detection")
+				log.Error(apiErr, "pipeline creation failed after external deletion detection", "namespace", pipeline.Namespace, "name", pipeline.Name)
 				r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
 					"Failed to recreate pipeline after external deletion")
 				return r.updateStatusError(ctx, pipeline, reasonSyncFailed,
@@ -296,7 +297,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 
 		case http.StatusTooManyRequests:
 			// Rate limit - requeue with delay
-			log.Info("rate limited by Fleet Management API, requeueing")
+			log.Info("rate limited by Fleet Management API, requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonRateLimited,
 				"Rate limited by Fleet Management API, will retry in 10 seconds")
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -304,6 +305,8 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 		default:
 			// Other API errors - return for exponential backoff
 			log.Error(err, "Fleet Management API error",
+				"namespace", pipeline.Namespace,
+				"name", pipeline.Name,
 				"statusCode", apiErr.StatusCode,
 				"operation", apiErr.Operation,
 				"pipelineID", pipeline.Status.ID,
@@ -315,7 +318,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 	}
 
 	// Network or other errors - return for exponential backoff
-	log.Error(err, "failed to sync with Fleet Management")
+	log.Error(err, "failed to sync with Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
 	r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
 		"Failed to sync with Fleet Management: %v", err)
 	return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err)
@@ -379,10 +382,10 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 	if err := r.Status().Update(ctx, pipeline); err != nil {
 		if apierrors.IsConflict(err) {
 			// Resource was modified, requeue to get fresh copy
-			log.V(1).Info("status update conflict, requeueing")
+			log.V(1).Info("status update conflict, requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			return ctrl.Result{Requeue: true}, nil
 		}
-		log.Error(err, "failed to update status")
+		log.Error(err, "failed to update status", "namespace", pipeline.Namespace, "name", pipeline.Name)
 		return ctrl.Result{}, err
 	}
 
@@ -398,7 +401,7 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 	r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonSynced,
 		"Pipeline successfully synced to Fleet Management")
 
-	log.Info("successfully synced pipeline", "id", apiPipeline.ID, "generation", pipeline.Generation)
+	log.Info("successfully synced pipeline", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", apiPipeline.ID, "generation", pipeline.Generation)
 	return ctrl.Result{}, nil
 }
 
@@ -413,7 +416,8 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	oldCondition := meta.FindStatusCondition(pipeline.Status.Conditions, conditionTypeReady)
 	wasReady := oldCondition != nil && oldCondition.Status == metav1.ConditionTrue
 
-	// Format error message with actionable troubleshooting hints instead of raw error strings
+	// CRITICAL: Format error message with actionable troubleshooting hints instead of raw error strings
+	// Raw errors are not user-friendly in `kubectl describe` output
 	formattedMessage := formatConditionMessage(reason, originalErr)
 
 	// Set Ready condition to False
@@ -447,22 +451,25 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	if updateErr := r.Status().Update(ctx, pipeline); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
 			// Cache is stale, requeue to get fresh copy
-			log.V(1).Info("status update conflict during error handling, requeueing")
+			log.V(1).Info("status update conflict during error handling, requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			return ctrl.Result{Requeue: true}, nil
 		}
 		// Log status update failure but continue to return original error
 		log.Error(updateErr, "failed to update status after reconciliation error",
+			"namespace", pipeline.Namespace,
+			"name", pipeline.Name,
 			"originalError", originalErr.Error(),
 			"reason", reason)
 	}
 
-	// Validation errors are permanent - user must fix spec before retry
+	// CRITICAL: Validation errors are permanent - user must fix spec before retry
 	if !shouldRetry(originalErr, reason) {
-		log.Info("validation error, not requeueing", "error", originalErr.Error())
+		log.Info("validation error, not requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name, "error", originalErr.Error())
 		return ctrl.Result{}, nil
 	}
 
 	// CRITICAL: Return original error to preserve exponential backoff
+	// Controller-runtime needs the original error for proper exponential backoff calculation
 	return ctrl.Result{}, originalErr
 }
 
