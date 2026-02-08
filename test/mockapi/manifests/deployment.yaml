@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-fleet-api
+  labels:
+    app: mock-fleet-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-fleet-api
+  template:
+    metadata:
+      labels:
+        app: mock-fleet-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: mock-api
+        image: mock-fleet-api:test
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"

@@ -1,0 +1,14 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: test-invalid-pipeline
+spec:
+  name: test_invalid_pipeline
+  configType: OpenTelemetryCollector
+  enabled: true
+  # This is Alloy syntax but configType says OpenTelemetryCollector
+  # Should be rejected by webhook validation
+  contents: |
+    prometheus.exporter.self "alloy" { }
+  matchers:
+    - collector.os=linux

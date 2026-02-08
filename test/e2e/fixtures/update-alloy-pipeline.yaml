@@ -1,0 +1,25 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: test-alloy-pipeline
+spec:
+  name: test_alloy_pipeline
+  configType: Alloy
+  enabled: true
+  contents: |
+    prometheus.exporter.self "alloy" { }
+
+    prometheus.scrape "alloy" {
+      targets    = prometheus.exporter.self.alloy.targets
+      forward_to = [prometheus.remote_write.default.receiver]
+      scrape_interval = "60s"
+    }
+
+    prometheus.remote_write "default" {
+      endpoint {
+        url = env("PROMETHEUS_URL")
+      }
+    }
+  matchers:
+    - collector.os=linux
+    - environment=staging

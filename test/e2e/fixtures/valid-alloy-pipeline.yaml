@@ -1,0 +1,12 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: test-alloy-pipeline
+spec:
+  name: test_alloy_pipeline
+  configType: Alloy
+  enabled: true
+  contents: |
+    prometheus.exporter.self "alloy" { }
+  matchers:
+    - collector.os=linux

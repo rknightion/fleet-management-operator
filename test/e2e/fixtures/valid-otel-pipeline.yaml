@@ -1,0 +1,31 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: test-otel-pipeline
+spec:
+  name: test_otel_pipeline
+  configType: OpenTelemetryCollector
+  enabled: true
+  contents: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+
+    processors:
+      batch:
+        timeout: 10s
+
+    exporters:
+      logging:
+        loglevel: info
+
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [logging]
+  matchers:
+    - collector.type=otel
