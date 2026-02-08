@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,9 +32,14 @@ import (
 	"github.com/grafana/fleet-management-operator/test/utils"
 )
 
+// namespace where the project is deployed in
+const namespace = "fm-crd-system"
+
 var (
 	// managerImage is the manager image to be built and loaded for testing.
 	managerImage = "example.com/fm-crd:v0.0.1"
+	// mockAPIImage is the mock Fleet Management API image for e2e tests.
+	mockAPIImage = "mock-fleet-api:test"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -50,7 +56,7 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
+	cmd := exec.Command("make", "docker-build-load", fmt.Sprintf("IMG=%s", managerImage))
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
@@ -60,10 +66,83 @@ var _ = BeforeSuite(func() {
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
+	By("building the mock Fleet API image")
+	cmd = exec.Command(os.Getenv("CONTAINER_TOOL"), "build", "-t", mockAPIImage, "test/mockapi/")
+	if cmd.Args[0] == "" {
+		cmd = exec.Command("docker", "build", "-t", mockAPIImage, "test/mockapi/")
+	}
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the mock Fleet API image")
+
+	By("loading the mock Fleet API image on Kind")
+	err = utils.LoadImageToKindClusterWithName(mockAPIImage)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the mock Fleet API image into Kind")
+
 	setupCertManager()
+
+	By("creating manager namespace")
+	cmd = exec.Command("kubectl", "create", "ns", namespace)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create namespace")
+
+	By("labeling the namespace to enforce the restricted security policy")
+	cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+		"pod-security.kubernetes.io/enforce=restricted")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+
+	By("installing CRDs")
+	cmd = exec.Command("make", "install")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+
+	By("deploying the mock Fleet API")
+	cmd = exec.Command("kubectl", "apply", "-f", "test/mockapi/manifests/", "-n", namespace)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy mock Fleet API")
+
+	By("waiting for mock Fleet API to be ready")
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "pods", "-l", "app=mock-fleet-api",
+			"-o", "jsonpath={.items[0].status.phase}", "-n", namespace)
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to get mock Fleet API pod status")
+		g.Expect(output).To(Equal("Running"), "Mock Fleet API pod not running")
+
+		cmd = exec.Command("kubectl", "get", "pods", "-l", "app=mock-fleet-api",
+			"-o", "jsonpath={.items[0].status.conditions[?(@.type=='Ready')].status}", "-n", namespace)
+		output, err = utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to get mock Fleet API pod readiness")
+		g.Expect(output).To(Equal("True"), "Mock Fleet API pod not ready")
+	}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+	By("deploying the controller-manager")
+	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 })
 
 var _ = AfterSuite(func() {
+	By("cleaning up the curl pod for metrics")
+	cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found")
+	_, _ = utils.Run(cmd)
+
+	By("undeploying the controller-manager")
+	cmd = exec.Command("make", "undeploy")
+	_, _ = utils.Run(cmd)
+
+	By("undeploying the mock Fleet API")
+	cmd = exec.Command("kubectl", "delete", "-f", "test/mockapi/manifests/", "-n", namespace, "--ignore-not-found")
+	_, _ = utils.Run(cmd)
+
+	By("uninstalling CRDs")
+	cmd = exec.Command("make", "uninstall")
+	_, _ = utils.Run(cmd)
+
+	By("removing manager namespace")
+	cmd = exec.Command("kubectl", "delete", "ns", namespace, "--ignore-not-found")
+	_, _ = utils.Run(cmd)
+
 	teardownCertManager()
 })
 

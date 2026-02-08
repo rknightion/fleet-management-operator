@@ -158,6 +158,10 @@ docker-build-load: ## Build docker image for local architecture and load into do
 		--load \
 		.
 
+.PHONY: docker-build-mock-api
+docker-build-mock-api: ## Build mock Fleet Management API image for e2e tests
+	$(CONTAINER_TOOL) build -t mock-fleet-api:test test/mockapi/
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager (alias for docker-build)
 	@echo "Note: docker-build now pushes multi-arch images by default"
