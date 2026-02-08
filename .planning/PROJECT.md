@@ -1,68 +1,79 @@
-# Fleet Management Operator - Tech Debt Cleanup
+# Fleet Management Operator
 
 ## What This Is
 
-A focused technical debt cleanup initiative for the fleet-management-operator, a Kubernetes operator that manages Grafana Cloud Fleet Management Pipelines as CRDs. This milestone addresses critical code quality issues identified in the codebase audit without changing external behavior or APIs.
+A production Kubernetes operator that manages Grafana Cloud Fleet Management Pipelines as CRDs, with robust error handling, structured logging, and comprehensive E2E testing infrastructure. Built with controller-runtime, it provides reliable reconciliation of Pipeline resources with proper status tracking, finalizer-based cleanup, and admission webhook validation.
 
 ## Core Value
 
-Improve code reliability and maintainability by fixing high-priority technical debt: error handling gaps, infinite loop risks, and concurrency issues that could cause production failures.
+Reliable, maintainable operator code with comprehensive error handling and observability that prevents production failures.
 
 ## Requirements
 
 ### Validated
 
-- ✓ Pipeline CRD with Alloy and OpenTelemetry Collector support — existing
-- ✓ Admission webhook validation (configType, matchers) — existing
-- ✓ Rate-limited Fleet Management API client (3 req/s) — existing
-- ✓ Reconciliation with finalizer-based cleanup — existing
-- ✓ Status conditions tracking (Ready, Synced) — existing
-- ✓ ObservedGeneration optimization — existing
-- ✓ Idempotent UpsertPipeline operations — existing
-- ✓ Event recording for observability — existing
-- ✓ Unit test coverage for core logic — existing
+**v1.0 - Tech Debt Cleanup (2026-02-09):**
+- ✓ Enhanced FleetAPIError with IsTransient() method for error classification — v1.0
+- ✓ FleetAPIError includes PipelineID field for distributed tracing — v1.0
+- ✓ HTTP response body read errors captured and logged with full context — v1.0
+- ✓ Status update failures preserve original reconciliation error for exponential backoff — v1.0
+- ✓ External deletion detection has single-retry guard preventing infinite loops — v1.0
+- ✓ Error classification helpers (isTransientError, shouldRetry) using errors.As — v1.0
+- ✓ Status update conflicts use proper requeue pattern (not immediate retry) — v1.0
+- ✓ All error paths use structured logging with namespace/name key-value pairs — v1.0
+- ✓ Status condition messages include actionable troubleshooting hints via formatConditionMessage — v1.0
+- ✓ Condition state transitions logged explicitly for timeline reconstruction — v1.0
+- ✓ Unit tests for error handling, status updates, recursion limits, and logging quality — v1.0
+- ✓ Mock Fleet Management API server for E2E testing without external dependencies — v1.0
+- ✓ Complete Pipeline lifecycle E2E tests (create, update, delete, webhook validation) — v1.0
+- ✓ GitHub Actions CI/CD workflow with Kind cluster and failure artifact collection — v1.0
+
+**Pre-existing:**
+- ✓ Pipeline CRD with Alloy and OpenTelemetry Collector support
+- ✓ Admission webhook validation (configType, matchers)
+- ✓ Rate-limited Fleet Management API client (3 req/s)
+- ✓ Reconciliation with finalizer-based cleanup
+- ✓ Status conditions tracking (Ready, Synced)
+- ✓ ObservedGeneration optimization
+- ✓ Idempotent UpsertPipeline operations
+- ✓ Event recording for observability
 
 ### Active
 
-- [ ] Fix ignored io.ReadAll() errors in HTTP response handling
-- [ ] Add recursion limit for external deletion retry loop
-- [ ] Implement exponential backoff for status update conflicts
-- [ ] Add unit tests for all fixed behaviors
-- [ ] Ensure no breaking changes to external APIs
-- [ ] Document fixes in code comments
-- [ ] Clean commit history ready for code review
+(To be defined in next milestone)
 
 ### Out of Scope
 
 - Observability metrics (Prometheus) — defer to future milestone
-- E2E test implementation — defer to future milestone
 - Dry-run validation mode — defer to future milestone
 - Credential rotation without restart — defer to future milestone
-- EventRecorder nil check refactoring — low priority, defer
-- HTTP client connection pool tuning — optimization, not reliability
+- HTTP client connection pool tuning — optimization, not reliability issue
 - Leader election testing — not critical tech debt
 
 ## Context
 
-This is a brownfield project with an existing, functional Kubernetes operator codebase. A recent codebase audit (2026-02-08) identified several high-priority technical debt items that pose reliability risks:
+**Current State (v1.0):**
+- 4,905 lines of Go code
+- Tech stack: Go 1.25.0, controller-runtime v0.23.0, Ginkgo/Gomega for E2E tests
+- 54 files modified in v1.0 (+10,900 insertions, -123 deletions)
+- Comprehensive unit test coverage for core logic
+- E2E test infrastructure with mock API and GitHub Actions automation
 
-**Current Issues:**
-1. **Error Handling Gap (pkg/fleetclient/client.go:88, 139)**: io.ReadAll() errors are silently ignored, potentially truncating API error messages in logs and status conditions
-2. **Infinite Loop Risk (internal/controller/pipeline_controller.go:264-269)**: External deletion detection recursively calls reconcileNormal() without depth limit, could cause infinite recursion
-3. **Conflict Storm (internal/controller/pipeline_controller.go:336-340, 388-391)**: Status update conflicts trigger immediate requeue without backoff, risking thundering herd under load
+**Shipped v1.0 (2026-02-09):**
+- Enhanced error handling at client and controller layers
+- Production-grade structured logging with actionable error messages
+- Complete E2E testing infrastructure for CI/CD
 
-**Existing Architecture:**
-- Controller-runtime based operator (v0.23.0)
-- Go 1.25.0 with standard Kubernetes patterns
-- Comprehensive CLAUDE.md with patterns and gotchas
-- Existing unit test suite with table-driven tests
-- Mock client for API interactions
+**Technical Decisions:**
+- Use in-memory sync.Map for mock API (simple, sufficient for testing)
+- Start mock API IDs at 1000 (distinguishes from real API IDs)
+- Deploy mock API in-cluster before controller (controller reads URL at startup)
+- Use docker-build-load for Kind compatibility (buildx --push doesn't work locally)
 
 ## Constraints
 
 - **Backward Compatibility**: No breaking changes to Pipeline CRD, webhook behavior, or external APIs
 - **Testing**: Must add unit tests for each fix, existing tests must continue passing
-- **Timeline**: Quick, focused fixes suitable for 1-2 day completion
 - **Go Version**: 1.25.0 (no upgrade needed)
 - **Dependencies**: Use existing dependency versions (controller-runtime v0.23.0, etc.)
 - **Code Style**: Follow existing conventions from CLAUDE.md and codebase patterns
@@ -71,10 +82,18 @@ This is a brownfield project with an existing, functional Kubernetes operator co
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Fix only high-priority tech debt | Focus on reliability issues, defer enhancements | — Pending |
-| Internal fixes only (no API changes) | Maintain backward compatibility, minimize risk | — Pending |
-| Add unit tests, not E2E tests | Quick validation, E2E tests are separate effort | — Pending |
-| Use existing error handling patterns | Consistency with codebase conventions | — Pending |
+| Fix only high-priority tech debt | Focus on reliability issues, defer enhancements | ✓ Good - Completed 24/24 requirements |
+| Internal fixes only (no API changes) | Maintain backward compatibility, minimize risk | ✓ Good - No breaking changes |
+| Add unit tests, not E2E tests (Phase 1-3) | Quick validation, E2E tests are separate effort | ✓ Good - Unit tests added for all fixes |
+| Use existing error handling patterns | Consistency with codebase conventions | ✓ Good - Follows controller-runtime patterns |
+| Use errors.As instead of type assertion for FleetAPIError | Handles wrapped errors correctly | ✓ Good - Works with fmt.Errorf("%w") |
+| Preserve original error in updateStatusError | Enables proper exponential backoff | ✓ Good - Controller-runtime gets right error |
+| Single-retry guard for 404 recreation | Prevents infinite recursion | ✓ Good - Simple, effective |
+| Use formatConditionMessage for all status messages | Improves user experience with actionable hints | ✓ Good - Consistent messaging |
+| Add namespace/name to every log statement | Enables log correlation for concurrent reconciliation | ✓ Good - Critical for debugging |
+| Add E2E testing (Phase 4) | Originally out of scope, added as new phase | ✓ Good - Valuable CI/CD automation |
+| Use in-memory mock API | Avoids external dependencies, rate limits, secrets | ✓ Good - Fast, reliable tests |
+| Deploy mock API before controller | Controller reads Fleet Management URL at startup | ✓ Good - Correct initialization order |
 
 ---
-*Last updated: 2026-02-08 after initialization*
+*Last updated: 2026-02-09 after v1.0 milestone*
