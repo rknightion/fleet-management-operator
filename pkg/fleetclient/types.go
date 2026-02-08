@@ -16,7 +16,11 @@ limitations under the License.
 
 package fleetclient
 
-import "time"
+import (
+	"fmt"
+	"net/http"
+	"time"
+)
 
 // Pipeline represents a Fleet Management pipeline
 type Pipeline struct {
@@ -48,8 +52,36 @@ type FleetAPIError struct {
 	StatusCode int
 	Operation  string
 	Message    string
+	PipelineID string // For distributed tracing, optional (empty string = not available)
+	Wrapped    error  // For error chain compatibility with errors.As/errors.Is
 }
 
 func (e *FleetAPIError) Error() string {
-	return e.Message
+	if e.PipelineID != "" {
+		return fmt.Sprintf("%s failed (pipeline=%s, status=%d): %s", e.Operation, e.PipelineID, e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("%s failed (status=%d): %s", e.Operation, e.StatusCode, e.Message)
+}
+
+// Unwrap returns the wrapped error for error chain compatibility
+func (e *FleetAPIError) Unwrap() error {
+	return e.Wrapped
+}
+
+// IsTransient determines if the error is transient and should be retried
+func (e *FleetAPIError) IsTransient() bool {
+	// 429 Too Many Requests - rate limited, retry
+	if e.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	// 408 Request Timeout - timeout, retry
+	if e.StatusCode == http.StatusRequestTimeout {
+		return true
+	}
+	// 500-599 Server Errors - server issue, retry
+	if e.StatusCode >= 500 && e.StatusCode < 600 {
+		return true
+	}
+	// All other status codes - client error, permanent
+	return false
 }
