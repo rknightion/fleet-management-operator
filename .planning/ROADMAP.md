@@ -28,10 +28,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. FleetAPIError instances include PipelineID for distributed tracing
   4. Error type assertions work correctly with wrapped errors (errors.As compatibility)
   5. Unit tests verify all error handling paths in HTTP client
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD (will be created during phase planning)
+- [ ] 01-01-PLAN.md -- Enhance FleetAPIError type and fix io.ReadAll error handling in client.go
+- [ ] 01-02-PLAN.md -- Unit tests for FleetAPIError and HTTP client error paths
 
 ### Phase 2: Controller Error Handling
 **Goal**: Controller reconciliation correctly handles all error types with proper retry semantics
@@ -71,11 +72,11 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3
+Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Client Layer Error Foundation | 0/TBD | Not started | - |
+| 1. Client Layer Error Foundation | 0/2 | Planning complete | - |
 | 2. Controller Error Handling | 0/TBD | Not started | - |
 | 3. Logging & Quality | 0/TBD | Not started | - |
 
