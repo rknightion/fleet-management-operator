@@ -65,10 +65,11 @@ Plans:
   7. Code follows existing conventions from CLAUDE.md
   8. Changes are documented in code comments
   9. Git commit history is clean and ready for code review
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] TBD (will be created during phase planning)
+- [ ] 03-01-PLAN.md -- Structured logging improvements, formatConditionMessage helper, and condition transition logging
+- [ ] 03-02-PLAN.md -- Unit tests for formatConditionMessage and quality gate verification
 
 ## Progress
 
@@ -79,7 +80,7 @@ Phases execute in numeric order: 1 -> 2 -> 3
 |-------|----------------|--------|-----------|
 | 1. Client Layer Error Foundation | 2/2 | Complete | 2026-02-08 |
 | 2. Controller Error Handling | 0/2 | Planning complete | - |
-| 3. Logging & Quality | 0/TBD | Not started | - |
+| 3. Logging & Quality | 0/2 | Planning complete | - |
 
 ---
 *Roadmap created: 2026-02-08*
