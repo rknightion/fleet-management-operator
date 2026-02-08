@@ -252,14 +252,14 @@ func TestFleetAPIError_ErrorsIs(t *testing.T) {
 // TestUpsertPipeline_HTTPClientErrors tests HTTP client error paths with various status codes
 func TestUpsertPipeline_HTTPClientErrors(t *testing.T) {
 	tests := []struct {
-		name               string
-		statusCode         int
-		responseBody       string
-		expectError        bool
-		expectedStatusCode int
-		expectedOperation  string
+		name                string
+		statusCode          int
+		responseBody        string
+		expectError         bool
+		expectedStatusCode  int
+		expectedOperation   string
 		expectedIsTransient bool
-		messageContains    string
+		messageContains     string
 	}{
 		{
 			name:                "400 Bad Request",
@@ -392,14 +392,14 @@ func TestUpsertPipeline_Success(t *testing.T) {
 // TestDeletePipeline_HTTPClientErrors tests DeletePipeline error paths
 func TestDeletePipeline_HTTPClientErrors(t *testing.T) {
 	tests := []struct {
-		name               string
-		statusCode         int
-		responseBody       string
-		expectError        bool
-		expectedStatusCode int
-		expectedOperation  string
+		name                string
+		statusCode          int
+		responseBody        string
+		expectError         bool
+		expectedStatusCode  int
+		expectedOperation   string
 		expectedIsTransient bool
-		pipelineIDSet      bool
+		pipelineIDSet       bool
 	}{
 		{
 			name:                "404 Not Found (success case)",
