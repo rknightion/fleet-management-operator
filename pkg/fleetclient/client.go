@@ -85,7 +85,15 @@ func (c *Client) UpsertPipeline(ctx context.Context, req *UpsertPipelineRequest)
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, &FleetAPIError{
+				StatusCode: resp.StatusCode,
+				Operation:  "UpsertPipeline",
+				Message:    fmt.Sprintf("HTTP %d (failed to read response body: %v)", resp.StatusCode, err),
+				Wrapped:    err,
+			}
+		}
 		return nil, &FleetAPIError{
 			StatusCode: resp.StatusCode,
 			Operation:  "UpsertPipeline",
@@ -136,11 +144,21 @@ func (c *Client) DeletePipeline(ctx context.Context, id string) error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return &FleetAPIError{
+				StatusCode: resp.StatusCode,
+				Operation:  "DeletePipeline",
+				Message:    fmt.Sprintf("HTTP %d (failed to read response body: %v)", resp.StatusCode, err),
+				PipelineID: id,
+				Wrapped:    err,
+			}
+		}
 		return &FleetAPIError{
 			StatusCode: resp.StatusCode,
 			Operation:  "DeletePipeline",
 			Message:    string(bodyBytes),
+			PipelineID: id,
 		}
 	}
 
