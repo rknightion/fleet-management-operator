@@ -196,3 +196,134 @@ func TestShouldRetry(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatConditionMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		reason   string
+		err      error
+		contains []string
+	}{
+		{
+			name:   "FleetAPIError 400 BadRequest",
+			reason: reasonValidationError,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusBadRequest,
+				Operation:  "UpsertPipeline",
+				Message:    "invalid config",
+			},
+			contains: []string{"Configuration validation failed", "syntax errors"},
+		},
+		{
+			name:   "FleetAPIError 401 Unauthorized",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusUnauthorized,
+				Operation:  "UpsertPipeline",
+				Message:    "invalid token",
+			},
+			contains: []string{"Authentication failed", "credentials"},
+		},
+		{
+			name:   "FleetAPIError 403 Forbidden",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusForbidden,
+				Operation:  "UpsertPipeline",
+				Message:    "access denied",
+			},
+			contains: []string{"Permission denied", "pipeline:write"},
+		},
+		{
+			name:   "FleetAPIError 404 NotFound",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusNotFound,
+				Operation:  "GetPipeline",
+				Message:    "not found",
+			},
+			contains: []string{"not found", "deleted externally"},
+		},
+		{
+			name:   "FleetAPIError 429 TooManyRequests",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusTooManyRequests,
+				Operation:  "UpsertPipeline",
+				Message:    "rate limited",
+			},
+			contains: []string{"Rate limited", "automatically"},
+		},
+		{
+			name:   "FleetAPIError 500 InternalServerError",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusInternalServerError,
+				Operation:  "UpsertPipeline",
+				Message:    "internal",
+			},
+			contains: []string{"unavailable", "HTTP 500"},
+		},
+		{
+			name:   "FleetAPIError 502 BadGateway",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusBadGateway,
+				Operation:  "UpsertPipeline",
+				Message:    "bad gateway",
+			},
+			contains: []string{"unavailable", "HTTP 502"},
+		},
+		{
+			name:   "FleetAPIError 503 ServiceUnavailable",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: http.StatusServiceUnavailable,
+				Operation:  "UpsertPipeline",
+				Message:    "service unavailable",
+			},
+			contains: []string{"unavailable", "HTTP 503"},
+		},
+		{
+			name:   "FleetAPIError unknown status 418 Teapot",
+			reason: reasonSyncFailed,
+			err: &fleetclient.FleetAPIError{
+				StatusCode: 418,
+				Operation:  "UpsertPipeline",
+				Message:    "teapot",
+			},
+			contains: []string{"API error", "HTTP 418", "teapot"},
+		},
+		{
+			name:   "Wrapped FleetAPIError 400",
+			reason: reasonValidationError,
+			err: fmt.Errorf("wrapped: %w", &fleetclient.FleetAPIError{
+				StatusCode: http.StatusBadRequest,
+				Operation:  "UpsertPipeline",
+				Message:    "invalid",
+			}),
+			contains: []string{"Configuration validation failed"},
+		},
+		{
+			name:     "context.DeadlineExceeded",
+			reason:   reasonSyncFailed,
+			err:      context.DeadlineExceeded,
+			contains: []string{"timeout", "network connectivity"},
+		},
+		{
+			name:     "Generic error",
+			reason:   reasonSyncFailed,
+			err:      fmt.Errorf("something broke"),
+			contains: []string{"Sync failed", "controller logs"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatConditionMessage(tt.reason, tt.err)
+			for _, substr := range tt.contains {
+				assert.Contains(t, result, substr, "message should contain: %s", substr)
+			}
+		})
+	}
+}
