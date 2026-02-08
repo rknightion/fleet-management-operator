@@ -71,17 +71,36 @@ Plans:
 - [ ] 03-01-PLAN.md -- Structured logging improvements, formatConditionMessage helper, and condition transition logging
 - [ ] 03-02-PLAN.md -- Unit tests for formatConditionMessage and quality gate verification
 
+### Phase 4: E2E for GitHub Actions
+**Goal**: End-to-end tests run automatically in GitHub Actions against a Kind cluster with a mock Fleet Management API, validating the full Pipeline CR lifecycle (create, update, delete) and webhook validation
+**Depends on**: Phase 3
+**Success Criteria** (what must be TRUE):
+  1. Mock Fleet Management API server accepts UpsertPipeline and DeletePipeline requests
+  2. E2E tests verify Pipeline CR creation reaches Ready=True status
+  3. E2E tests verify Pipeline CR update is reconciled
+  4. E2E tests verify Pipeline CR deletion removes finalizer
+  5. E2E tests verify admission webhook rejects invalid Pipeline CRs
+  6. GitHub Actions workflow runs E2E tests on PRs and pushes to main
+  7. Failure artifacts (logs, events, pod descriptions) are collected on test failure
+**Plans:** 3 plans
+
+Plans:
+- [ ] 04-01-PLAN.md -- Mock Fleet Management API server, container image, K8s manifests, and test fixtures
+- [ ] 04-02-PLAN.md -- Pipeline lifecycle E2E tests and suite setup with mock API deployment
+- [ ] 04-03-PLAN.md -- GitHub Actions E2E workflow with Kind cluster and failure artifact collection
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Client Layer Error Foundation | 2/2 | Complete | 2026-02-08 |
 | 2. Controller Error Handling | 0/2 | Planning complete | - |
 | 3. Logging & Quality | 0/2 | Planning complete | - |
+| 4. E2E for GitHub Actions | 0/3 | Planning complete | - |
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-08*
+*Last updated: 2026-02-09*
