@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -251,7 +252,8 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 	log := logf.FromContext(ctx)
 
 	// Check if it's a Fleet API error
-	if apiErr, ok := err.(*fleetclient.FleetAPIError); ok {
+	var apiErr *fleetclient.FleetAPIError
+	if errors.As(err, &apiErr) {
 		switch apiErr.StatusCode {
 		case http.StatusBadRequest:
 			// Validation error - update status and don't retry immediately
@@ -261,12 +263,36 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 			return r.updateStatusError(ctx, pipeline, reasonValidationError, err)
 
 		case http.StatusNotFound:
-			// Pipeline was deleted externally, recreate it
-			log.Info("pipeline not found in Fleet Management, will recreate")
+			// Pipeline was deleted externally
+			// Check if we've already tried to recreate (ID is empty)
+			if pipeline.Status.ID == "" {
+				// Already tried recreation and still getting 404
+				log.Error(apiErr, "pipeline creation failed after external deletion detection")
+				r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
+					"Failed to recreate pipeline after external deletion")
+				return r.updateStatusError(ctx, pipeline, reasonSyncFailed,
+					fmt.Errorf("pipeline not found and recreation failed: %w", err))
+			}
+
+			// First detection - try to recreate inline (no recursion)
+			log.Info("pipeline not found in Fleet Management, attempting recreation",
+				"previousID", pipeline.Status.ID)
 			r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonRecreated,
 				"Pipeline was deleted externally, recreating in Fleet Management")
-			pipeline.Status.ID = "" // Clear the ID so it's created fresh
-			return r.reconcileNormal(ctx, pipeline)
+
+			// Clear ID and rebuild request
+			pipeline.Status.ID = ""
+			req := r.buildUpsertRequest(pipeline)
+
+			// Try to create - if this fails, handleAPIError will handle it
+			apiPipeline, err := r.FleetClient.UpsertPipeline(ctx, req)
+			if err != nil {
+				// Let handleAPIError classify the new error
+				return r.handleAPIError(ctx, pipeline, err)
+			}
+
+			// Successfully recreated
+			return r.updateStatusSuccess(ctx, pipeline, apiPipeline)
 
 		case http.StatusTooManyRequests:
 			// Rate limit - requeue with delay
@@ -360,7 +386,7 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 }
 
 // updateStatusError updates the status after an error
-func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, reason string, err error) (ctrl.Result, error) {
+func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, reason string, originalErr error) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Update observedGeneration to indicate we tried
@@ -371,7 +397,7 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
-		Message:            err.Error(),
+		Message:            originalErr.Error(),
 		ObservedGeneration: pipeline.Generation,
 	})
 
@@ -380,28 +406,31 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 		Type:               conditionTypeSynced,
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
-		Message:            err.Error(),
+		Message:            originalErr.Error(),
 		ObservedGeneration: pipeline.Generation,
 	})
 
-	// Update status
+	// CRITICAL: Try to update status, but preserve original error
 	if updateErr := r.Status().Update(ctx, pipeline); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
-			log.V(1).Info("status update conflict, requeueing")
+			// Cache is stale, requeue to get fresh copy
+			log.V(1).Info("status update conflict during error handling, requeueing")
 			return ctrl.Result{Requeue: true}, nil
 		}
-		log.Error(updateErr, "failed to update status")
-		return ctrl.Result{}, updateErr
+		// Log status update failure but continue to return original error
+		log.Error(updateErr, "failed to update status after reconciliation error",
+			"originalError", originalErr.Error(),
+			"reason", reason)
 	}
 
-	// For validation errors, don't retry immediately
-	if reason == reasonValidationError {
-		log.Info("validation error, not requeueing", "error", err.Error())
+	// For validation errors, don't retry
+	if !shouldRetry(originalErr, reason) {
+		log.Info("validation error, not requeueing", "error", originalErr.Error())
 		return ctrl.Result{}, nil
 	}
 
-	// For other errors, return error for exponential backoff
-	return ctrl.Result{}, err
+	// CRITICAL: Return original error to preserve exponential backoff
+	return ctrl.Result{}, originalErr
 }
 
 // SetupWithManager sets up the controller with the Manager.
