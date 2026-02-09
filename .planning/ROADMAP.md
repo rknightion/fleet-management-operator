@@ -46,10 +46,10 @@ Plans:
   3. ObservedGeneration pattern verified to skip unchanged specs
   4. No redundant Get after Create/Update operations (returned object reused)
   5. Finalizer removal makes exactly two API calls: one Get, one Update
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 06-01: TBD
+- [ ] 06-01-PLAN.md -- Audit reconcile loop API calls and write verification tests
 
 #### Phase 7: Watch Pattern Tuning
 **Goal**: Production-ready watch configuration with appropriate resync, rate limiting, and exponential backoff
@@ -77,9 +77,9 @@ Phases execute in numeric order: 5 → 6 → 7
 | 3. Logging & Quality | v1.0 | 2/2 | Complete | 2026-02-08 |
 | 4. E2E for GitHub Actions | v1.0 | 3/3 | Complete | 2026-02-09 |
 | 5. Informer Cache Audit | v1.1 | 0/1 | Not started | - |
-| 6. Reconcile Loop Optimization | v1.1 | 0/TBD | Not started | - |
+| 6. Reconcile Loop Optimization | v1.1 | 0/1 | Not started | - |
 | 7. Watch Pattern Tuning | v1.1 | 0/TBD | Not started | - |
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-09 after phase 5 planning*
+*Last updated: 2026-02-09 after phase 6 planning*
