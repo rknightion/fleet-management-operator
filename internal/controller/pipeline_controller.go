@@ -28,6 +28,21 @@ limitations under the License.
 // (if using a direct client) or load all resources into memory unnecessarily.
 // Single-resource Get() operations are sufficient for this controller's reconciliation
 // pattern where each Pipeline is reconciled independently.
+//
+// Reconcile Loop Audit:
+//
+// This controller makes exactly 5 Kubernetes API calls across all reconciliation paths:
+// - 1 Get() operation: Fetch the Pipeline resource that triggered reconciliation (cached read)
+// - 2 Update() operations: Add finalizer (spec change), remove finalizer (deletion complete)
+// - 2 Status().Update() operations: Record success state, record error state
+//
+// Path breakdown:
+// - Happy path (create/update): 3 calls = Get + UpsertPipeline (Fleet API) + Status().Update()
+// - Finalizer addition: 2 calls = Get + Update, then returns immediately for re-reconciliation
+// - Delete path: 3 calls = Get + DeletePipeline (Fleet API) + Update (finalizer removal)
+// - ObservedGeneration skip: 1 call = Get only, no further processing (spec unchanged)
+//
+// All API calls are justified and cannot be eliminated without breaking controller semantics.
 
 package controller
 
@@ -131,6 +146,8 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Cache: This Get() reads from the informer cache (not direct API server call) because
 	// r.Client is set via mgr.GetClient() which returns a cached reader. The cache is populated
 	// by the watch established in SetupWithManager().
+	// Reconcile: Required entry point - fetch the resource that triggered reconciliation. Cannot
+	// be eliminated; this is the standard controller-runtime pattern.
 	if err := r.Get(ctx, req.NamespacedName, pipeline); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Pipeline was deleted
@@ -151,6 +168,8 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		controllerutil.AddFinalizer(pipeline, pipelineFinalizer)
 		// Cache: Update() writes directly to the API server (not cached). The subsequent reconcile
 		// triggered by the watch event will see the updated object with the finalizer.
+		// Reconcile: Finalizer must be persisted before any Fleet Management API call. Returns
+		// immediately to let the watch re-trigger reconciliation with finalizer present.
 		if err := r.Update(ctx, pipeline); err != nil {
 			log.Error(err, "failed to add finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			return ctrl.Result{}, err
@@ -219,6 +238,8 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 	// Remove finalizer
 	controllerutil.RemoveFinalizer(pipeline, pipelineFinalizer)
 	// Cache: Update() writes directly to the API server. Once finalizer is removed, the resource is deleted.
+	// Reconcile: Finalizer removal is the final K8s API call in deletion. Once removed, the API
+	// server garbage-collects the resource. No subsequent Get is needed.
 	if err := r.Update(ctx, pipeline); err != nil {
 		log.Error(err, "failed to remove finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
 		return ctrl.Result{}, err
@@ -404,6 +425,8 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 	// cache is updated asynchronously via the watch. The ObservedGeneration check at the top of
 	// Reconcile() handles the cache-lag case where the watch event re-triggers reconciliation
 	// before the cache reflects the status update.
+	// Reconcile: Status subresource update after successful Fleet Management sync. Uses
+	// Status().Update() (not Update()) to avoid triggering a spec-change watch event.
 	if err := r.Status().Update(ctx, pipeline); err != nil {
 		if apierrors.IsConflict(err) {
 			// Resource was modified, requeue to get fresh copy
@@ -474,6 +497,8 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 
 	// CRITICAL: Try to update status, but preserve original error for exponential backoff
 	// Cache: Status().Update() writes directly to API server. See comment in updateStatusSuccess() for cache-lag handling.
+	// Reconcile: Status subresource update to record error condition. Uses Status().Update() to
+	// avoid spec-change watch event. Original error is preserved for exponential backoff.
 	if updateErr := r.Status().Update(ctx, pipeline); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
 			// Cache is stale, requeue to get fresh copy
