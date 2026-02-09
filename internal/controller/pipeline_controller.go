@@ -469,20 +469,20 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 // to correctly trigger exponential backoff via the workqueue rate limiter:
 //
 // 1. Returns error (this function, line 524): Triggers exponential backoff for transient API errors
-//    - Used for Fleet Management API errors (network, 5xx, etc.)
-//    - Controller-runtime increments the failure count and applies exponential delay (5ms -> 1000s)
+//   - Used for Fleet Management API errors (network, 5xx, etc.)
+//   - Controller-runtime increments the failure count and applies exponential delay (5ms -> 1000s)
 //
 // 2. Returns Requeue: true (line 434, 506): Requeues without failure count increment
-//    - Used for status update conflicts (optimistic locking, cache is stale)
-//    - Does NOT count as a failure, so no backoff penalty
+//   - Used for status update conflicts (optimistic locking, cache is stale)
+//   - Does NOT count as a failure, so no backoff penalty
 //
 // 3. Returns RequeueAfter (line 345): Timed requeue, bypasses workqueue rate limiter entirely
-//    - Used for 429 rate limit errors (Fleet Management API)
-//    - Fixed 10-second delay, no exponential increase
+//   - Used for 429 rate limit errors (Fleet Management API)
+//   - Fixed 10-second delay, no exponential increase
 //
 // 4. Returns nil error with empty Result (line 519): No requeue
-//    - Used for validation errors (400 Bad Request)
-//    - User must fix spec before retry, so no automatic requeue
+//   - Used for validation errors (400 Bad Request)
+//   - User must fix spec before retry, so no automatic requeue
 //
 // The combination of these four patterns correctly handles all error scenarios with appropriate
 // retry strategies. The workqueue's ItemExponentialFailureRateLimiter handles pattern #1.

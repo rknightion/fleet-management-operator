@@ -37,7 +37,7 @@ const namespace = "fm-crd-system"
 
 var (
 	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/fm-crd:v0.0.1"
+	managerImage = "example.com/fm-crd:v1.0.0"
 	// mockAPIImage is the mock Fleet Management API image for e2e tests.
 	mockAPIImage = "mock-fleet-api:test"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
@@ -116,10 +116,27 @@ var _ = BeforeSuite(func() {
 		g.Expect(output).To(Equal("True"), "Mock Fleet API pod not ready")
 	}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 
-	By("deploying the controller-manager")
-	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+	By("deploying the controller-manager with E2E kustomization")
+	// Use E2E-specific kustomization that deploys to fm-crd-system namespace with webhooks enabled
+	cmd = exec.Command("sh", "-c", "bin/kustomize build config/e2e | kubectl apply -f -")
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+	By("waiting for webhook service to be ready")
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "service", "fm-crd-webhook-service", "-n", namespace)
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Webhook service should exist")
+	}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+	By("waiting for webhook endpoint to be ready")
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "endpoints", "fm-crd-webhook-service", "-n", namespace,
+			"-o", "jsonpath={.subsets[0].addresses[0].ip}")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to get webhook endpoint")
+		g.Expect(output).NotTo(BeEmpty(), "Webhook endpoint should have an IP address")
+	}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 })
 
 var _ = AfterSuite(func() {
@@ -128,7 +145,7 @@ var _ = AfterSuite(func() {
 	_, _ = utils.Run(cmd)
 
 	By("undeploying the controller-manager")
-	cmd = exec.Command("make", "undeploy")
+	cmd = exec.Command("sh", "-c", "bin/kustomize build config/e2e | kubectl delete -f - --ignore-not-found")
 	_, _ = utils.Run(cmd)
 
 	By("undeploying the mock Fleet API")
