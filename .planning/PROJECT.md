@@ -8,6 +8,19 @@ A production Kubernetes operator that manages Grafana Cloud Fleet Management Pip
 
 Reliable, maintainable operator code with comprehensive error handling and observability that prevents production failures.
 
+## Current Milestone: v1.1 Best Practices Audit
+
+**Goal:** Verify and optimize operator implementation against Kubernetes controller best practices, focusing on API server efficiency patterns.
+
+**Target outcomes:**
+- Audit architecture against controller-runtime best practices
+- Verify informer cache usage and watch patterns
+- Eliminate unnecessary API calls in reconcile loop
+- Optimize manager/client configuration for production scale
+- Address any antipatterns from kubernetes-list-performance article
+
+**Prompted by:** Preventative review before production deployment - ensure we implement Kubernetes patterns correctly, especially API efficiency (LIST operations, cache usage, watch/resync patterns).
+
 ## Requirements
 
 ### Validated
@@ -96,4 +109,4 @@ Reliable, maintainable operator code with comprehensive error handling and obser
 | Deploy mock API before controller | Controller reads Fleet Management URL at startup | ✓ Good - Correct initialization order |
 
 ---
-*Last updated: 2026-02-09 after v1.0 milestone*
+*Last updated: 2026-02-09 after starting v1.1 milestone*
