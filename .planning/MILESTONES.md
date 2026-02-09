@@ -1,20 +1,14 @@
 # Milestones
 
-## v1.0 Tech Debt Cleanup (Shipped: 2026-02-08)
+## v1.0.0 Production-Ready Operator (Shipped: 2026-02-09)
 
-**Phases completed:** 4 phases, 9 plans, 8 tasks
-
-**Key accomplishments:**
-- (none recorded)
-
----
-
-
-## v1.1 Best Practices Audit (Shipped: 2026-02-09)
-
-**Phases completed:** 3 phases (5-7), 3 plans, 6 tasks
+**Phases completed:** 7 phases, 12 plans, 14 tasks
 
 **Key accomplishments:**
+- Enhanced error handling with FleetAPIError classification and transient retry logic
+- Production-grade structured logging with actionable troubleshooting hints
+- Complete E2E testing infrastructure with mock Fleet Management API
+- GitHub Actions CI/CD with Kind cluster automation
 - Verified zero List() calls in reconcile paths - all reads use informer cache
 - Documented all 5 Kubernetes API calls with production justification
 - Audited watch configuration: resync disabled, default rate limiter, four return patterns for backoff

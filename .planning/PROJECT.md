@@ -10,14 +10,14 @@ Reliable, maintainable operator code with comprehensive error handling and obser
 
 ## Current State
 
-**Latest Release:** v1.1 Best Practices Audit (2026-02-09)
+**Latest Release:** v1.0.0 Production-Ready Operator (2026-02-09)
 
-Comprehensive audit and documentation of Kubernetes controller best practices. Verified operator implementation is production-ready with:
-- Zero List() calls in reconcile paths (all reads use informer cache)
-- Minimal Kubernetes API calls (5 total, all justified)
-- Production-ready watch configuration (resync disabled, default rate limiter, four return patterns for backoff)
-- 13 AST-based verification tests preventing future regressions
-- Grep-able "Cache:", "Reconcile:", "Watch:" comment prefixes for audit tooling
+Production-ready Kubernetes operator with:
+- Robust error handling and structured logging
+- Complete E2E testing infrastructure
+- Verified Kubernetes controller best practices (cache usage, reconcile loop efficiency, watch configuration)
+- 13 AST-based verification tests preventing regressions
+- Comprehensive documentation with grep-able audit markers
 
 ## Next Milestone Goals
 
@@ -27,21 +27,7 @@ Comprehensive audit and documentation of Kubernetes controller best practices. V
 
 ### Validated
 
-**v1.1 - Best Practices Audit (2026-02-09):**
-- ✓ Audit confirms no direct List() calls bypass informer cache in controller code — v1.1
-- ✓ Audit confirms all read operations (Get, List) use cached client from manager — v1.1
-- ✓ Code comments document cache usage patterns and rationale with "Cache:" prefix — v1.1
-- ✓ Audit identifies all 5 Get/Update operations in reconcile loop with justification — v1.1
-- ✓ All status updates use Status().Update() method (not Update() on full resource) — v1.1
-- ✓ ObservedGeneration pattern verified to skip reconciles when spec unchanged — v1.1
-- ✓ No redundant Get operations after Create/Update (use returned object) — v1.1
-- ✓ Finalizer logic makes minimal API calls (single Get, single Update) — v1.1
-- ✓ Resync period configuration audited and documented (disabled, appropriate) — v1.1
-- ✓ Workqueue rate limiter configuration reviewed for production readiness — v1.1
-- ✓ Exponential backoff configured for transient error retries (four return patterns) — v1.1
-- ✓ No watch storm scenarios identified (single For() watch, no Owns/Watches) — v1.1
-
-**v1.0 - Tech Debt Cleanup (2026-02-09):**
+**v1.0.0 - Production-Ready Operator (2026-02-09):**
 - ✓ Enhanced FleetAPIError with IsTransient() method for error classification — v1.0
 - ✓ FleetAPIError includes PipelineID field for distributed tracing — v1.0
 - ✓ HTTP response body read errors captured and logged with full context — v1.0
@@ -81,21 +67,19 @@ Comprehensive audit and documentation of Kubernetes controller best practices. V
 
 ## Context
 
-**Current State (v1.1):**
+**Current State (v1.0.0):**
 - 2,778 lines of Go code in internal/ (plus test files)
 - Tech stack: Go 1.25.0, controller-runtime v0.23.0, Ginkgo/Gomega for E2E tests
 - 13 AST-based verification tests for best practices enforcement
 - Comprehensive documentation with grep-able audit prefixes
 
-**Shipped v1.1 (2026-02-09):**
-- Verified production-ready Kubernetes controller patterns
-- Documented all cache, reconcile, and watch configuration decisions
-- Added regression prevention tests for best practices
-
-**Shipped v1.0 (2026-02-09):**
+**Shipped v1.0.0 (2026-02-09):**
 - Enhanced error handling at client and controller layers
 - Production-grade structured logging with actionable error messages
 - Complete E2E testing infrastructure for CI/CD
+- Verified production-ready Kubernetes controller patterns
+- Documented all cache, reconcile, and watch configuration decisions
+- Added regression prevention tests for best practices
 
 **Technical Decisions:**
 - Use in-memory sync.Map for mock API (simple, sufficient for testing)
@@ -133,4 +117,4 @@ Comprehensive audit and documentation of Kubernetes controller best practices. V
 | Default workqueue rate limiter | Defense in depth with Fleet API rate limiting | ✓ Good - Exponential backoff + throughput cap |
 
 ---
-*Last updated: 2026-02-09 after completing v1.1 milestone*
+*Last updated: 2026-02-09 after completing v1.0.0 milestone*
