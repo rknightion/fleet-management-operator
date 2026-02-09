@@ -14,6 +14,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Cache Usage Audit:
+//
+// This controller uses ZERO List() operations in the reconciliation path.
+// The single Get() in Reconcile() reads from the informer cache, not the API server.
+// All writes (Update, Status().Update()) go directly to the API server.
+// The informer watch established in SetupWithManager() keeps the cache current.
+// The ObservedGeneration pattern handles cache-lag gracefully (reconcile may be
+// re-triggered before the cache reflects status updates, but the generation check
+// prevents duplicate work).
+//
+// Rationale: List() operations are avoided because they either bypass the cache
+// (if using a direct client) or load all resources into memory unnecessarily.
+// Single-resource Get() operations are sufficient for this controller's reconciliation
+// pattern where each Pipeline is reconciled independently.
+
 package controller
 
 import (
@@ -113,6 +128,9 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// 1. Fetch the Pipeline resource
 	pipeline := &fleetmanagementv1alpha1.Pipeline{}
+	// Cache: This Get() reads from the informer cache (not direct API server call) because
+	// r.Client is set via mgr.GetClient() which returns a cached reader. The cache is populated
+	// by the watch established in SetupWithManager().
 	if err := r.Get(ctx, req.NamespacedName, pipeline); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Pipeline was deleted
@@ -131,6 +149,8 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// 3. Add finalizer if not present
 	if !controllerutil.ContainsFinalizer(pipeline, pipelineFinalizer) {
 		controllerutil.AddFinalizer(pipeline, pipelineFinalizer)
+		// Cache: Update() writes directly to the API server (not cached). The subsequent reconcile
+		// triggered by the watch event will see the updated object with the finalizer.
 		if err := r.Update(ctx, pipeline); err != nil {
 			log.Error(err, "failed to add finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			return ctrl.Result{}, err
@@ -198,6 +218,7 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 
 	// Remove finalizer
 	controllerutil.RemoveFinalizer(pipeline, pipelineFinalizer)
+	// Cache: Update() writes directly to the API server. Once finalizer is removed, the resource is deleted.
 	if err := r.Update(ctx, pipeline); err != nil {
 		log.Error(err, "failed to remove finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
 		return ctrl.Result{}, err
@@ -379,6 +400,10 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 	}
 
 	// Update status
+	// Cache: Status().Update() writes directly to the API server status subresource. The informer
+	// cache is updated asynchronously via the watch. The ObservedGeneration check at the top of
+	// Reconcile() handles the cache-lag case where the watch event re-triggers reconciliation
+	// before the cache reflects the status update.
 	if err := r.Status().Update(ctx, pipeline); err != nil {
 		if apierrors.IsConflict(err) {
 			// Resource was modified, requeue to get fresh copy
@@ -448,6 +473,7 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	}
 
 	// CRITICAL: Try to update status, but preserve original error for exponential backoff
+	// Cache: Status().Update() writes directly to API server. See comment in updateStatusSuccess() for cache-lag handling.
 	if updateErr := r.Status().Update(ctx, pipeline); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
 			// Cache is stale, requeue to get fresh copy
@@ -475,6 +501,9 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *PipelineReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Cache: For(&Pipeline{}) establishes the informer watch that populates the cache with Pipeline
+	// resources. This is the read side that enables cached Get() calls in Reconcile(). The watch
+	// delivers add/update/delete events that trigger reconciliation.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetmanagementv1alpha1.Pipeline{}).
 		Named("pipeline").

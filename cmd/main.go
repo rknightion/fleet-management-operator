@@ -201,6 +201,9 @@ func main() {
 	setupLog.Info("initializing Fleet Management API client", "baseURL", fleetBaseURL, "username", fleetUsername)
 	fleetClient := fleetclient.NewClient(fleetBaseURL, fleetUsername, fleetPassword)
 
+	// Cache: mgr.GetClient() returns a cached client backed by the informer cache.
+	// All Get() and List() calls through this client read from the in-memory cache, not the API server.
+	// This is the controller-runtime default and correct pattern for production controllers.
 	if err := (&controller.PipelineReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
