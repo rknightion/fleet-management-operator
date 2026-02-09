@@ -8,22 +8,38 @@ A production Kubernetes operator that manages Grafana Cloud Fleet Management Pip
 
 Reliable, maintainable operator code with comprehensive error handling and observability that prevents production failures.
 
-## Current Milestone: v1.1 Best Practices Audit
+## Current State
 
-**Goal:** Verify and optimize operator implementation against Kubernetes controller best practices, focusing on API server efficiency patterns.
+**Latest Release:** v1.1 Best Practices Audit (2026-02-09)
 
-**Target outcomes:**
-- Audit architecture against controller-runtime best practices
-- Verify informer cache usage and watch patterns
-- Eliminate unnecessary API calls in reconcile loop
-- Optimize manager/client configuration for production scale
-- Address any antipatterns from kubernetes-list-performance article
+Comprehensive audit and documentation of Kubernetes controller best practices. Verified operator implementation is production-ready with:
+- Zero List() calls in reconcile paths (all reads use informer cache)
+- Minimal Kubernetes API calls (5 total, all justified)
+- Production-ready watch configuration (resync disabled, default rate limiter, four return patterns for backoff)
+- 13 AST-based verification tests preventing future regressions
+- Grep-able "Cache:", "Reconcile:", "Watch:" comment prefixes for audit tooling
 
-**Prompted by:** Preventative review before production deployment - ensure we implement Kubernetes patterns correctly, especially API efficiency (LIST operations, cache usage, watch/resync patterns).
+## Next Milestone Goals
+
+(To be defined - run `/gsd:new-milestone` to start planning)
 
 ## Requirements
 
 ### Validated
+
+**v1.1 - Best Practices Audit (2026-02-09):**
+- ✓ Audit confirms no direct List() calls bypass informer cache in controller code — v1.1
+- ✓ Audit confirms all read operations (Get, List) use cached client from manager — v1.1
+- ✓ Code comments document cache usage patterns and rationale with "Cache:" prefix — v1.1
+- ✓ Audit identifies all 5 Get/Update operations in reconcile loop with justification — v1.1
+- ✓ All status updates use Status().Update() method (not Update() on full resource) — v1.1
+- ✓ ObservedGeneration pattern verified to skip reconciles when spec unchanged — v1.1
+- ✓ No redundant Get operations after Create/Update (use returned object) — v1.1
+- ✓ Finalizer logic makes minimal API calls (single Get, single Update) — v1.1
+- ✓ Resync period configuration audited and documented (disabled, appropriate) — v1.1
+- ✓ Workqueue rate limiter configuration reviewed for production readiness — v1.1
+- ✓ Exponential backoff configured for transient error retries (four return patterns) — v1.1
+- ✓ No watch storm scenarios identified (single For() watch, no Owns/Watches) — v1.1
 
 **v1.0 - Tech Debt Cleanup (2026-02-09):**
 - ✓ Enhanced FleetAPIError with IsTransient() method for error classification — v1.0
@@ -65,12 +81,16 @@ Reliable, maintainable operator code with comprehensive error handling and obser
 
 ## Context
 
-**Current State (v1.0):**
-- 4,905 lines of Go code
+**Current State (v1.1):**
+- 2,778 lines of Go code in internal/ (plus test files)
 - Tech stack: Go 1.25.0, controller-runtime v0.23.0, Ginkgo/Gomega for E2E tests
-- 54 files modified in v1.0 (+10,900 insertions, -123 deletions)
-- Comprehensive unit test coverage for core logic
-- E2E test infrastructure with mock API and GitHub Actions automation
+- 13 AST-based verification tests for best practices enforcement
+- Comprehensive documentation with grep-able audit prefixes
+
+**Shipped v1.1 (2026-02-09):**
+- Verified production-ready Kubernetes controller patterns
+- Documented all cache, reconcile, and watch configuration decisions
+- Added regression prevention tests for best practices
 
 **Shipped v1.0 (2026-02-09):**
 - Enhanced error handling at client and controller layers
@@ -107,6 +127,10 @@ Reliable, maintainable operator code with comprehensive error handling and obser
 | Add E2E testing (Phase 4) | Originally out of scope, added as new phase | ✓ Good - Valuable CI/CD automation |
 | Use in-memory mock API | Avoids external dependencies, rate limits, secrets | ✓ Good - Fast, reliable tests |
 | Deploy mock API before controller | Controller reads Fleet Management URL at startup | ✓ Good - Correct initialization order |
+| Use AST parsing for best practices verification | Compile-time enforcement vs runtime checks | ✓ Good - Catches violations during tests |
+| Document with "Cache:", "Reconcile:", "Watch:" prefixes | Grep-able audit markers for tooling | ✓ Good - Supports automated compliance checking |
+| Resync disabled (nil SyncPeriod) | Watch-driven controller, no external drift | ✓ Good - Eliminates unnecessary reconciliation load |
+| Default workqueue rate limiter | Defense in depth with Fleet API rate limiting | ✓ Good - Exponential backoff + throughput cap |
 
 ---
-*Last updated: 2026-02-09 after starting v1.1 milestone*
+*Last updated: 2026-02-09 after completing v1.1 milestone*
