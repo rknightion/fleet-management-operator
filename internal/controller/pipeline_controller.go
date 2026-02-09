@@ -43,6 +43,14 @@ limitations under the License.
 // - ObservedGeneration skip: 1 call = Get only, no further processing (spec unchanged)
 //
 // All API calls are justified and cannot be eliminated without breaking controller semantics.
+//
+// Watch Pattern Audit:
+//
+// - Resync: Disabled (nil SyncPeriod in cmd/main.go) - appropriate for watch-driven controller
+// - Rate limiter: Default controller-runtime workqueue.DefaultTypedControllerRateLimiter
+//   (5ms-1000s exponential backoff + 10qps bucket rate limit)
+// - Backoff: Four return patterns correctly mapped to error types (error, Requeue, RequeueAfter, nil)
+// - Storm prevention: Single For() watch on Pipeline CRD, Status subresource updates, ObservedGeneration guard
 
 package controller
 
@@ -454,6 +462,30 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 }
 
 // updateStatusError updates the status after an error
+//
+// Watch: (WATCH-03) Exponential backoff configuration
+//
+// This function is part of the controller's error handling strategy which uses four return patterns
+// to correctly trigger exponential backoff via the workqueue rate limiter:
+//
+// 1. Returns error (this function, line 524): Triggers exponential backoff for transient API errors
+//    - Used for Fleet Management API errors (network, 5xx, etc.)
+//    - Controller-runtime increments the failure count and applies exponential delay (5ms -> 1000s)
+//
+// 2. Returns Requeue: true (line 434, 506): Requeues without failure count increment
+//    - Used for status update conflicts (optimistic locking, cache is stale)
+//    - Does NOT count as a failure, so no backoff penalty
+//
+// 3. Returns RequeueAfter (line 345): Timed requeue, bypasses workqueue rate limiter entirely
+//    - Used for 429 rate limit errors (Fleet Management API)
+//    - Fixed 10-second delay, no exponential increase
+//
+// 4. Returns nil error with empty Result (line 519): No requeue
+//    - Used for validation errors (400 Bad Request)
+//    - User must fix spec before retry, so no automatic requeue
+//
+// The combination of these four patterns correctly handles all error scenarios with appropriate
+// retry strategies. The workqueue's ItemExponentialFailureRateLimiter handles pattern #1.
 func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, reason string, originalErr error) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -529,6 +561,36 @@ func (r *PipelineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Cache: For(&Pipeline{}) establishes the informer watch that populates the cache with Pipeline
 	// resources. This is the read side that enables cached Get() calls in Reconcile(). The watch
 	// delivers add/update/delete events that trigger reconciliation.
+	//
+	// Watch: (WATCH-02) Workqueue rate limiter configuration
+	//
+	// This controller uses the controller-runtime default rate limiter (no explicit WithOptions).
+	// The default in controller-runtime v0.23.0 is workqueue.DefaultTypedControllerRateLimiter which combines:
+	//
+	// - ItemExponentialFailureRateLimiter: base 5ms, max 1000s (16.6 min) - handles per-item backoff
+	// - BucketRateLimiter: 10 qps, burst 100 - overall throughput cap
+	//
+	// This is APPROPRIATE for this operator because:
+	//
+	// - Single Pipeline CRD type with expected low-to-moderate volume
+	// - Fleet Management API has its own rate limiter (3 req/s via golang.org/x/time/rate in fleetclient)
+	// - The double rate limiting (workqueue + Fleet API client) provides defense in depth
+	// - MaxConcurrentReconciles defaults to 1, which is correct for serial Fleet API access
+	//
+	// Production note: The default rate limiter provides exponential backoff for transient errors
+	// while preventing thundering herd scenarios. No custom WithOptions configuration is needed.
+	//
+	// Watch: (WATCH-04) Watch storm prevention
+	//
+	// This controller has NO watch storm risk because:
+	//
+	// - Only watches Pipeline CRD via For() - no Owns(), no Watches() on secondary resources
+	// - Status updates use Status().Update() (not Update()), so they do NOT trigger spec-change watch events
+	// - Finalizer updates DO trigger a watch event, but the ObservedGeneration guard at line 182
+	//   prevents redundant reconciliation (after finalizer is added, generation remains unchanged)
+	// - No external event sources (no channel watches, no generic event handlers)
+	//
+	// The single For() watch combined with Status subresource usage guarantees no feedback loops.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetmanagementv1alpha1.Pipeline{}).
 		Named("pipeline").

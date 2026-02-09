@@ -155,6 +155,24 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	// Watch: (WATCH-01) Resync period configuration
+	//
+	// This manager uses NO explicit SyncPeriod (nil/default), which means controller-runtime
+	// does NOT perform periodic reconciliation of all watched resources. This is the CORRECT
+	// choice for this operator because:
+	//
+	// - The controller uses watch events for Pipeline resources, providing real-time updates
+	// - The ObservedGeneration pattern handles cache-lag gracefully (see pipeline_controller.go)
+	// - Fleet Management collectors poll every 5 minutes independently of this operator
+	// - The operator is the sole writer to Fleet Management for these pipelines, so there is
+	//   no external state drift detection requirement
+	//
+	// If periodic resync were needed in the future (e.g., to detect manual Fleet Management
+	// changes made outside this operator), it should be set to 10-15 minutes (2-3x the collector
+	// poll interval) to avoid unnecessary reconciliation load.
+	//
+	// Production recommendation: Keep SyncPeriod unset (nil) for watch-driven controllers with
+	// no external drift concerns.
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
