@@ -44,17 +44,26 @@
 
 ## Traceability
 
-Traceability will be populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (to be filled by roadmapper) | | |
+| CACHE-01 | Phase 5 | Pending |
+| CACHE-02 | Phase 5 | Pending |
+| CACHE-03 | Phase 5 | Pending |
+| RECON-01 | Phase 6 | Pending |
+| RECON-02 | Phase 6 | Pending |
+| RECON-03 | Phase 6 | Pending |
+| RECON-04 | Phase 6 | Pending |
+| RECON-05 | Phase 6 | Pending |
+| WATCH-01 | Phase 7 | Pending |
+| WATCH-02 | Phase 7 | Pending |
+| WATCH-03 | Phase 7 | Pending |
+| WATCH-04 | Phase 7 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 12 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 12 ⚠️
+- Mapped to phases: 12 (100% coverage)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-09*
-*Last updated: 2026-02-09 after initial definition*
+*Last updated: 2026-02-09 after roadmap creation*
