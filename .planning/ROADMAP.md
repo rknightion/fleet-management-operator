@@ -31,10 +31,10 @@
   1. Code audit confirms zero List() calls bypass informer cache in controller reconciliation
   2. All Get/List operations use cached client from manager.GetClient()
   3. Code comments document cache usage rationale for each read operation
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 05-01: TBD
+- [ ] 05-01-PLAN.md -- Audit and document informer cache usage with verification tests
 
 #### Phase 6: Reconcile Loop Optimization
 **Goal**: Minimize API server calls in reconcile loop and verify status update patterns
@@ -76,10 +76,10 @@ Phases execute in numeric order: 5 → 6 → 7
 | 2. Controller Error Handling | v1.0 | 2/2 | Complete | 2026-02-08 |
 | 3. Logging & Quality | v1.0 | 2/2 | Complete | 2026-02-08 |
 | 4. E2E for GitHub Actions | v1.0 | 3/3 | Complete | 2026-02-09 |
-| 5. Informer Cache Audit | v1.1 | 0/TBD | Not started | - |
+| 5. Informer Cache Audit | v1.1 | 0/1 | Not started | - |
 | 6. Reconcile Loop Optimization | v1.1 | 0/TBD | Not started | - |
 | 7. Watch Pattern Tuning | v1.1 | 0/TBD | Not started | - |
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-09 after v1.1 roadmap creation*
+*Last updated: 2026-02-09 after phase 5 planning*
