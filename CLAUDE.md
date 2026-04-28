@@ -157,6 +157,34 @@ make test-e2e
 
 See `docs/webhook-setup.md` for setup instructions.
 
+## TenantPolicy (opt-in K8s RBAC tenancy)
+
+Cluster-scoped `TenantPolicy` CRD binds K8s subjects (groups, users, SAs)
+to a set of required matchers. When `--enable-tenant-policy-enforcement`
+is set (Helm: `controllers.tenantPolicy.enabled: true`), the validating
+webhooks for `Pipeline`, `RemoteAttributePolicy`, and
+`ExternalAttributeSync` require that at least one of the matched
+subject's required matchers appears in the CR's matcher set. Default-allow
+when no policy matches the requesting user.
+
+Webhook plumbing: each CR has a private `*Validator` struct in
+`api/v1alpha1/*_webhook.go` that holds a `MatcherChecker` interface (see
+`api/v1alpha1/webhook_tenant.go`). The concrete checker is
+`internal/tenant.Checker` and is constructed in `cmd/main.go` only when
+the flag is on. Tests in `api/v1alpha1/webhook_tenant_test.go` use a fake
+checker; tests in `internal/tenant/checker_test.go` exercise subject
+matching, multi-policy union, and namespaceSelector.
+
+Status reconciler: when enforcement is on, `TenantPolicyReconciler`
+(`internal/controller/tenant_policy_controller.go`) is also started. It
+re-runs spec validation (matcher syntax, namespace selector parse) and
+writes `Ready`/`Valid` conditions plus `status.boundSubjectCount` and
+`status.observedGeneration`. No Fleet Management calls; no finalizer.
+
+V1 gaps (documented): `selector.collectorIDs` bypasses matcher checks;
+required-matcher semantics don't reason about negation/regex; `Collector`
+and `CollectorDiscovery` are not covered. See `docs/tenant-policy.md`.
+
 ## Kubernetes Events
 
 **Controller emits events for debugging:**
