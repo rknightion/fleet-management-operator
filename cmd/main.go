@@ -34,12 +34,19 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
+	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	corev1 "k8s.io/api/core/v1"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 	"github.com/grafana/fleet-management-operator/internal/controller"
@@ -280,6 +287,42 @@ func main() {
 		os.Exit(1)
 	}
 
+	// OpenTelemetry tracing — noop by default, enabled when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+	// Setting up tracing here (after manager creation) so the manager shutdown hook can
+	// flush any pending spans before the process exits.
+	var tracer oteltrace.Tracer = noop.NewTracerProvider().Tracer("fleet-management-operator")
+
+	if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); endpoint != "" {
+		exp, otelErr := otlptracegrpc.New(context.Background(),
+			otlptracegrpc.WithEndpoint(endpoint),
+			otlptracegrpc.WithInsecure(),
+		)
+		if otelErr != nil {
+			setupLog.Error(otelErr, "failed to create OTEL exporter; tracing disabled")
+		} else {
+			res, _ := sdkresource.New(context.Background(),
+				sdkresource.WithAttributes(
+					// "service.name" is the canonical OTEL resource attribute key
+					// (go.opentelemetry.io/otel/semconv/v1.27.0.ServiceNameKey).
+					attribute.String("service.name", "fleet-management-operator"),
+				),
+			)
+			tp := sdktrace.NewTracerProvider(
+				sdktrace.WithBatcher(exp),
+				sdktrace.WithResource(res),
+			)
+			otel.SetTracerProvider(tp)
+			tracer = tp.Tracer("fleet-management-operator")
+			if addErr := mgr.Add(ctrlmanager.RunnableFunc(func(ctx context.Context) error {
+				<-ctx.Done()
+				return tp.Shutdown(context.Background())
+			})); addErr != nil {
+				setupLog.Error(addErr, "unable to register OTEL shutdown hook")
+			}
+			setupLog.Info("OpenTelemetry tracing enabled", "endpoint", endpoint)
+		}
+	}
+
 	// Initialize Fleet Management API client
 	fleetBaseURL := os.Getenv("FLEET_MANAGEMENT_BASE_URL")
 	if fleetBaseURL == "" {
@@ -303,7 +346,8 @@ func main() {
 		"baseURL", fleetBaseURL, "username", fleetUsername,
 		"rps", fleetAPIRPS, "burst", fleetAPIBurst)
 	fleetClient := fleetclient.NewClient(fleetBaseURL, fleetUsername, fleetPassword,
-		fleetclient.WithRateLimit(fleetAPIRPS, fleetAPIBurst))
+		fleetclient.WithRateLimit(fleetAPIRPS, fleetAPIBurst),
+		fleetclient.WithTracer(tracer))
 
 	// Two-tier rate limiting:
 	//   Tier 1 — workqueue (controller-runtime default): 10 qps bucket, burst 100.
@@ -353,7 +397,7 @@ func main() {
 		}
 	}
 
-	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+	if err := mgr.Add(ctrlmanager.RunnableFunc(func(ctx context.Context) error {
 		<-ctx.Done()
 		fleetClient.Close()
 		return nil

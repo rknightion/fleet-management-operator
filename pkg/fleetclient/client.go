@@ -26,14 +26,17 @@ import (
 	"github.com/grafana/fleet-management-api/api/gen/proto/go/collector/v1/collectorv1connect"
 	pipelinev1 "github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1"
 	"github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1/pipelinev1connect"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"golang.org/x/time/rate"
 )
 
 // clientConfig holds optional configuration for NewClient. Populated by
 // applying ClientOption values; zero fields fall back to safe defaults.
 type clientConfig struct {
-	rps   float64
-	burst int
+	rps    float64
+	burst  int
+	tracer trace.Tracer
 }
 
 // ClientOption configures a Fleet Management API client.
@@ -59,6 +62,13 @@ func WithRateLimit(rps float64, burst int) ClientOption {
 	}
 }
 
+// WithTracer sets the OpenTelemetry tracer used to instrument outgoing Fleet
+// Management API calls. When not set (the default), a noop tracer is used so
+// there is zero overhead.
+func WithTracer(tracer trace.Tracer) ClientOption {
+	return func(c *clientConfig) { c.tracer = tracer }
+}
+
 // Client is a client for the Fleet Management API. It speaks the connect
 // protocol against the PipelineService and CollectorService using shared
 // rate-limit and basic-auth interceptors.
@@ -82,6 +92,7 @@ func (c *Client) Limiter() *rate.Limiter { return c.limiter }
 // automatically so existing deployments keep working.
 //
 // Use WithRateLimit to override the default rate (3 rps) and burst (50).
+// Use WithTracer to enable OpenTelemetry tracing for Fleet API calls (noop by default).
 func NewClient(baseURL, username, password string, opts ...ClientOption) *Client {
 	cfg := clientConfig{rps: 3, burst: 50}
 	for _, o := range opts {
@@ -92,6 +103,11 @@ func NewClient(baseURL, username, password string, opts ...ClientOption) *Client
 	}
 	if cfg.burst <= 0 {
 		cfg.burst = 50
+	}
+
+	tracer := cfg.tracer
+	if tracer == nil {
+		tracer = noop.NewTracerProvider().Tracer("fleet-management-operator")
 	}
 
 	rootURL := normalizeBaseURL(baseURL)
@@ -110,6 +126,7 @@ func NewClient(baseURL, username, password string, opts ...ClientOption) *Client
 	interceptors := connect.WithInterceptors(
 		rateLimitInterceptor(limiter),
 		basicAuthInterceptor(username, password),
+		tracingInterceptor(tracer),
 		metricsInterceptor(),
 	)
 
