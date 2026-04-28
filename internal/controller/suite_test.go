@@ -118,7 +118,7 @@ var _ = BeforeSuite(func() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("policy-controller"),
-	}).SetupWithManager(mgr)
+	}).SetupWithManager(ctx, mgr)
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&ExternalAttributeSyncReconciler{
@@ -131,7 +131,7 @@ var _ = BeforeSuite(func() {
 			}
 			return externalSyncFakeSource, nil
 		},
-	}).SetupWithManager(mgr)
+	}).SetupWithManager(ctx, mgr)
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&CollectorDiscoveryReconciler{

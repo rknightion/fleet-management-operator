@@ -71,6 +71,12 @@ const (
 	// faster than the schedule itself so a misconfigured source surfaces
 	// quickly without slamming the upstream.
 	defaultExternalSyncRequeueOnError = 30 * time.Second
+
+	// externalSyncMatcherKeyIndex is an IndexField on ExternalAttributeSync
+	// indexed by the label key names referenced in spec.selector.matchers.
+	// It lets the Collector watch handler look up only the syncs whose matchers
+	// mention a key present in the changed Collector.
+	externalSyncMatcherKeyIndex = ".spec.selector.matcherKeys"
 )
 
 // SourceFactory builds a sources.Source from a v1alpha1.ExternalSource spec
@@ -492,16 +498,26 @@ func (r *ExternalAttributeSyncReconciler) updateStatusError(
 //  2. The Secret it references — credential rotation triggers a re-fetch
 //     without waiting for the schedule.
 //  3. Collector — when a Collector CR appears or its localAttributes change,
-//     the matched-collector set may shift, so re-fetch and re-project. This
-//     also closes the bootstrap window where an ExternalAttributeSync
-//     created before its target Collector CR would never apply records
-//     (matchedCollectors would be empty at the first fetch, then never
-//     re-evaluated until the schedule fired).
-func (r *ExternalAttributeSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
+//     the matched-collector set may shift, so re-fetch and re-project. The
+//     handler uses externalSyncMatcherKeyIndex to enqueue only the syncs
+//     whose matchers reference keys present in the Collector's attributes.
+func (r *ExternalAttributeSyncReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(ctx,
+		&fleetmanagementv1alpha1.ExternalAttributeSync{},
+		externalSyncMatcherKeyIndex,
+		func(o client.Object) []string {
+			s := o.(*fleetmanagementv1alpha1.ExternalAttributeSync)
+			return attributes.MatcherKeys(s.Spec.Selector.Matchers)
+		},
+	); err != nil {
+		return fmt.Errorf("indexing ExternalAttributeSync matcher keys: %w", err)
+	}
+
 	maxConcurrent := r.MaxConcurrentReconciles
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1
 	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
 		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrent}).
@@ -511,37 +527,89 @@ func (r *ExternalAttributeSyncReconciler) SetupWithManager(mgr ctrl.Manager) err
 		).
 		Watches(
 			&fleetmanagementv1alpha1.Collector{},
-			handler.EnqueueRequestsFromMapFunc(r.syncsAffectedByCollector),
+			handler.EnqueueRequestsFromMapFunc(r.mapCollectorToAffectedSyncs),
 		).
 		Named("externalattributesync").
 		Complete(r)
 }
 
-// syncsAffectedByCollector returns reconcile requests for every
-// ExternalAttributeSync in the same namespace as the changed Collector.
-// Phase 3 fans out broadly (all syncs in the namespace); narrowing by
-// matcher overlap is a Phase 4+ optimization.
-func (r *ExternalAttributeSyncReconciler) syncsAffectedByCollector(ctx context.Context, obj client.Object) []reconcile.Request {
+// mapCollectorToAffectedSyncs returns reconcile requests for only the
+// ExternalAttributeSyncs whose matchers reference at least one key present in
+// the changed Collector's attributes. This avoids the O(collectors * syncs)
+// fan-out from the naive "enqueue every sync" approach.
+//
+// When the Collector has no attributes, we fall back to the broad
+// namespace-wide enqueue so that new Collectors are still picked up by all
+// syncs, including those matching via CollectorIDs.
+func (r *ExternalAttributeSyncReconciler) mapCollectorToAffectedSyncs(ctx context.Context, obj client.Object) []reconcile.Request {
+	log := logf.FromContext(ctx)
+
 	collector, ok := obj.(*fleetmanagementv1alpha1.Collector)
 	if !ok {
 		return nil
 	}
 
-	var list fleetmanagementv1alpha1.ExternalAttributeSyncList
-	if err := r.List(ctx, &list, client.InNamespace(collector.Namespace)); err != nil {
-		logf.FromContext(ctx).Error(err, "listing syncs for collector watch fan-out",
-			"collector", collector.Namespace+"/"+collector.Name)
-		return nil
+	// Build the set of attribute keys the Collector carries.
+	collectorKeys := make(map[string]struct{})
+	for k := range collector.Spec.RemoteAttributes {
+		collectorKeys[k] = struct{}{}
+	}
+	for k := range collector.Status.LocalAttributes {
+		collectorKeys[k] = struct{}{}
+	}
+	// Always include the synthetic collector.id key.
+	collectorKeys["collector.id"] = struct{}{}
+
+	if len(collectorKeys) == 0 {
+		return r.allSyncsInNamespace(ctx, collector.Namespace)
 	}
 
-	out := make([]reconcile.Request, 0, len(list.Items))
-	for i := range list.Items {
-		s := &list.Items[i]
-		out = append(out, reconcile.Request{
-			NamespacedName: client.ObjectKey{Namespace: s.Namespace, Name: s.Name},
-		})
+	seen := map[types.NamespacedName]struct{}{}
+	var reqs []reconcile.Request
+	for key := range collectorKeys {
+		var list fleetmanagementv1alpha1.ExternalAttributeSyncList
+		if err := r.List(ctx, &list,
+			client.InNamespace(collector.Namespace),
+			client.MatchingFields{externalSyncMatcherKeyIndex: key},
+		); err != nil {
+			log.Error(err, "failed to list ExternalAttributeSyncs by index for Collector watch",
+				"namespace", collector.Namespace, "collector", collector.Name, "key", key)
+			continue
+		}
+		for i := range list.Items {
+			nn := types.NamespacedName{
+				Namespace: list.Items[i].Namespace,
+				Name:      list.Items[i].Name,
+			}
+			if _, dup := seen[nn]; !dup {
+				seen[nn] = struct{}{}
+				reqs = append(reqs, reconcile.Request{NamespacedName: nn})
+			}
+		}
 	}
-	return out
+	return reqs
+}
+
+// allSyncsInNamespace returns reconcile requests for every
+// ExternalAttributeSync in the given namespace. Used as a fallback when a
+// Collector has no attributes to key on.
+func (r *ExternalAttributeSyncReconciler) allSyncsInNamespace(ctx context.Context, ns string) []reconcile.Request {
+	log := logf.FromContext(ctx)
+
+	var list fleetmanagementv1alpha1.ExternalAttributeSyncList
+	if err := r.List(ctx, &list, client.InNamespace(ns)); err != nil {
+		log.Error(err, "failed to list ExternalAttributeSyncs for Collector watch fan-out (fallback)",
+			"namespace", ns)
+		return nil
+	}
+	reqs := make([]reconcile.Request, len(list.Items))
+	for i := range list.Items {
+		reqs[i] = reconcile.Request{NamespacedName: types.NamespacedName{
+			Namespace: list.Items[i].Namespace,
+			Name:      list.Items[i].Name,
+		}}
+	}
+	return reqs
 }
 
 // syncsReferencingSecret returns reconcile requests for every

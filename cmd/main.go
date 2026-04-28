@@ -449,7 +449,7 @@ func main() {
 			Scheme:                  mgr.GetScheme(),
 			Recorder:                mgr.GetEventRecorderFor("policy-controller"),
 			MaxConcurrentReconciles: policyMaxConcurrent,
-		}).SetupWithManager(mgr); err != nil {
+		}).SetupWithManager(context.Background(), mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "RemoteAttributePolicy")
 			os.Exit(1)
 		}
@@ -467,7 +467,7 @@ func main() {
 			Recorder:                mgr.GetEventRecorderFor("externalattributesync-controller"),
 			Factory:                 buildExternalSourceFactory(),
 			MaxConcurrentReconciles: syncMaxConcurrent,
-		}).SetupWithManager(mgr); err != nil {
+		}).SetupWithManager(context.Background(), mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "ExternalAttributeSync")
 			os.Exit(1)
 		}
