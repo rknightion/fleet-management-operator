@@ -15,6 +15,8 @@ image:
   repository: fleet-management-operator
   pullPolicy: IfNotPresent
   tag: "dev-v1.0.0"
+  # digest: ""  # When set, overrides tag. Use sha256:<digest> for supply-chain security.
+  # Example: digest: "sha256:abc123..."
 
 # Image pull secrets for private registries.
 # Air-gapped / private registry: set imagePullSecrets and override image.repository.

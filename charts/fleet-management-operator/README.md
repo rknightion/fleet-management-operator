@@ -104,8 +104,23 @@ The following table lists the configurable parameters and their default values.
 |-----------|-------------|---------|
 | `image.repository` | Container image repository | `fleet-management-operator` |
 | `image.tag` | Container image tag | `dev-v1.0.0` |
+| `image.digest` | Image digest (overrides tag when set) | `""` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `imagePullSecrets` | Image pull secrets | `[]` |
+
+### Production image pinning
+
+The default `image.tag` uses a floating tag. For production deployments, pin to a
+specific digest to prevent supply-chain tag-swap attacks:
+
+```yaml
+image:
+  digest: "sha256:<digest>"
+  tag: ""   # ignored when digest is set
+```
+
+Find digests in the container registry. The operator's Dockerfile base image
+(distroless/static:nonroot) is also pinned to a digest — see `Dockerfile`.
 
 ### Fleet Management API
 
