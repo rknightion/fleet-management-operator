@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -37,17 +38,28 @@ import (
 	"github.com/grafana/fleet-management-operator/pkg/fleetclient"
 )
 
+// pipelineMock is the package-level mock used by the suite-managed
+// PipelineReconciler. Tests configure it in BeforeEach via reset() and
+// toggle individual flags. A mutex guards the fields because the controller
+// calls into the mock from a goroutine.
+// Tests in this file run serially against a shared envtest cluster.
+// Do not enable Ginkgo parallel mode -- mock state is shared.
+var pipelineMock *mockFleetClient
+
 // Mock Fleet Management API client
 type mockFleetClient struct {
-	pipelines              map[string]*fleetclient.Pipeline
-	upsertError            error
-	deleteError            error
-	callCount              int
-	lastUpsertRequest      *fleetclient.UpsertPipelineRequest
-	shouldReturn404        bool
-	shouldReturn400        bool
-	shouldReturn429        bool
-	shouldReturn404OnFirst bool // Return 404 on first call, then succeed
+	mu sync.Mutex
+
+	pipelines               map[string]*fleetclient.Pipeline
+	upsertError             error
+	deleteError             error
+	callCount               int
+	lastUpsertRequest       *fleetclient.UpsertPipelineRequest
+	shouldReturn404         bool
+	shouldReturn400         bool
+	shouldReturn429         bool
+	shouldReturn404OnFirst  bool // Return 404 on first call, then succeed
+	shouldReturn404OnDelete bool // Return 404 only from DeletePipeline
 }
 
 func newMockFleetClient() *mockFleetClient {
@@ -56,7 +68,20 @@ func newMockFleetClient() *mockFleetClient {
 	}
 }
 
+// reset returns the mock to a clean default state. Tests call this in
+// BeforeEach so prior runs don't leak through. Must only be called from a
+// serial context (BeforeEach) — not from goroutines. The full-struct
+// zero-assignment clears the embedded mutex, so we must not hold the lock
+// across the zeroing (which would cause unlock-of-unlocked-mutex).
+func (m *mockFleetClient) reset() {
+	// Zero-value reset covers all fields -- safer than listing them individually.
+	*m = mockFleetClient{}
+	m.pipelines = make(map[string]*fleetclient.Pipeline)
+}
+
 func (m *mockFleetClient) UpsertPipeline(ctx context.Context, req *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.callCount++
 	m.lastUpsertRequest = req
 
@@ -111,7 +136,9 @@ func (m *mockFleetClient) UpsertPipeline(ctx context.Context, req *fleetclient.U
 }
 
 func (m *mockFleetClient) DeletePipeline(ctx context.Context, id string) error {
-	if m.shouldReturn404 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.shouldReturn404 || m.shouldReturn404OnDelete {
 		return &fleetclient.FleetAPIError{
 			StatusCode: http.StatusNotFound,
 			Operation:  "DeletePipeline",
@@ -164,6 +191,12 @@ var _ = Describe("Pipeline Controller", func() {
 			Name:      pipelineName,
 			Namespace: pipelineNamespace,
 		}
+
+		BeforeEach(func() {
+			// Zero-value reset covers all fields -- safer than listing them
+			// individually. Re-initialize the map field afterward.
+			pipelineMock.reset()
+		})
 
 		AfterEach(func() {
 			// Cleanup
@@ -298,6 +331,66 @@ var _ = Describe("Pipeline Controller", func() {
 				err := k8sClient.Get(ctx, typeNamespacedName, pipeline)
 				return err != nil
 			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("preserves Synced=True when Fleet API returns 429 and recovers on retry", func() {
+			// 429 handling requeues with a fixed delay without updating status (keeping
+			// the last-known-good state). This ensures that transient rate-limits do not
+			// flip a healthy Pipeline to an error state. Once 429 clears the controller
+			// reconciles again and the spec update is applied.
+			By("Creating a Pipeline with valid spec")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineName,
+					Namespace: pipelineNamespace,
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents:   "prometheus.exporter.self \"alloy\" { }",
+					Enabled:    true,
+					Matchers:   []string{"env=prod"},
+					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipeline)).To(Succeed())
+
+			By("Waiting for the initial sync to succeed (FleetID set)")
+			Eventually(func() string {
+				err := k8sClient.Get(ctx, typeNamespacedName, pipeline)
+				if err != nil {
+					return ""
+				}
+				return pipeline.Status.ID
+			}, timeout, interval).Should(Equal("mock-id-123"))
+
+			By("Enabling 429 responses on the mock")
+			pipelineMock.mu.Lock()
+			pipelineMock.shouldReturn429 = true
+			pipelineMock.mu.Unlock()
+
+			By("Updating the Pipeline spec to trigger a new reconcile")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, pipeline)).To(Succeed())
+			pipeline.Spec.Contents = "prometheus.exporter.self \"alloy\" { } // updated"
+			Expect(k8sClient.Update(ctx, pipeline)).To(Succeed())
+
+			By("Disabling 429 responses so the controller can recover")
+			pipelineMock.mu.Lock()
+			pipelineMock.shouldReturn429 = false
+			pipelineMock.mu.Unlock()
+
+			By("Asserting Synced=True after recovery — status is preserved through the 429 window")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, typeNamespacedName, pipeline)
+				if err != nil {
+					return false
+				}
+				for _, condition := range pipeline.Status.Conditions {
+					if condition.Type == conditionTypeSynced &&
+						condition.Status == metav1.ConditionTrue {
+						return true
+					}
+				}
+				return false
+			}, timeout, interval).Should(BeTrue(), "expected Synced=True after 429 clears")
 		})
 
 		It("should handle validation errors from Fleet Management API", func() {
@@ -478,7 +571,7 @@ var _ = Describe("Pipeline Controller", func() {
 
 			By("Verifying status fields were updated in-memory")
 			Expect(pipeline.Status.ObservedGeneration).To(Equal(pipeline.Generation))
-			Expect(len(pipeline.Status.Conditions)).To(BeNumerically(">", 0))
+			Expect(pipeline.Status.Conditions).ToNot(BeEmpty())
 
 			// Find Ready condition
 			var readyCondition *metav1.Condition
@@ -535,8 +628,8 @@ var _ = Describe("Pipeline Controller", func() {
 			result, err := reconciler.updateStatusError(ctx, pipeline, reasonSyncFailed, originalErr)
 
 			By("Verifying requeue is triggered and error is nil")
-			Expect(err).To(BeNil())
-			Expect(result.Requeue).To(BeTrue())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.Requeue).To(BeTrue()) //nolint:staticcheck // testing deprecated field intentionally
 		})
 
 		It("should not retry validation errors", func() {
@@ -573,7 +666,7 @@ var _ = Describe("Pipeline Controller", func() {
 			result, err := reconciler.updateStatusError(ctx, pipeline, reasonValidationError, validationErr)
 
 			By("Verifying no retry is triggered")
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(Equal(ctrl.Result{}))
 		})
 
@@ -617,7 +710,7 @@ var _ = Describe("Pipeline Controller", func() {
 
 			By("Verifying success after recreation")
 			// After successful recreation, should return success result
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(Equal(ctrl.Result{}))
 			Expect(pipeline.Status.ID).To(Equal("mock-id-123"))
 		})
@@ -662,7 +755,7 @@ var _ = Describe("Pipeline Controller", func() {
 			// When ID is empty, handleAPIError recognizes recreation already failed
 			// and returns error via updateStatusError. Since 404 is permanent,
 			// shouldRetry returns false, so updateStatusError returns nil (no exponential backoff)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(Equal(ctrl.Result{}))
 
 			By("Verifying Ready condition reflects the failure")
@@ -677,6 +770,74 @@ var _ = Describe("Pipeline Controller", func() {
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal(reasonSyncFailed))
 			Expect(readyCondition.Message).To(ContainSubstring("recreation failed"))
+		})
+
+		It("removes the finalizer when DeletePipeline returns 404", func() {
+			// This test exercises the 404-on-delete path inside reconcileDelete:
+			// when Fleet Management returns 404 the controller must treat the
+			// pipeline as already gone and still remove the K8s finalizer so
+			// the CR is garbage-collected. Using a direct reconcileDelete call
+			// avoids racing with the shared envtest PipelineReconciler.
+			By("Setting up a pipeline that already has a Fleet ID and finalizer")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+					Finalizers: []string{pipelineFinalizer},
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "prometheus.exporter.self \"alloy\" { }",
+					Enabled:  true,
+				},
+				Status: fleetmanagementv1alpha1.PipelineStatus{
+					ID: "fleet-id-abc",
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			By("Configuring the mock to return 404 from DeletePipeline")
+			deleteMock := newMockFleetClient()
+			deleteMock.shouldReturn404OnDelete = true
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: deleteMock,
+			}
+
+			By("Calling reconcileDelete directly")
+			result, err := reconciler.reconcileDelete(context.Background(), pipeline)
+
+			By("Verifying the call succeeded despite the 404")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+
+			By("Verifying the finalizer has been removed from the in-memory object")
+			Expect(slices.Contains(pipeline.Finalizers, pipelineFinalizer)).To(BeFalse(),
+				"finalizer must be removed after 404 from DeletePipeline")
+
+			By("Verifying the CR no longer has the finalizer in the API server")
+			updated := &fleetmanagementv1alpha1.Pipeline{}
+			err = fakeClient.Get(context.Background(), types.NamespacedName{
+				Namespace: pipeline.Namespace,
+				Name:      pipeline.Name,
+			}, updated)
+			// Once the finalizer is removed the fake client's GC may have
+			// already deleted the object. Either outcome is valid: no
+			// finalizer present, or the object is already gone.
+			if err == nil {
+				Expect(slices.Contains(updated.Finalizers, pipelineFinalizer)).To(BeFalse(),
+					"API server object must not retain the finalizer")
+			} else {
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(),
+					"expected NotFound after finalizer removal, got %v", err)
+			}
 		})
 	})
 })

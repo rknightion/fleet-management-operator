@@ -253,6 +253,7 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 		return ctrl.Result{}, err
 	}
 
+	fleetResourceSyncedTotal.WithLabelValues("Pipeline", "Deleted").Inc()
 	log.Info("removed finalizer, pipeline will be deleted", "namespace", pipeline.Namespace, "name", pipeline.Name)
 	return ctrl.Result{}, nil
 }
@@ -457,6 +458,7 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 	r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonSynced,
 		"Pipeline successfully synced to Fleet Management")
 
+	fleetResourceSyncedTotal.WithLabelValues("Pipeline", reasonSynced).Inc()
 	log.Info("successfully synced pipeline", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", apiPipeline.ID, "generation", pipeline.Generation)
 	return ctrl.Result{}, nil
 }
@@ -548,11 +550,13 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	// CRITICAL: Validation errors are permanent - user must fix spec before retry
 	if !shouldRetry(originalErr, reason) {
 		log.Info("validation error, not requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name, "error", originalErr.Error())
+		fleetResourceSyncedTotal.WithLabelValues("Pipeline", reason).Inc()
 		return ctrl.Result{}, nil
 	}
 
 	// CRITICAL: Return original error to preserve exponential backoff
 	// Controller-runtime needs the original error for proper exponential backoff calculation
+	fleetResourceSyncedTotal.WithLabelValues("Pipeline", reason).Inc()
 	return ctrl.Result{}, originalErr
 }
 

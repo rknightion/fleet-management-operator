@@ -304,10 +304,15 @@ func (r *RemoteAttributePolicyReconciler) updateStatusMatched(
 	if len(matchedIDs) > 0 {
 		r.emitEventf(policy, corev1.EventTypeNormal, policyEventReasonSynced,
 			"Policy matched %d collector(s)", len(matchedIDs))
+		fleetResourceSyncedTotal.WithLabelValues("RemoteAttributePolicy", policyReasonMatched).Inc()
 	} else {
 		r.emitEvent(policy, corev1.EventTypeWarning, policyEventReasonNoMatch,
 			"Policy selector did not match any Collector in this namespace")
+		fleetResourceSyncedTotal.WithLabelValues("RemoteAttributePolicy", policyReasonNoMatch).Inc()
 	}
+
+	// Event coverage: Synced, NoMatch, ListFailed, Truncated.
+	// Created/Deleted events are intentionally absent: RemoteAttributePolicy has no Fleet-side resource.
 
 	log.Info("successfully reconciled policy",
 		"namespace", policy.Namespace, "name", policy.Name,
@@ -355,6 +360,7 @@ func (r *RemoteAttributePolicyReconciler) updateStatusError(
 			"originalError", originalErr.Error(), "reason", reason)
 	}
 
+	fleetResourceSyncedTotal.WithLabelValues("RemoteAttributePolicy", reason).Inc()
 	return ctrl.Result{}, originalErr
 }
 

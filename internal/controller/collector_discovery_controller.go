@@ -247,6 +247,7 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 		r.emitEventf(cd, corev1.EventTypeNormal, discoveryEventReasonSynced,
 			"Discovered %d collector(s); managing %d, %d stale, %d conflict(s)",
 			len(surviving), managed, len(stale), len(conflicts))
+		fleetResourceSyncedTotal.WithLabelValues("CollectorDiscovery", discoveryReasonSynced).Inc()
 	}
 
 	return ctrl.Result{RequeueAfter: pollInterval}, nil
@@ -593,6 +594,7 @@ func (r *CollectorDiscoveryReconciler) updateStatusError(
 		logf.FromContext(ctx).Error(updateErr, "failed to update status after error",
 			"namespace", cd.Namespace, "name", cd.Name, "reason", reason)
 	}
+	fleetResourceSyncedTotal.WithLabelValues("CollectorDiscovery", reason).Inc()
 	return ctrl.Result{}, originalErr
 }
 

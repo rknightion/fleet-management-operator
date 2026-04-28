@@ -386,6 +386,7 @@ func (r *CollectorReconciler) reconcileDelete(ctx context.Context, collector *fl
 		return ctrl.Result{}, err
 	}
 
+	fleetResourceSyncedTotal.WithLabelValues("Collector", "Deleted").Inc()
 	log.Info("removed finalizer, collector resource will be garbage-collected",
 		"namespace", collector.Namespace, "name", collector.Name)
 	return ctrl.Result{}, nil
@@ -514,6 +515,7 @@ func (r *CollectorReconciler) updateStatusSuccess(
 	r.emitEvent(collector, corev1.EventTypeNormal, collectorEventReasonSynced,
 		"Collector successfully synced to Fleet Management")
 
+	fleetResourceSyncedTotal.WithLabelValues("Collector", collectorReasonSynced).Inc()
 	log.Info("successfully reconciled collector",
 		"namespace", collector.Namespace, "name", collector.Name,
 		"id", collector.Spec.ID, "generation", collector.Generation)
@@ -592,9 +594,11 @@ func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *
 	if !shouldRetry(originalErr, reason) {
 		log.Info("validation error, not requeueing",
 			"namespace", collector.Namespace, "name", collector.Name, "error", originalErr.Error())
+		fleetResourceSyncedTotal.WithLabelValues("Collector", reason).Inc()
 		return ctrl.Result{}, nil
 	}
 
+	fleetResourceSyncedTotal.WithLabelValues("Collector", reason).Inc()
 	return ctrl.Result{}, originalErr
 }
 

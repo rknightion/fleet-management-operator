@@ -321,4 +321,141 @@ var _ = Describe("ExternalAttributeSync Controller", func() {
 			return ""
 		}, extTimeout, extInterval).Should(Equal(externalSyncReasonSourceFailed))
 	})
+
+	It("requeues at the duration schedule", func() {
+		// A very short schedule so the controller fires multiple times within
+		// the test window. The call counter increments on every Fetch, so
+		// seeing >= 2 calls proves the controller requeued rather than stopping
+		// after the first reconcile.
+		ctx := context.Background()
+
+		externalSyncFakeSource.setRecords([]sources.Record{
+			{"hostname": "any-collector", "env": "prod"},
+		})
+
+		Expect(k8sClient.Create(ctx, &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmdb", Namespace: extNS},
+			Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+				Source: fleetmanagementv1alpha1.ExternalSource{
+					Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+					HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
+				},
+				Schedule: "2s",
+				Selector: fleetmanagementv1alpha1.PolicySelector{CollectorIDs: []string{"any-collector"}},
+				Mapping: fleetmanagementv1alpha1.AttributeMapping{
+					CollectorIDField: "hostname",
+					AttributeFields:  map[string]string{"env": "env"},
+				},
+			},
+		})).To(Succeed())
+
+		// Wait until the fake source has been called at least twice —
+		// this is the direct evidence that RequeueAfter was honoured.
+		Eventually(func() int32 {
+			return externalSyncFakeSource.callCount()
+		}, extTimeout, extInterval).Should(BeNumerically(">=", 2))
+	})
+
+	It("recovers owned keys after a Stalled reconcile", func() {
+		// This test exercises the full stall→recovery lifecycle:
+		//   1. First fetch succeeds, OwnedKeys populated.
+		//   2. Source goes empty; Stalled condition set, OwnedKeys preserved.
+		//   3. Source returns a different record; Stalled cleared, OwnedKeys updated.
+		ctx := context.Background()
+		collectorID := "extsync-collector-" + uniqueExternalSyncSuffix()
+		registerMockCollector(collectorID, map[string]string{"collector.os": "linux"})
+
+		Expect(k8sClient.Create(ctx, &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: extNS},
+			Spec:       fleetmanagementv1alpha1.CollectorSpec{ID: collectorID, RemoteAttributes: map[string]string{}},
+		})).To(Succeed())
+
+		Eventually(func() bool {
+			c := &fleetmanagementv1alpha1.Collector{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "edge"}, c)
+			return err == nil && len(c.Status.LocalAttributes) > 0
+		}, extTimeout, extInterval).Should(BeTrue())
+
+		// Step 1: populate OwnedKeys with one record.
+		externalSyncFakeSource.setRecords([]sources.Record{
+			{"hostname": collectorID, "env": "staging"},
+		})
+
+		Expect(k8sClient.Create(ctx, &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmdb", Namespace: extNS},
+			Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+				Source: fleetmanagementv1alpha1.ExternalSource{
+					Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+					HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
+				},
+				Schedule: "5m",
+				Selector: fleetmanagementv1alpha1.PolicySelector{CollectorIDs: []string{collectorID}},
+				Mapping: fleetmanagementv1alpha1.AttributeMapping{
+					CollectorIDField: "hostname",
+					AttributeFields:  map[string]string{"env": "env"},
+				},
+				// AllowEmptyResults defaults to false — empty-result guard is active.
+			},
+		})).To(Succeed())
+
+		Eventually(func() int32 {
+			s := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "cmdb"}, s); err != nil {
+				return -1
+			}
+			return s.Status.RecordsApplied
+		}, extTimeout, extInterval).Should(Equal(int32(1)))
+
+		// Step 2: drop to zero records and trigger a reconcile via spec bump.
+		externalSyncFakeSource.setRecords(nil)
+		s := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "cmdb"}, s)).To(Succeed())
+		s.Spec.Schedule = "10m"
+		Expect(k8sClient.Update(ctx, s)).To(Succeed())
+
+		Eventually(func() string {
+			s := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "cmdb"}, s); err != nil {
+				return ""
+			}
+			for _, c := range s.Status.Conditions {
+				if c.Type == externalSyncConditionStalled && c.Status == metav1.ConditionTrue {
+					return c.Reason
+				}
+			}
+			return ""
+		}, extTimeout, extInterval).Should(Equal(externalSyncReasonStalled))
+
+		// OwnedKeys must be preserved during the stall.
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "cmdb"}, s)).To(Succeed())
+		Expect(s.Status.OwnedKeys).To(HaveLen(1), "OwnedKeys must be preserved when source returns 0 records")
+
+		// Step 3: source returns a new record; controller must clear Stalled and
+		// update OwnedKeys to reflect the new data.
+		externalSyncFakeSource.setRecords([]sources.Record{
+			{"hostname": collectorID, "env": "prod"},
+		})
+		// Trigger another reconcile via a second spec bump.
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "cmdb"}, s)).To(Succeed())
+		s.Spec.Schedule = "15m"
+		Expect(k8sClient.Update(ctx, s)).To(Succeed())
+
+		Eventually(func() string {
+			s := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "cmdb"}, s); err != nil {
+				return ""
+			}
+			for _, c := range s.Status.Conditions {
+				if c.Type == externalSyncConditionStalled && c.Status == metav1.ConditionFalse {
+					return c.Reason
+				}
+			}
+			return ""
+		}, extTimeout, extInterval).Should(Not(BeEmpty()), "Stalled condition must be cleared after source recovers")
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "cmdb"}, s)).To(Succeed())
+		Expect(s.Status.OwnedKeys).To(HaveLen(1))
+		Expect(s.Status.OwnedKeys[0].Attributes["env"]).To(Equal("prod"),
+			"OwnedKeys must be updated to the new record after recovery")
+	})
 })

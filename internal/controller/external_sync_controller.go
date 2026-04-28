@@ -320,6 +320,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 	r.emitEventf(sync, corev1.EventTypeNormal, externalSyncEventReasonSynced,
 		"Synced %d records, %d applied across %d collector(s)", len(records), recordsApplied, len(owned))
 
+	fleetResourceSyncedTotal.WithLabelValues("ExternalAttributeSync", externalSyncReasonSynced).Inc()
 	return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
 }
 
@@ -472,6 +473,7 @@ func (r *ExternalAttributeSyncReconciler) updateStatusError(
 			"namespace", sync.Namespace, "name", sync.Name, "reason", reason)
 	}
 
+	fleetResourceSyncedTotal.WithLabelValues("ExternalAttributeSync", reason).Inc()
 	return ctrl.Result{}, originalErr
 }
 

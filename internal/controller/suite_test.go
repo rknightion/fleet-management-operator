@@ -97,13 +97,13 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 
 	// Create mock Fleet Management clients
-	mockFleetClient := newMockFleetClient()
+	pipelineMock = newMockFleetClient()
 	collectorMock = newMockFleetCollectorClient()
 
 	err = (&PipelineReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
-		FleetClient: mockFleetClient,
+		FleetClient: pipelineMock,
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
