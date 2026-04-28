@@ -303,3 +303,8 @@ crds:
   install: true
   # Keep CRDs on chart uninstall
   keep: true
+
+# Webhook server configuration
+webhook:
+  # Port the webhook server listens on
+  port: 9443

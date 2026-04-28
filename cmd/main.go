@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -66,6 +68,7 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
+	var webhookPort int
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
@@ -92,6 +95,7 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
+	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port that the webhook server listens on.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
 	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
 	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
@@ -172,6 +176,7 @@ func main() {
 	// Initial webhook TLS options
 	webhookTLSOpts := tlsOpts
 	webhookServerOptions := webhook.Options{
+		Port:    webhookPort,
 		TLSOpts: webhookTLSOpts,
 	}
 
@@ -255,6 +260,8 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
+
+	setupLog.Info("webhook server configured", "port", webhookPort)
 
 	// Refuse to run with no controllers enabled — that's almost certainly a
 	// configuration error and starting an idle manager would be confusing.
@@ -344,6 +351,15 @@ func main() {
 			setupLog.Error(err, "unable to create controller", "controller", "TenantPolicy")
 			os.Exit(1)
 		}
+	}
+
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		<-ctx.Done()
+		fleetClient.Close()
+		return nil
+	})); err != nil {
+		setupLog.Error(err, "unable to register fleet client shutdown hook")
+		os.Exit(1)
 	}
 
 	if enablePipelineController {
@@ -444,6 +460,14 @@ func main() {
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
+	}
+
+	if webhookCertPath != "" {
+		if _, statErr := os.Stat(webhookCertPath); statErr != nil {
+			setupLog.Error(statErr, "webhook cert path not accessible", "path", webhookCertPath)
+			os.Exit(1)
+		}
+		setupLog.Info("webhook TLS cert path verified", "path", webhookCertPath)
 	}
 
 	setupLog.Info("starting manager")

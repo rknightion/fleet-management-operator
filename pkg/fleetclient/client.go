@@ -63,10 +63,11 @@ func WithRateLimit(rps float64, burst int) ClientOption {
 // protocol against the PipelineService and CollectorService using shared
 // rate-limit and basic-auth interceptors.
 type Client struct {
-	baseURL   string
-	limiter   *rate.Limiter
-	pipeline  pipelinev1connect.PipelineServiceClient
-	collector collectorv1connect.CollectorServiceClient
+	baseURL    string
+	limiter    *rate.Limiter
+	httpClient *http.Client
+	pipeline   pipelinev1connect.PipelineServiceClient
+	collector  collectorv1connect.CollectorServiceClient
 }
 
 // Limiter returns the rate.Limiter used by this client. Exposed for
@@ -113,11 +114,19 @@ func NewClient(baseURL, username, password string, opts ...ClientOption) *Client
 	)
 
 	return &Client{
-		baseURL:   rootURL,
-		limiter:   limiter,
-		pipeline:  pipelinev1connect.NewPipelineServiceClient(httpClient, rootURL, interceptors),
-		collector: collectorv1connect.NewCollectorServiceClient(httpClient, rootURL, interceptors),
+		baseURL:    rootURL,
+		limiter:    limiter,
+		httpClient: httpClient,
+		pipeline:   pipelinev1connect.NewPipelineServiceClient(httpClient, rootURL, interceptors),
+		collector:  collectorv1connect.NewCollectorServiceClient(httpClient, rootURL, interceptors),
 	}
+}
+
+// Close releases idle connections held by the HTTP transport. Call this when
+// the client will no longer be used (e.g. on manager shutdown) to ensure
+// clean shutdown without waiting for idle-connection timeouts.
+func (c *Client) Close() {
+	c.httpClient.CloseIdleConnections()
 }
 
 // normalizeBaseURL trims trailing slashes and any known service suffix so that
