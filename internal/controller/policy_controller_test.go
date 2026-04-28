@@ -101,6 +101,7 @@ var _ = Describe("RemoteAttributePolicy Controller", func() {
 			got := &fleetmanagementv1alpha1.RemoteAttributePolicy{}
 			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: policyName, Namespace: policyNS}, got)).To(Succeed())
 			g.Expect(got.Status.MatchedCollectorIDs).To(ConsistOf(eastID))
+			g.Expect(got.Status.MatchedCount).To(BeEquivalentTo(1))
 			g.Expect(readyCondition(got)).To(Equal(metav1.ConditionTrue))
 			g.Expect(readyReason(got)).To(Equal(policyReasonMatched))
 		}, policyTimeout, policyInterval).Should(Succeed())
@@ -166,6 +167,7 @@ var _ = Describe("RemoteAttributePolicy Controller", func() {
 			g.Expect(readyReason(got)).To(Equal(policyReasonNoMatch))
 			g.Expect(readyCondition(got)).To(Equal(metav1.ConditionFalse))
 			g.Expect(got.Status.MatchedCollectorIDs).To(BeEmpty())
+			g.Expect(got.Status.MatchedCount).To(BeEquivalentTo(0))
 		}, policyTimeout, policyInterval).Should(Succeed())
 	})
 

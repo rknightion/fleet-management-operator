@@ -29,9 +29,14 @@ import (
 type PolicySelector struct {
 	// Matchers in Prometheus Alertmanager syntax (=, !=, =~, !~), evaluated
 	// against the matched Collector's local attributes plus its ID under
-	// the synthetic key "collector.id".
+	// the synthetic key "collector.id". A maximum of 100 matchers may be
+	// set per selector; the cap exists to bound validation cost and keep
+	// `kubectl describe` output readable. Each matcher is independently
+	// capped at 200 characters by the API server (OpenAPI maxLength) and
+	// double-checked by the validating webhook.
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
+	// +kubebuilder:validation:items:MaxLength=200
 	Matchers []string `json:"matchers,omitempty"`
 
 	// CollectorIDs is an explicit list of collector IDs this policy targets.
@@ -50,8 +55,10 @@ type RemoteAttributePolicySpec struct {
 	Selector PolicySelector `json:"selector"`
 
 	// Attributes applied to every matched collector. Reserved-prefix keys
-	// ("collector.") are rejected by the webhook.
+	// ("collector.") are rejected by the API server (CEL) and the
+	// validating webhook.
 	// +kubebuilder:validation:MaxProperties=100
+	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('collector.'))",message="keys must not use the reserved 'collector.' prefix"
 	Attributes map[string]string `json:"attributes"`
 
 	// Priority breaks ties when multiple policies match the same collector
@@ -77,7 +84,16 @@ type RemoteAttributePolicyStatus struct {
 	// +optional
 	MatchedCollectorIDs []string `json:"matchedCollectorIDs,omitempty"`
 
+	// MatchedCount is the number of collectors currently matched by this
+	// policy. Maintained alongside MatchedCollectorIDs to back a typed
+	// printer column without requiring kubectl to coerce a string array
+	// into an integer.
+	// +optional
+	MatchedCount int32 `json:"matchedCount,omitempty"`
+
 	// Conditions represent the current state of the Policy.
+	// Known types: Ready, Synced. Reasons: Matched, NoMatch, ListFailed.
+	// See docs/conditions.md for the cross-CRD registry.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -88,7 +104,7 @@ type RemoteAttributePolicyStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=fmrap
 // +kubebuilder:printcolumn:name="Priority",type="integer",JSONPath=".spec.priority"
-// +kubebuilder:printcolumn:name="Matched",type="integer",JSONPath=".status.matchedCollectorIDs"
+// +kubebuilder:printcolumn:name="Matched",type="integer",JSONPath=".status.matchedCount"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // RemoteAttributePolicy applies a bulk set of remote attributes to every

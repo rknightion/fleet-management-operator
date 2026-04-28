@@ -137,7 +137,8 @@ func (r *RemoteAttributePolicyReconciler) Reconcile(ctx context.Context, req ctr
 	matchedIDs := evaluatePolicySelector(policy, collectors.Items)
 
 	if policy.Status.ObservedGeneration == policy.Generation &&
-		stringSlicesEqual(policy.Status.MatchedCollectorIDs, matchedIDs) {
+		stringSlicesEqual(policy.Status.MatchedCollectorIDs, matchedIDs) &&
+		policy.Status.MatchedCount == int32(len(matchedIDs)) {
 		log.V(1).Info("policy already reconciled, skipping",
 			"namespace", policy.Namespace, "name", policy.Name,
 			"generation", policy.Generation, "matched", len(matchedIDs))
@@ -204,6 +205,7 @@ func (r *RemoteAttributePolicyReconciler) updateStatusMatched(
 
 	policy.Status.ObservedGeneration = policy.Generation
 	policy.Status.MatchedCollectorIDs = matchedIDs
+	policy.Status.MatchedCount = int32(len(matchedIDs))
 
 	if len(matchedIDs) > 0 {
 		message := fmt.Sprintf("Policy matches %d collector(s)", len(matchedIDs))
