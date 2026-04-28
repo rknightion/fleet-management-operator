@@ -38,13 +38,27 @@ spec:
       - name: manager
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: health
+          containerPort: {{ .Values.healthProbe.port }}
+          protocol: TCP
+        - name: metrics
+          containerPort: {{ .Values.metrics.port }}
+          protocol: TCP
+        - name: webhook
+          containerPort: 9443
+          protocol: TCP
         command:
         - /manager
         args:
         {{- if .Values.leaderElection.enabled }}
         - --leader-elect
+        - --leader-election-lease-duration={{ .Values.leaderElection.leaseDuration }}
+        - --leader-election-renew-deadline={{ .Values.leaderElection.renewDeadline }}
+        - --leader-election-retry-period={{ .Values.leaderElection.retryPeriod }}
         {{- end }}
         - --health-probe-bind-address=:{{ .Values.healthProbe.port }}
+        - --zap-log-level={{ .Values.logging.level }}
         - --enable-pipeline-controller={{ .Values.controllers.pipeline.enabled }}
         - --enable-collector-controller={{ .Values.controllers.collector.enabled }}
         - --enable-policy-controller={{ .Values.controllers.remoteAttributePolicy.enabled }}
@@ -56,6 +70,15 @@ spec:
         - --controller-policy-max-concurrent={{ .Values.controllers.remoteAttributePolicy.maxConcurrent }}
         - --controller-sync-max-concurrent={{ .Values.controllers.externalAttributeSync.maxConcurrent }}
         - --controller-discovery-max-concurrent={{ .Values.controllers.collectorDiscovery.maxConcurrent }}
+        {{- if .Values.metrics.enabled }}
+        - --metrics-bind-address=:{{ .Values.metrics.port }}
+        {{- else }}
+        - --metrics-bind-address=0
+        {{- end }}
+        - --metrics-secure={{ .Values.metrics.secure }}
+        {{- if and .Values.webhook .Values.webhook.certDir }}
+        - --webhook-cert-path={{ .Values.webhook.certDir }}
+        {{- end }}
         env:
         - name: FLEET_MANAGEMENT_BASE_URL
           valueFrom:
@@ -108,4 +131,4 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
