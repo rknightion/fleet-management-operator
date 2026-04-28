@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -135,8 +136,18 @@ func main() {
 	flag.IntVar(&discoveryMaxConcurrent, "controller-discovery-max-concurrent", 1,
 		"Max concurrent reconciles for CollectorDiscovery. Keep at 1: concurrency > 1 "+
 			"triggers multiple ListCollectors calls per poll cycle without benefit.")
+	var leaderElectionLeaseDuration time.Duration
+	var leaderElectionRenewDeadline time.Duration
+	var leaderElectionRetryPeriod time.Duration
+
+	flag.DurationVar(&leaderElectionLeaseDuration, "leader-election-lease-duration", 15*time.Second,
+		"Duration non-leader candidates will wait before forcing leader acquisition.")
+	flag.DurationVar(&leaderElectionRenewDeadline, "leader-election-renew-deadline", 10*time.Second,
+		"Duration the acting leader will retry refreshing leadership before giving up.")
+	flag.DurationVar(&leaderElectionRetryPeriod, "leader-election-retry-period", 2*time.Second,
+		"Duration leader-election clients wait between action attempts.")
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -233,19 +244,12 @@ func main() {
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "0fcf8538.grafana.com",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+		LeaderElection:                enableLeaderElection,
+		LeaderElectionID:              "0fcf8538.grafana.com",
+		LeaderElectionReleaseOnCancel: true,
+		LeaseDuration:                 &leaderElectionLeaseDuration,
+		RenewDeadline:                 &leaderElectionRenewDeadline,
+		RetryPeriod:                   &leaderElectionRetryPeriod,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
