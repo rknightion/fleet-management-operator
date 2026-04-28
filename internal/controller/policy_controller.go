@@ -48,6 +48,18 @@ const (
 	policyEventReasonSynced     = "Synced"
 	policyEventReasonNoMatch    = "NoMatch"
 	policyEventReasonListFailed = "ListFailed"
+
+	// Truncated condition type and reasons for RemoteAttributePolicy.
+	// Set when status.matchedCollectorIDs is capped at maxMatchedIDs;
+	// status.matchedCount always reflects the full count.
+	policyConditionTypeTruncated      = "Truncated"
+	policyConditionReasonTruncated    = "MatchedIDsTruncated"
+	policyConditionReasonNotTruncated = "NotTruncated"
+
+	// maxMatchedIDs is the cap on status.matchedCollectorIDs. At 30k
+	// collectors, storing all IDs would approach ~860 KB per CR in etcd;
+	// status.matchedCount provides the full count without the etcd bloat.
+	maxMatchedIDs = 1000
 )
 
 // RemoteAttributePolicyReconciler reconciles a RemoteAttributePolicy object.
@@ -136,9 +148,18 @@ func (r *RemoteAttributePolicyReconciler) Reconcile(ctx context.Context, req ctr
 
 	matchedIDs := evaluatePolicySelector(policy, collectors.Items)
 
+	// No-op check: skip the status write when spec and matched-set are
+	// unchanged. MatchedCount is the full count; MatchedCollectorIDs stores
+	// the capped sample, so compare by count first (cheap), then by IDs
+	// only when the counts match to detect reordering within the cap.
+	cappedLen := len(matchedIDs)
+	if cappedLen > maxMatchedIDs {
+		cappedLen = maxMatchedIDs
+	}
 	if policy.Status.ObservedGeneration == policy.Generation &&
-		stringSlicesEqual(policy.Status.MatchedCollectorIDs, matchedIDs) &&
-		policy.Status.MatchedCount == int32(len(matchedIDs)) {
+		policy.Status.MatchedCount == int32(len(matchedIDs)) &&
+		len(policy.Status.MatchedCollectorIDs) == cappedLen &&
+		stringSlicesEqual(policy.Status.MatchedCollectorIDs, matchedIDs[:cappedLen]) {
 		log.V(1).Info("policy already reconciled, skipping",
 			"namespace", policy.Namespace, "name", policy.Name,
 			"generation", policy.Generation, "matched", len(matchedIDs))
@@ -204,8 +225,30 @@ func (r *RemoteAttributePolicyReconciler) updateStatusMatched(
 	log := logf.FromContext(ctx)
 
 	policy.Status.ObservedGeneration = policy.Generation
-	policy.Status.MatchedCollectorIDs = matchedIDs
 	policy.Status.MatchedCount = int32(len(matchedIDs))
+
+	capped := matchedIDs
+	if len(matchedIDs) > maxMatchedIDs {
+		capped = matchedIDs[:maxMatchedIDs]
+		r.emitEventf(policy, corev1.EventTypeWarning, "Truncated",
+			"matchedCollectorIDs capped at %d; matchedCount=%d reflects the full count",
+			maxMatchedIDs, len(matchedIDs))
+		meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
+			Type:               policyConditionTypeTruncated,
+			Status:             metav1.ConditionTrue,
+			Reason:             policyConditionReasonTruncated,
+			Message:            fmt.Sprintf("matchedCollectorIDs truncated to %d entries; full count in status.matchedCount", maxMatchedIDs),
+			ObservedGeneration: policy.Generation,
+		})
+	} else {
+		meta.SetStatusCondition(&policy.Status.Conditions, metav1.Condition{
+			Type:               policyConditionTypeTruncated,
+			Status:             metav1.ConditionFalse,
+			Reason:             policyConditionReasonNotTruncated,
+			ObservedGeneration: policy.Generation,
+		})
+	}
+	policy.Status.MatchedCollectorIDs = capped
 
 	if len(matchedIDs) > 0 {
 		message := fmt.Sprintf("Policy matches %d collector(s)", len(matchedIDs))

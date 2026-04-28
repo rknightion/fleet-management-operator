@@ -78,10 +78,12 @@ type RemoteAttributePolicyStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// MatchedCollectorIDs is the sorted set of collector IDs (from
-	// Collector CRs in the same namespace) currently matched by this
-	// policy's selector.
+	// MatchedCollectorIDs is a capped sample (up to 1000) of the sorted
+	// collector IDs currently matched by this policy's selector. For the
+	// authoritative count, see MatchedCount. When the cap is hit, a
+	// Truncated condition is set on the status.
 	// +optional
+	// +kubebuilder:validation:MaxItems=1000
 	MatchedCollectorIDs []string `json:"matchedCollectorIDs,omitempty"`
 
 	// MatchedCount is the number of collectors currently matched by this
