@@ -379,6 +379,12 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, apiPipeline *fleetclient.Pipeline) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
+	// OBS-03: record sync age using the previous UpdatedAt before overwriting it
+	if pipeline.Status.UpdatedAt != nil && !pipeline.Status.UpdatedAt.IsZero() {
+		fleetResourceSyncAge.WithLabelValues("Pipeline").
+			Observe(time.Since(pipeline.Status.UpdatedAt.Time).Seconds())
+	}
+
 	// Determine if this was a create or update
 	wasCreated := pipeline.Status.ID == ""
 	isUpdate := pipeline.Status.ID != "" && pipeline.Status.ID == apiPipeline.ID

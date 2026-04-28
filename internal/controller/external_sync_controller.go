@@ -265,6 +265,12 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 
 	ownedStatus, truncated := ownedKeysToStatus(owned)
 
+	// OBS-03: record sync age using the previous LastSuccessTime before overwriting it
+	if sync.Status.LastSuccessTime != nil && !sync.Status.LastSuccessTime.IsZero() {
+		fleetResourceSyncAge.WithLabelValues("ExternalAttributeSync").
+			Observe(time.Since(sync.Status.LastSuccessTime.Time).Seconds())
+	}
+
 	// No-op check: if spec generation, counts, and owned-keys content are
 	// all unchanged, skip the status write. This avoids multi-KB writes to
 	// etcd on every schedule tick when the external source has not changed.
@@ -303,6 +309,9 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 			ObservedGeneration: sync.Generation,
 		})
 	}
+
+	// OBS-04: record owned-key count for this CR
+	fleetExternalSyncOwnedKeys.WithLabelValues(sync.Namespace, sync.Name).Set(float64(len(sync.Status.OwnedKeys)))
 
 	setStalledCondition(&sync.Status.Conditions, sync.Generation, false, "")
 	setReadyCondition(&sync.Status.Conditions, sync.Generation, true, externalSyncReasonSynced,

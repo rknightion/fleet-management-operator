@@ -32,8 +32,45 @@ var (
 		},
 		[]string{"kind", "reason"},
 	)
+
+	// fleetResourceSyncAge records the age (seconds since last successful sync)
+	// at each reconcile, labelled by kind only to avoid per-resource cardinality
+	// at 30k-Collector scale. OBS-03.
+	fleetResourceSyncAge = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "fleet_resource_sync_age_seconds",
+			Help:    "Age in seconds since last successful sync, sampled at each reconcile.",
+			Buckets: []float64{0, 60, 300, 600, 1800, 3600, 7200},
+		},
+		[]string{"kind"},
+	)
+
+	// fleetExternalSyncOwnedKeys is the number of attribute keys owned by an
+	// ExternalAttributeSync CR after each successful reconcile. OBS-04.
+	fleetExternalSyncOwnedKeys = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "fleet_external_sync_owned_keys",
+			Help: "Number of attribute keys currently owned by an ExternalAttributeSync CR.",
+		},
+		[]string{"namespace", "name"},
+	)
+
+	// fleetDiscoveryListSize is the number of collectors returned by the last
+	// ListCollectors call for a CollectorDiscovery CR. OBS-05.
+	fleetDiscoveryListSize = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "fleet_discovery_list_collectors_result_size",
+			Help: "Number of collectors returned by the last ListCollectors call.",
+		},
+		[]string{"namespace", "name"},
+	)
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(fleetResourceSyncedTotal)
+	ctrlmetrics.Registry.MustRegister(
+		fleetResourceSyncedTotal,
+		fleetResourceSyncAge,
+		fleetExternalSyncOwnedKeys,
+		fleetDiscoveryListSize,
+	)
 }

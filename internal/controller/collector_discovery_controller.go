@@ -211,6 +211,9 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{RequeueAfter: defaultDiscoveryRequeueOnError}, nil
 	}
 
+	// OBS-05: record ListCollectors result size for this CR
+	fleetDiscoveryListSize.WithLabelValues(cd.Namespace, cd.Name).Set(float64(len(collectors)))
+
 	surviving := r.filterCollectors(cd, collectors)
 
 	conflicts, currentIDs, err := r.upsertCollectorCRs(ctx, cd, surviving, targetNS)
@@ -529,6 +532,12 @@ func (r *CollectorDiscoveryReconciler) updateStatusSuccess(
 	now time.Time,
 ) (bool, error) {
 	nowMeta := metav1.NewTime(now)
+
+	// OBS-03: record sync age using the previous LastSuccessTime before overwriting it
+	if cd.Status.LastSuccessTime != nil && !cd.Status.LastSuccessTime.IsZero() {
+		fleetResourceSyncAge.WithLabelValues("CollectorDiscovery").
+			Observe(time.Since(cd.Status.LastSuccessTime.Time).Seconds())
+	}
 
 	cd.Status.ObservedGeneration = cd.Generation
 	cd.Status.LastSyncTime = &nowMeta
