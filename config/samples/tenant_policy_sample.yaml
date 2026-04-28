@@ -1,0 +1,26 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: TenantPolicy
+metadata:
+  name: team-billing
+spec:
+  # Subjects this policy applies to. Use the same forms as a RoleBinding:
+  # User by username, Group by IDP group name, ServiceAccount by name and
+  # namespace.
+  subjects:
+    - kind: Group
+      name: team-billing-engineers
+    - kind: ServiceAccount
+      name: argocd-billing
+      namespace: argocd
+  # Members of any subject above must include at least one of these
+  # matchers in Pipeline.spec.matchers (or the equivalent
+  # spec.selector.matchers on RemoteAttributePolicy / ExternalAttributeSync)
+  # to be allowed by the validating webhook.
+  requiredMatchers:
+    - team=billing
+    - team=billing-shared
+  # Optional: restrict the policy to specific namespaces by their labels.
+  # Omit to apply in every namespace.
+  namespaceSelector:
+    matchLabels:
+      tenant: billing
