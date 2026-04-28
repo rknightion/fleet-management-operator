@@ -109,6 +109,7 @@ func NewClient(baseURL, username, password string, opts ...ClientOption) *Client
 	interceptors := connect.WithInterceptors(
 		rateLimitInterceptor(limiter),
 		basicAuthInterceptor(username, password),
+		metricsInterceptor(),
 	)
 
 	return &Client{

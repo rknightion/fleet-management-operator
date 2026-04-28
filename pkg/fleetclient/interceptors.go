@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	connect "connectrpc.com/connect"
 	"golang.org/x/time/rate"
@@ -32,9 +33,11 @@ import (
 func rateLimitInterceptor(limiter *rate.Limiter) connect.UnaryInterceptorFunc {
 	return func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			waitStart := time.Now()
 			if err := limiter.Wait(ctx); err != nil {
 				return nil, fmt.Errorf("rate limiter error: %w", err)
 			}
+			fleetAPIRateLimiterWait.Observe(time.Since(waitStart).Seconds())
 			return next(ctx, req)
 		}
 	}
