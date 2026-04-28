@@ -142,6 +142,21 @@ The following table lists the configurable parameters and their default values.
 |-----------|-------------|---------|
 | `leaderElection.enabled` | Enable leader election | `true` |
 
+### Controllers (per-resource opt-in)
+
+Each controller is independently toggleable. New controllers default to **disabled** so existing chart installs see no behavior change. Enabling a controller turns on its reconciler, its admission webhook, and the matching RBAC.
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `controllers.pipeline.enabled` | Pipeline reconciler (existing behavior) | `true` |
+| `controllers.collector.enabled` | Collector reconciler (manages collector remote attributes) | `false` |
+| `controllers.remoteAttributePolicy.enabled` | RemoteAttributePolicy reconciler (bulk attribute assignment by selector) | `false` |
+| `controllers.externalAttributeSync.enabled` | ExternalAttributeSync reconciler (HTTP/SQL-backed scheduled attribute pulls) | `false` |
+
+CRDs are always installed when `crds.install=true` regardless of which controllers are enabled. Unused CRDs are harmless; missing CRDs would prevent users from inspecting pre-existing objects after a downgrade.
+
+When `controllers.collector.enabled=true`, the operator additionally gets `get/list/watch` on `RemoteAttributePolicy` and `ExternalAttributeSync` so it can compute the merged desired-attribute set for each Collector — even when the corresponding controllers are themselves disabled.
+
 ### RBAC
 
 | Parameter | Description | Default |
@@ -199,6 +214,89 @@ spec:
     type: Kubernetes
     namespace: production-cluster
 ```
+
+### Manage a Collector's Remote Attributes
+
+```yaml
+controllers:
+  collector:
+    enabled: true
+```
+
+```yaml
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Collector
+metadata:
+  name: edge-host-42
+spec:
+  id: edge-host-42        # Must match a registered collector ID in Fleet
+  remoteAttributes:
+    env: prod
+    region: us-east-1
+```
+
+### Apply Bulk Attribute Defaults via a Policy
+
+```yaml
+controllers:
+  collector:
+    enabled: true
+  remoteAttributePolicy:
+    enabled: true
+```
+
+```yaml
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: RemoteAttributePolicy
+metadata:
+  name: linux-prod-defaults
+spec:
+  selector:
+    matchers:
+      - "collector.os=linux"
+      - "env=prod"
+  attributes:
+    region: us-east-1
+    team: platform
+  priority: 0
+```
+
+### Sync Attributes from an External CMDB
+
+```yaml
+controllers:
+  collector:
+    enabled: true
+  externalAttributeSync:
+    enabled: true
+```
+
+```yaml
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: ExternalAttributeSync
+metadata:
+  name: cmdb-host-attributes
+spec:
+  source:
+    kind: HTTP
+    http:
+      url: https://cmdb.example.com/api/hosts
+    secretRef:
+      name: cmdb-credentials   # keys: bearer-token | username + password
+  schedule: 5m                 # or "*/15 * * * *"
+  selector:
+    matchers:
+      - "collector.os=linux"
+  mapping:
+    collectorIDField: hostname
+    attributeFields:
+      env: env
+      region: region
+    requiredKeys: [hostname, env]
+  allowEmptyResults: false
+```
+
+**Precedence (high to low):** ExternalAttributeSync → Collector spec → RemoteAttributePolicy. The Collector controller is the sole writer to Fleet for collector remote attributes; the other controllers maintain status that the Collector reads on each reconcile.
 
 ### Enable Prometheus Monitoring
 

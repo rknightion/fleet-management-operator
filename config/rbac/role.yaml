@@ -5,9 +5,20 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - fleetmanagement.grafana.com
   resources:
+  - collectors
+  - externalattributesyncs
   - pipelines
+  - remoteattributepolicies
   verbs:
   - create
   - delete
@@ -19,13 +30,17 @@ rules:
 - apiGroups:
   - fleetmanagement.grafana.com
   resources:
+  - collectors/finalizers
   - pipelines/finalizers
   verbs:
   - update
 - apiGroups:
   - fleetmanagement.grafana.com
   resources:
+  - collectors/status
+  - externalattributesyncs/status
   - pipelines/status
+  - remoteattributepolicies/status
   verbs:
   - get
   - patch

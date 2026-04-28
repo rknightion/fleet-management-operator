@@ -1,0 +1,335 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: externalattributesyncs.fleetmanagement.grafana.com
+spec:
+  group: fleetmanagement.grafana.com
+  names:
+    kind: ExternalAttributeSync
+    listKind: ExternalAttributeSyncList
+    plural: externalattributesyncs
+    shortNames:
+    - fmeas
+    singular: externalattributesync
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.source.kind
+      name: Source
+      type: string
+    - jsonPath: .spec.schedule
+      name: Schedule
+      type: string
+    - jsonPath: .status.lastSyncTime
+      name: Last Sync
+      type: date
+    - jsonPath: .status.recordsApplied
+      name: Records
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ExternalAttributeSync pulls attributes from an external system on a
+          schedule and reflects them onto matched collectors as remote attributes.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state.
+            properties:
+              allowEmptyResults:
+                default: false
+                description: |-
+                  AllowEmptyResults gates the empty-result safety guard. When false
+                  (default), a Fetch that returns zero records after a previous run
+                  returned at least one is treated as a probable misconfiguration —
+                  the previous owned-keys claim is preserved and a Stalled condition
+                  is set.
+                type: boolean
+              mapping:
+                description: Mapping projects source records into collector attributes.
+                properties:
+                  attributeFields:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      AttributeFields maps an output attribute key to the source field
+                      whose value becomes its value. Keys with the reserved "collector."
+                      prefix are rejected.
+                    maxProperties: 100
+                    type: object
+                  collectorIDField:
+                    description: |-
+                      CollectorIDField is the source field whose value identifies the
+                      target collector.
+                    minLength: 1
+                    type: string
+                  requiredKeys:
+                    description: |-
+                      RequiredKeys is the set of source fields that must be present for a
+                      record to be applied. A record missing any required key is skipped
+                      (counted in RecordsSeen but not RecordsApplied).
+                    items:
+                      type: string
+                    type: array
+                required:
+                - attributeFields
+                - collectorIDField
+                type: object
+              schedule:
+                description: |-
+                  Schedule is either a Go duration ("5m", "30s") or a cron expression
+                  ("*/15 * * * *"). Required.
+                minLength: 1
+                type: string
+              selector:
+                description: |-
+                  Selector picks the collectors this sync targets. Reuses the
+                  PolicySelector shape: matchers AND'd, OR'd with explicit collectorIDs.
+                properties:
+                  collectorIDs:
+                    description: |-
+                      CollectorIDs is an explicit list of collector IDs this policy targets.
+                      OR'd with Matchers — a Collector matches if its ID appears here, even
+                      if the Matchers would otherwise reject it.
+                    items:
+                      type: string
+                    maxItems: 1000
+                    type: array
+                  matchers:
+                    description: |-
+                      Matchers in Prometheus Alertmanager syntax (=, !=, =~, !~), evaluated
+                      against the matched Collector's local attributes plus its ID under
+                      the synthetic key "collector.id".
+                    items:
+                      type: string
+                    maxItems: 100
+                    type: array
+                type: object
+              source:
+                description: Source identifies the kind and configuration of the external
+                  system.
+                properties:
+                  http:
+                    description: HTTPSourceSpec configures an HTTP/JSON external source.
+                    properties:
+                      method:
+                        default: GET
+                        description: Method is the HTTP verb to use. Defaults to GET.
+                        enum:
+                        - GET
+                        - POST
+                        type: string
+                      recordsPath:
+                        description: |-
+                          RecordsPath is a dotted path into the response JSON identifying the
+                          array of records. Empty means the response root is the array itself.
+                          Examples: "data", "result.items".
+                        type: string
+                      url:
+                        description: URL is the fully-qualified endpoint to fetch
+                          records from.
+                        minLength: 1
+                        type: string
+                    required:
+                    - url
+                    type: object
+                  kind:
+                    description: |-
+                      ExternalSourceKind enumerates the supported external attribute source
+                      kinds. Phase 3 ships HTTP; SQL arrives in Phase 4.
+                    enum:
+                    - HTTP
+                    - SQL
+                    type: string
+                  secretRef:
+                    description: |-
+                      SecretReference represents a Secret Reference. It has enough information to retrieve secret
+                      in any namespace
+                    properties:
+                      name:
+                        description: name is unique within a namespace to reference
+                          a secret resource.
+                        type: string
+                      namespace:
+                        description: namespace defines the space within which the
+                          secret name must be unique.
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  sql:
+                    description: |-
+                      SQLSourceSpec configures a generic SQL external source. Reserved for
+                      Phase 4; the type is exposed now so existing CRDs remain forward-compatible.
+                    properties:
+                      driver:
+                        description: |-
+                          Driver names the database/sql driver. Phase 4 will register
+                          "postgres" and "mysql".
+                        type: string
+                      query:
+                        description: |-
+                          Query is the SQL query to execute. Must SELECT at minimum the
+                          CollectorIDField and every AttributeFields source column.
+                        type: string
+                    type: object
+                required:
+                - kind
+                type: object
+            required:
+            - mapping
+            - schedule
+            - selector
+            - source
+            type: object
+          status:
+            description: status defines the observed state.
+            properties:
+              conditions:
+                description: |-
+                  Conditions represent the current state of the ExternalAttributeSync.
+                  Standard types: Ready, Synced, Stalled.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastSuccessTime:
+                description: |-
+                  LastSuccessTime is the timestamp of the most recent Fetch that
+                  produced a status update. May trail LastSyncTime if the most recent
+                  fetch was suppressed by the empty-result guard or failed.
+                format: date-time
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the most recent Fetch
+                  attempt.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the most recently observed
+                  spec.
+                format: int64
+                type: integer
+              ownedKeys:
+                description: |-
+                  OwnedKeys is the canonical claim list as of the last successful
+                  fetch. Each entry is a collectorID and the set of keys this sync
+                  owns on that collector.
+                items:
+                  description: |-
+                    OwnedKeyEntry records the keys and values this ExternalAttributeSync
+                    claims for a specific collector. The Collector controller reads these
+                    directly when computing the merged desired state — values flow from this
+                    status field (set on each successful Fetch) into Fleet without re-running
+                    the source.
+                  properties:
+                    attributes:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Attributes maps the attribute key to the value this sync wants on
+                        the named collector. Removing a key from this map drops that
+                        claim — the Collector controller's diff produces a REMOVE op on
+                        the next reconcile.
+                      type: object
+                    collectorID:
+                      type: string
+                  required:
+                  - collectorID
+                  type: object
+                type: array
+              recordsApplied:
+                description: |-
+                  RecordsApplied is the count of records that produced an attribute
+                  update (i.e., passed RequiredKeys and selector).
+                format: int32
+                type: integer
+              recordsSeen:
+                description: RecordsSeen is the count of records returned by the last
+                  fetch.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -18,7 +18,6 @@ package fleetclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +25,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	connect "connectrpc.com/connect"
+	pipelinev1 "github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1"
+	"github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1/pipelinev1connect"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -249,82 +251,72 @@ func TestFleetAPIError_ErrorsIs(t *testing.T) {
 	})
 }
 
-// TestUpsertPipeline_HTTPClientErrors tests HTTP client error paths with various status codes
-func TestUpsertPipeline_HTTPClientErrors(t *testing.T) {
+// fakePipelineHandler is a configurable connect-go server handler used to
+// drive client tests through the real wire protocol.
+type fakePipelineHandler struct {
+	pipelinev1connect.UnimplementedPipelineServiceHandler
+	upsertResponse *pipelinev1.Pipeline
+	upsertErr      error
+	deleteErr      error
+	captureRequest *pipelinev1.UpsertPipelineRequest
+}
+
+func (h *fakePipelineHandler) UpsertPipeline(_ context.Context, req *connect.Request[pipelinev1.UpsertPipelineRequest]) (*connect.Response[pipelinev1.Pipeline], error) {
+	h.captureRequest = req.Msg
+	if h.upsertErr != nil {
+		return nil, h.upsertErr
+	}
+	return connect.NewResponse(h.upsertResponse), nil
+}
+
+func (h *fakePipelineHandler) DeletePipeline(_ context.Context, _ *connect.Request[pipelinev1.DeletePipelineRequest]) (*connect.Response[pipelinev1.DeletePipelineResponse], error) {
+	if h.deleteErr != nil {
+		return nil, h.deleteErr
+	}
+	return connect.NewResponse(&pipelinev1.DeletePipelineResponse{}), nil
+}
+
+// newConnectTestServer wires the fake handler into an httptest server and
+// returns a Client pointed at it plus a cleanup function.
+func newConnectTestServer(t *testing.T, h *fakePipelineHandler) (*Client, func()) {
+	t.Helper()
+	mux := http.NewServeMux()
+	path, handler := pipelinev1connect.NewPipelineServiceHandler(h)
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+
+	client := NewClient(server.URL, "testuser", "testpass")
+	return client, server.Close
+}
+
+// TestUpsertPipeline_ConnectErrors verifies that connect-go error codes from
+// the server map back to the HTTP-status-coded FleetAPIError contract that
+// internal/controller/errors.go relies on.
+func TestUpsertPipeline_ConnectErrors(t *testing.T) {
 	tests := []struct {
-		name                string
-		statusCode          int
-		responseBody        string
-		expectError         bool
-		expectedStatusCode  int
-		expectedOperation   string
-		expectedIsTransient bool
-		messageContains     string
+		name           string
+		connectCode    connect.Code
+		message        string
+		wantStatusCode int
+		wantTransient  bool
 	}{
-		{
-			name:                "400 Bad Request",
-			statusCode:          http.StatusBadRequest,
-			responseBody:        "invalid pipeline configuration",
-			expectError:         true,
-			expectedStatusCode:  http.StatusBadRequest,
-			expectedOperation:   "UpsertPipeline",
-			expectedIsTransient: false,
-			messageContains:     "invalid pipeline configuration",
-		},
-		{
-			name:                "401 Unauthorized",
-			statusCode:          http.StatusUnauthorized,
-			responseBody:        "authentication failed",
-			expectError:         true,
-			expectedStatusCode:  http.StatusUnauthorized,
-			expectedOperation:   "UpsertPipeline",
-			expectedIsTransient: false,
-			messageContains:     "authentication failed",
-		},
-		{
-			name:                "429 Too Many Requests",
-			statusCode:          http.StatusTooManyRequests,
-			responseBody:        "rate limit exceeded",
-			expectError:         true,
-			expectedStatusCode:  http.StatusTooManyRequests,
-			expectedOperation:   "UpsertPipeline",
-			expectedIsTransient: true,
-			messageContains:     "rate limit exceeded",
-		},
-		{
-			name:                "500 Internal Server Error",
-			statusCode:          http.StatusInternalServerError,
-			responseBody:        "internal error occurred",
-			expectError:         true,
-			expectedStatusCode:  http.StatusInternalServerError,
-			expectedOperation:   "UpsertPipeline",
-			expectedIsTransient: true,
-			messageContains:     "internal error occurred",
-		},
-		{
-			name:                "503 Service Unavailable",
-			statusCode:          http.StatusServiceUnavailable,
-			responseBody:        "service temporarily unavailable",
-			expectError:         true,
-			expectedStatusCode:  http.StatusServiceUnavailable,
-			expectedOperation:   "UpsertPipeline",
-			expectedIsTransient: true,
-			messageContains:     "service temporarily unavailable",
-		},
+		{"InvalidArgument -> 400", connect.CodeInvalidArgument, "invalid pipeline configuration", http.StatusBadRequest, false},
+		{"Unauthenticated -> 401", connect.CodeUnauthenticated, "authentication failed", http.StatusUnauthorized, false},
+		{"PermissionDenied -> 403", connect.CodePermissionDenied, "insufficient permissions", http.StatusForbidden, false},
+		{"NotFound -> 404", connect.CodeNotFound, "pipeline gone", http.StatusNotFound, false},
+		{"ResourceExhausted -> 429", connect.CodeResourceExhausted, "rate limit exceeded", http.StatusTooManyRequests, true},
+		{"Internal -> 500", connect.CodeInternal, "internal error occurred", http.StatusInternalServerError, true},
+		{"Unavailable -> 503", connect.CodeUnavailable, "service temporarily unavailable", http.StatusServiceUnavailable, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "POST", r.Method, "Expected POST method")
-				assert.Contains(t, r.URL.Path, "UpsertPipeline", "Expected UpsertPipeline endpoint")
+			handler := &fakePipelineHandler{
+				upsertErr: connect.NewError(tt.connectCode, errors.New(tt.message)),
+			}
+			client, cleanup := newConnectTestServer(t, handler)
+			defer cleanup()
 
-				w.WriteHeader(tt.statusCode)
-				w.Write([]byte(tt.responseBody))
-			}))
-			defer server.Close()
-
-			client := NewClient(server.URL+"/", "testuser", "testpass")
 			req := &UpsertPipelineRequest{
 				Pipeline: &Pipeline{
 					Name:     "test-pipeline",
@@ -334,158 +326,137 @@ func TestUpsertPipeline_HTTPClientErrors(t *testing.T) {
 			}
 
 			pipeline, err := client.UpsertPipeline(context.Background(), req)
+			assert.Error(t, err)
+			assert.Nil(t, pipeline)
 
-			if tt.expectError {
-				assert.Error(t, err, "Expected error for status code %d", tt.statusCode)
-				assert.Nil(t, pipeline, "Pipeline should be nil on error")
-
-				var fleetErr *FleetAPIError
-				found := errors.As(err, &fleetErr)
-				assert.True(t, found, "Error should be FleetAPIError")
-				assert.Equal(t, tt.expectedStatusCode, fleetErr.StatusCode, "StatusCode mismatch")
-				assert.Equal(t, tt.expectedOperation, fleetErr.Operation, "Operation mismatch")
-				assert.Equal(t, tt.expectedIsTransient, fleetErr.IsTransient(), "IsTransient mismatch")
-				assert.Contains(t, fleetErr.Message, tt.messageContains, "Message should contain expected text")
-			} else {
-				assert.NoError(t, err, "Expected no error")
-				assert.NotNil(t, pipeline, "Pipeline should not be nil")
-			}
+			var fleetErr *FleetAPIError
+			assert.True(t, errors.As(err, &fleetErr), "Error should be FleetAPIError")
+			assert.Equal(t, tt.wantStatusCode, fleetErr.StatusCode, "StatusCode mismatch")
+			assert.Equal(t, "UpsertPipeline", fleetErr.Operation, "Operation mismatch")
+			assert.Equal(t, tt.wantTransient, fleetErr.IsTransient(), "IsTransient mismatch")
+			assert.Contains(t, fleetErr.Message, tt.message, "Message should contain expected text")
 		})
 	}
 }
 
-// TestUpsertPipeline_Success tests successful UpsertPipeline response
+// TestUpsertPipeline_Success confirms request fields propagate to proto and
+// the proto response decodes back to the wire-public Pipeline shape.
 func TestUpsertPipeline_Success(t *testing.T) {
-	expectedPipeline := &Pipeline{
+	id := "pipeline-123"
+	enabled := true
+	expectedProto := &pipelinev1.Pipeline{
 		Name:       "test-pipeline",
 		Contents:   "test contents",
-		Enabled:    true,
-		ID:         "pipeline-123",
-		ConfigType: "Alloy",
+		Enabled:    &enabled,
+		Id:         &id,
+		ConfigType: pipelinev1.ConfigType_CONFIG_TYPE_ALLOY,
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method, "Expected POST method")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(expectedPipeline)
-	}))
-	defer server.Close()
+	handler := &fakePipelineHandler{upsertResponse: expectedProto}
+	client, cleanup := newConnectTestServer(t, handler)
+	defer cleanup()
 
-	client := NewClient(server.URL+"/", "testuser", "testpass")
 	req := &UpsertPipelineRequest{
 		Pipeline: &Pipeline{
-			Name:     "test-pipeline",
-			Contents: "test contents",
-			Enabled:  true,
+			Name:       "test-pipeline",
+			Contents:   "test contents",
+			Enabled:    true,
+			ConfigType: configTypeAlloy,
 		},
 	}
 
 	pipeline, err := client.UpsertPipeline(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotNil(t, pipeline)
+	assert.Equal(t, "pipeline-123", pipeline.ID)
+	assert.Equal(t, "test-pipeline", pipeline.Name)
+	assert.Equal(t, configTypeAlloy, pipeline.ConfigType)
+	assert.True(t, pipeline.Enabled)
 
-	assert.NoError(t, err, "Expected no error on success")
-	assert.NotNil(t, pipeline, "Pipeline should not be nil")
-	assert.Equal(t, expectedPipeline.ID, pipeline.ID, "Pipeline ID should match")
-	assert.Equal(t, expectedPipeline.Name, pipeline.Name, "Pipeline Name should match")
-	assert.Equal(t, expectedPipeline.ConfigType, pipeline.ConfigType, "ConfigType should match")
+	// Outgoing request should have carried our fields.
+	assert.NotNil(t, handler.captureRequest)
+	assert.Equal(t, "test-pipeline", handler.captureRequest.GetPipeline().GetName())
+	assert.Equal(t, pipelinev1.ConfigType_CONFIG_TYPE_ALLOY, handler.captureRequest.GetPipeline().GetConfigType())
 }
 
-// TestDeletePipeline_HTTPClientErrors tests DeletePipeline error paths
-func TestDeletePipeline_HTTPClientErrors(t *testing.T) {
+// TestDeletePipeline_404IsSuccess preserves the historical contract that a
+// 404 from DeletePipeline is treated as success at the client layer.
+func TestDeletePipeline_404IsSuccess(t *testing.T) {
+	handler := &fakePipelineHandler{
+		deleteErr: connect.NewError(connect.CodeNotFound, errors.New("pipeline not found")),
+	}
+	client, cleanup := newConnectTestServer(t, handler)
+	defer cleanup()
+
+	err := client.DeletePipeline(context.Background(), "test-id")
+	assert.NoError(t, err, "404 should be masked as success")
+}
+
+// TestDeletePipeline_ConnectErrors covers the non-404 error paths where the
+// caller must see a FleetAPIError with the right status code and PipelineID.
+func TestDeletePipeline_ConnectErrors(t *testing.T) {
 	tests := []struct {
-		name                string
-		statusCode          int
-		responseBody        string
-		expectError         bool
-		expectedStatusCode  int
-		expectedOperation   string
-		expectedIsTransient bool
-		pipelineIDSet       bool
+		name           string
+		connectCode    connect.Code
+		message        string
+		wantStatusCode int
+		wantTransient  bool
 	}{
-		{
-			name:                "404 Not Found (success case)",
-			statusCode:          http.StatusNotFound,
-			responseBody:        "pipeline not found",
-			expectError:         false,
-			expectedStatusCode:  0,
-			expectedOperation:   "",
-			expectedIsTransient: false,
-			pipelineIDSet:       false,
-		},
-		{
-			name:                "200 OK (success case)",
-			statusCode:          http.StatusOK,
-			responseBody:        "deleted",
-			expectError:         false,
-			expectedStatusCode:  0,
-			expectedOperation:   "",
-			expectedIsTransient: false,
-			pipelineIDSet:       false,
-		},
-		{
-			name:                "500 Internal Server Error",
-			statusCode:          http.StatusInternalServerError,
-			responseBody:        "server error during deletion",
-			expectError:         true,
-			expectedStatusCode:  http.StatusInternalServerError,
-			expectedOperation:   "DeletePipeline",
-			expectedIsTransient: true,
-			pipelineIDSet:       true,
-		},
-		{
-			name:                "401 Unauthorized",
-			statusCode:          http.StatusUnauthorized,
-			responseBody:        "authentication failed",
-			expectError:         true,
-			expectedStatusCode:  http.StatusUnauthorized,
-			expectedOperation:   "DeletePipeline",
-			expectedIsTransient: false,
-			pipelineIDSet:       true,
-		},
-		{
-			name:                "403 Forbidden",
-			statusCode:          http.StatusForbidden,
-			responseBody:        "insufficient permissions",
-			expectError:         true,
-			expectedStatusCode:  http.StatusForbidden,
-			expectedOperation:   "DeletePipeline",
-			expectedIsTransient: false,
-			pipelineIDSet:       true,
-		},
+		{"Internal -> 500", connect.CodeInternal, "server error during deletion", http.StatusInternalServerError, true},
+		{"Unauthenticated -> 401", connect.CodeUnauthenticated, "authentication failed", http.StatusUnauthorized, false},
+		{"PermissionDenied -> 403", connect.CodePermissionDenied, "insufficient permissions", http.StatusForbidden, false},
+		{"Unavailable -> 503", connect.CodeUnavailable, "service temporarily unavailable", http.StatusServiceUnavailable, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "POST", r.Method, "Expected POST method")
-				assert.Contains(t, r.URL.Path, "DeletePipeline", "Expected DeletePipeline endpoint")
-
-				w.WriteHeader(tt.statusCode)
-				w.Write([]byte(tt.responseBody))
-			}))
-			defer server.Close()
-
-			client := NewClient(server.URL+"/", "testuser", "testpass")
-			testPipelineID := "test-pipeline-id-456"
-
-			err := client.DeletePipeline(context.Background(), testPipelineID)
-
-			if tt.expectError {
-				assert.Error(t, err, "Expected error for status code %d", tt.statusCode)
-
-				var fleetErr *FleetAPIError
-				found := errors.As(err, &fleetErr)
-				assert.True(t, found, "Error should be FleetAPIError")
-				assert.Equal(t, tt.expectedStatusCode, fleetErr.StatusCode, "StatusCode mismatch")
-				assert.Equal(t, tt.expectedOperation, fleetErr.Operation, "Operation mismatch")
-				assert.Equal(t, tt.expectedIsTransient, fleetErr.IsTransient(), "IsTransient mismatch")
-
-				if tt.pipelineIDSet {
-					assert.Equal(t, testPipelineID, fleetErr.PipelineID, "PipelineID should be set")
-					assert.Contains(t, fleetErr.Error(), testPipelineID, "Error message should contain PipelineID")
-				}
-			} else {
-				assert.NoError(t, err, "Expected no error for status code %d", tt.statusCode)
+			handler := &fakePipelineHandler{
+				deleteErr: connect.NewError(tt.connectCode, errors.New(tt.message)),
 			}
+			client, cleanup := newConnectTestServer(t, handler)
+			defer cleanup()
+
+			err := client.DeletePipeline(context.Background(), "test-pipeline-id-456")
+			assert.Error(t, err)
+
+			var fleetErr *FleetAPIError
+			assert.True(t, errors.As(err, &fleetErr), "Error should be FleetAPIError")
+			assert.Equal(t, tt.wantStatusCode, fleetErr.StatusCode)
+			assert.Equal(t, "DeletePipeline", fleetErr.Operation)
+			assert.Equal(t, tt.wantTransient, fleetErr.IsTransient())
+			assert.Equal(t, "test-pipeline-id-456", fleetErr.PipelineID)
+			assert.Contains(t, fleetErr.Error(), "test-pipeline-id-456", "Error message should contain PipelineID")
+		})
+	}
+}
+
+// TestDeletePipeline_Success confirms the happy path returns nil.
+func TestDeletePipeline_Success(t *testing.T) {
+	handler := &fakePipelineHandler{}
+	client, cleanup := newConnectTestServer(t, handler)
+	defer cleanup()
+
+	err := client.DeletePipeline(context.Background(), "test-id")
+	assert.NoError(t, err)
+}
+
+// TestNormalizeBaseURL exercises the backward-compat suffix stripping that
+// lets existing Secrets (which include "/pipeline.v1.PipelineService/") keep
+// working with the connect-go client constructors.
+func TestNormalizeBaseURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare root", "https://api.example", "https://api.example"},
+		{"trailing slash only", "https://api.example/", "https://api.example"},
+		{"with pipeline service suffix", "https://api.example/pipeline.v1.PipelineService/", "https://api.example"},
+		{"with pipeline service suffix no trailing slash", "https://api.example/pipeline.v1.PipelineService", "https://api.example"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeBaseURL(tt.in))
 		})
 	}
 }

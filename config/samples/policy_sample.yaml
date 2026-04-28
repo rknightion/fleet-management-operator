@@ -1,0 +1,26 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: RemoteAttributePolicy
+metadata:
+  name: linux-prod-defaults
+spec:
+  # Selectors. A collector matches if all matchers are true (AND-ed) OR if
+  # its ID appears in collectorIDs. An empty selector matches NOTHING — both
+  # selector clauses must be intentional.
+  selector:
+    matchers:
+      - "collector.os=linux"
+      - "env=prod"
+    # Optional explicit ID list, OR-ed with the matcher result.
+    collectorIDs: []
+
+  # Attributes applied to every matched collector. Per-Collector CRs win on
+  # key collisions (Collector spec is the override layer; Policy is the
+  # default). collector.* prefixed keys are reserved by Fleet Management.
+  attributes:
+    region: us-east-1
+    team: platform
+
+  # Higher priority wins among policies that match the same collector and
+  # set the same key. Equal priority is broken alphabetically by namespaced
+  # name. Default is 0.
+  priority: 0

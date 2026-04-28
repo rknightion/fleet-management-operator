@@ -10,6 +10,46 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-fleetmanagement-grafana-com-v1alpha1-collector
+  failurePolicy: Fail
+  name: vcollector.kb.io
+  rules:
+  - apiGroups:
+    - fleetmanagement.grafana.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - collectors
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-fleetmanagement-grafana-com-v1alpha1-externalattributesync
+  failurePolicy: Fail
+  name: vexternalattributesync.kb.io
+  rules:
+  - apiGroups:
+    - fleetmanagement.grafana.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - externalattributesyncs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-fleetmanagement-grafana-com-v1alpha1-pipeline
   failurePolicy: Fail
   name: vpipeline.kb.io
@@ -23,4 +63,24 @@ webhooks:
     - UPDATE
     resources:
     - pipelines
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-fleetmanagement-grafana-com-v1alpha1-remoteattributepolicy
+  failurePolicy: Fail
+  name: vremoteattributepolicy.kb.io
+  rules:
+  - apiGroups:
+    - fleetmanagement.grafana.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - remoteattributepolicies
   sideEffects: None

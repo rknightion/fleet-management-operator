@@ -1,0 +1,45 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: ExternalAttributeSync
+metadata:
+  name: cmdb-host-attributes
+spec:
+  source:
+    kind: HTTP
+    http:
+      url: https://cmdb.example.com/api/hosts
+      method: GET
+      # If the response is {"data": {"items": [...]}} use a dotted path:
+      # recordsPath: data.items
+    # Optional Secret with auth credentials. Recognized keys:
+    #   bearer-token   -> Authorization: Bearer <token> (preferred)
+    #   username + password -> HTTP Basic auth fallback
+    secretRef:
+      name: cmdb-credentials
+
+  # Either a Go duration ("5m", "30s") or a 5-field cron expression
+  # ("*/15 * * * *"). Required.
+  schedule: 5m
+
+  # Selector — same shape as RemoteAttributePolicy. Matches AND-ed; OR-ed
+  # with the explicit collectorIDs list. Empty selector = matches nothing.
+  selector:
+    matchers:
+      - "collector.os=linux"
+
+  # Mapping projects each source record into one (collectorID, attributes)
+  # tuple. The CMDB returns records like:
+  #   {"hostname": "edge-host-42", "env": "prod", "region": "us-east-1"}
+  mapping:
+    collectorIDField: hostname
+    attributeFields:
+      env: env
+      region: region
+    requiredKeys:
+      - hostname
+      - env
+
+  # Safety guard: when the source returns 0 records but the previous run
+  # had >0, the controller preserves the prior claim and surfaces a
+  # Stalled condition. Set true to opt out (e.g. when an empty result is
+  # legitimate).
+  allowEmptyResults: false

@@ -6,6 +6,7 @@ metadata:
   labels:
     {{- include "fleet-management-operator.labels" . | nindent 4 }}
 rules:
+{{- if .Values.controllers.pipeline.enabled }}
 - apiGroups:
   - fleetmanagement.grafana.com
   resources:
@@ -32,4 +33,121 @@ rules:
   - get
   - patch
   - update
+{{- end }}
+{{- if .Values.controllers.collector.enabled }}
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectors/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectors/status
+  verbs:
+  - get
+  - patch
+  - update
+# The Collector reconciler reads RemoteAttributePolicy and
+# ExternalAttributeSync resources to compute the merged desired attribute
+# set. Granted whenever the collector controller is enabled, regardless of
+# which other controllers are.
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - remoteattributepolicies
+  - externalattributesyncs
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}
+{{- if .Values.controllers.remoteAttributePolicy.enabled }}
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - remoteattributepolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - remoteattributepolicies/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectors
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}
+{{- if .Values.controllers.externalAttributeSync.enabled }}
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - externalattributesyncs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - externalattributesyncs/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectors
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 {{- end }}

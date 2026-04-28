@@ -44,6 +44,24 @@ metrics:
 leaderElection:
   enabled: true
 
+# Per-controller opt-in. New controllers default to disabled so existing
+# chart installs see no behavior change. Flip a toggle to true to enable
+# that controller, its admission webhook, and its RBAC.
+#
+# Note: enabling controllers.collector also grants get/list/watch on
+# RemoteAttributePolicy and ExternalAttributeSync so the Collector
+# reconciler can compute the merged desired-attribute set — even when
+# those other controllers are themselves disabled.
+controllers:
+  pipeline:
+    enabled: true                # existing behavior, default on
+  collector:
+    enabled: false               # manage collector remote attributes
+  remoteAttributePolicy:
+    enabled: false               # bulk attribute assignment by selector
+  externalAttributeSync:
+    enabled: false               # HTTP/SQL-backed scheduled attribute pulls
+
 # Optional: High Availability Configuration
 # replicaCount: 2
 # podDisruptionBudget:

@@ -40,6 +40,13 @@ make undeploy
 # Format code
 go fmt ./...
 goimports -w .
+
+# Lint
+make lint
+make lint-fix
+
+# End-to-end tests (requires Kind; creates cluster fm-crd-test-e2e automatically)
+make test-e2e
 ```
 
 ## Code Style
@@ -201,14 +208,51 @@ env:
 ## Project Structure
 
 ```
-api/v1alpha1/          # CRD types
-internal/controller/   # Reconciliation logic
-pkg/client/           # Fleet Management API client
-config/crd/           # Generated CRD manifests
-config/rbac/          # RBAC roles
-config/manager/       # Controller deployment
-config/samples/       # Example Pipeline CRs
+api/v1alpha1/                          # CRD types and webhooks
+internal/controller/                   # Reconciliation logic
+internal/controller/attributes/        # Attribute diff/merge/match helpers
+internal/controller/discovery/         # CollectorDiscovery naming helpers
+pkg/fleetclient/                       # Fleet Management API client
+pkg/sources/                           # External source plugins (HTTP, SQL)
+config/crd/                            # Generated CRD manifests
+config/rbac/                           # RBAC roles
+config/manager/                        # Controller deployment
+config/samples/                        # Example CRs
 ```
+
+## Collector / RemoteAttributePolicy / ExternalAttributeSync
+
+Three additional CRDs manage collector remote attributes. They are individually opt-in via Helm and corresponding manager flags (Helm key → flag):
+- `controllers.collector.enabled` → `--enable-collector-controller`
+- `controllers.remoteAttributePolicy.enabled` → `--enable-policy-controller`
+- `controllers.externalAttributeSync.enabled` → `--enable-external-sync-controller`
+- `controllers.collectorDiscovery.enabled` → `--enable-collector-discovery-controller`
+
+Default-off so existing chart installs see no behavior change. CRDs always install with the chart.
+
+**Single-writer principle.** Only the Collector controller calls Fleet's `BulkUpdateCollectors`. RemoteAttributePolicy and ExternalAttributeSync controllers never write attributes directly; they expose intent through their own status (`status.matchedCollectorIDs`, `status.ownedKeys`) and trigger Collector reconciliation via watches. This is the only design that avoids a write-race when three controllers can claim the same key.
+
+**Precedence (high to low):**
+1. `ExternalAttributeSync` owned keys (per `status.ownedKeys[].attributes`)
+2. `Collector` CR `spec.remoteAttributes`
+3. `RemoteAttributePolicy` `spec.attributes` (highest `Priority` wins ties; equal-priority broken alphabetically by namespaced name)
+
+The Collector controller computes the merged desired state on every reconcile and feeds it to `attributes.Diff` to emit ADD / REPLACE / REMOVE Operations. There is intentionally NO `ObservedGeneration` short-circuit on the Collector reconciler — cross-layer watches produce reconciles where the Collector spec generation is unchanged but upstream layers have moved. Idempotency is handled inside `updateStatusSuccess` via `mapsEqual` / `ownerSlicesEqual`.
+
+**Finalizer:** `collector.fleetmanagement.grafana.com/finalizer`. On delete, the Collector controller emits REMOVE ops for every key it owned (across all owner kinds — it is the sole writer). 404 from Fleet on deletion is treated as success.
+
+**Webhook validation** (per CRD):
+- `Collector`: rejects `collector.*` reserved-prefix keys; immutable `spec.id`; max 100 attrs; value length cap 1024.
+- `RemoteAttributePolicy`: same key/value rules; matcher syntax via `validateMatcherSyntax`; selector must be non-empty (matchers OR collectorIDs).
+- `ExternalAttributeSync`: schedule must parse as either `time.ParseDuration` or 5-field cron via `cron.NewParser(cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow)`; HTTP/SQL kind/spec consistency.
+
+**External source plugin model** (`pkg/sources`):
+- `sources.Source` interface: `Fetch(ctx) ([]Record, error)`; `Kind() string`.
+- HTTP impl in `pkg/sources/http`: bearer/basic auth via Secret keys `bearer-token` / `username`+`password`. Records-path supports dotted nesting (`data.items`).
+- SQL impl in `pkg/sources/sql`: drivers `postgres` (lib/pq) and `mysql` (go-sql-driver). DSN via Secret key `dsn`. Tests use `DATA-DOG/go-sqlmock`.
+- The factory in `cmd/main.go` (`buildExternalSourceFactory`) dispatches by `spec.source.kind`. Add new sources by extending it.
+
+**Empty-result safety guard.** When `ExternalAttributeSync.Fetch` returns 0 records but the previous run had > 0 and `spec.allowEmptyResults` is false, the previous OwnedKeys claim is preserved and a `Stalled` condition is set. Set `allowEmptyResults: true` to opt out (e.g. when an empty result is legitimate).
 
 ## External Documentation
 

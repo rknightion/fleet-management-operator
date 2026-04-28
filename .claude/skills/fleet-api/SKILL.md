@@ -663,3 +663,68 @@ meta.SetStatusCondition(&pipeline.Status.Conditions, metav1.Condition{
 - Consider namespace prefixing: `{namespace}-{name}`
 - Use admission webhook to prevent duplicates
 - Check for external pipeline creation (Terraform, UI)
+
+
+# Collector Service API Reference
+
+The `collector.v1.CollectorService` exposes CRUD plus a JSON-patch-style bulk update for collector remote attributes. The operator uses it via the official `github.com/grafana/fleet-management-api` connect-go SDK.
+
+## Base URL
+
+`https://fleet-management-<CLUSTER_NAME>.grafana.net/collector.v1.CollectorService/`
+
+Same Basic-auth credentials as the Pipeline service. The operator shares one rate limiter across both services (3 req/s combined budget for management endpoints; the higher 20 req/s budget is reserved for `RegisterCollector` and `GetConfig` which the operator does not call).
+
+## Collector Message
+
+```json
+{
+  "id": "string (required)",
+  "name": "string (optional)",
+  "remote_attributes": {"key": "value"},   // managed by operators / API
+  "local_attributes": {"key": "value"},    // set by collector via RegisterCollector
+  "enabled": true,
+  "created_at": "timestamp",
+  "updated_at": "timestamp",
+  "marked_inactive_at": "timestamp",
+  "collector_type": "COLLECTOR_TYPE_ALLOY | COLLECTOR_TYPE_OTEL"
+}
+```
+
+**Important:**
+- Collectors register themselves via `RegisterCollector` — operators do NOT create them.
+- `collector.*` prefix is reserved for local (collector-reported) attribute keys; remote attributes must not use it.
+- Max 100 remote attributes per collector.
+- Remote attributes take precedence over local attributes for pipeline matcher evaluation.
+
+## RPC Methods
+
+| Method | Use case |
+|--------|----------|
+| `GetCollector(id)` | Read live collector state. The operator uses this on each Collector reconcile to mirror local attributes into status and to compute the diff. |
+| `UpdateCollector(collector)` | Replace ALL fields. Unset fields are cleared. Avoid for selective updates — use BulkUpdateCollectors instead. |
+| `BulkUpdateCollectors(ids, ops)` | Atomic JSON-patch-style mutation. Each op targets a path like `/remote_attributes/<key>` with op = ADD / REPLACE / REMOVE / MOVE / COPY. The operator uses this for selective attribute updates. |
+| `ListCollectors(matchers)` | List collectors matching a Prometheus-style matcher set. |
+| `DeleteCollector(id)`, `BulkDeleteCollectors(ids)` | Removal — the operator does not call these (collectors self-register and self-deregister). |
+
+## BulkUpdateCollectors Operation Syntax
+
+```
+Operation {
+  op: ADD | REMOVE | REPLACE | MOVE | COPY
+  path: string  // RFC 6901 JSON pointer, e.g. "/remote_attributes/env"
+  value: string
+  oldValue: string (optional, for selective REPLACE)
+  from: string (optional, for MOVE / COPY)
+}
+```
+
+- Path keys with `/` or `~` must be RFC-6901 escaped (`/` -> `~1`, `~` -> `~0`). The operator handles this in `internal/controller/attributes/diff.go::remoteAttrPath`.
+- The whole request is atomic per Fleet API contract: all ops succeed or none do, per-collector.
+- Cross-collector partial failure IS possible when multiple ids are in one request — the operator typically calls with a single id at a time to keep error handling simple.
+
+## Connect-go vs HTTP/JSON
+
+The operator no longer uses hand-rolled HTTP/JSON; it uses the official connect-go generated client (`github.com/grafana/fleet-management-api/api/gen/proto/go/{pipeline,collector}/v1/...`). The connect protocol is HTTP/1.1+JSON-over-the-wire by default, so on-the-wire troubleshooting (curl, tcpdump) still works the same.
+
+Connect error codes map back to HTTP-style status codes via `pkg/fleetclient/errors.go::connectCodeToHTTPStatus` so the controller error classification (`internal/controller/errors.go`) is unchanged: `CodeNotFound -> 404`, `CodeResourceExhausted -> 429`, `CodeInternal/Unavailable/...` -> 5xx, etc.

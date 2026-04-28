@@ -1,0 +1,18 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Collector
+metadata:
+  name: edge-host-42
+spec:
+  # ID must match a collector that has registered with Fleet Management
+  # (the collector calls RegisterCollector when it starts up). The operator
+  # does not create collectors — it only manages their remote attributes.
+  id: edge-host-42
+
+  # remoteAttributes are key/value pairs the operator writes to Fleet
+  # Management. Keys with the prefix "collector." are reserved by Fleet
+  # for collector-reported (local) attributes and are rejected by the
+  # admission webhook.
+  remoteAttributes:
+    env: prod
+    region: us-east-1
+    team: platform

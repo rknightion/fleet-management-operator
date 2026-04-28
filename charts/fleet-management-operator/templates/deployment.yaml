@@ -45,6 +45,10 @@ spec:
         - --leader-elect
         {{- end }}
         - --health-probe-bind-address=:{{ .Values.healthProbe.port }}
+        - --enable-pipeline-controller={{ .Values.controllers.pipeline.enabled }}
+        - --enable-collector-controller={{ .Values.controllers.collector.enabled }}
+        - --enable-policy-controller={{ .Values.controllers.remoteAttributePolicy.enabled }}
+        - --enable-external-sync-controller={{ .Values.controllers.externalAttributeSync.enabled }}
         env:
         - name: FLEET_MANAGEMENT_BASE_URL
           valueFrom:
