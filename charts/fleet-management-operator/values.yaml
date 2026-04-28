@@ -221,6 +221,8 @@ rbac:
 # Default: controller-runtime auto-generates self-signed certs (dev/test only).
 # Production: enable cert-manager or provide manual certs to avoid cert mismatch on restart.
 webhook:
+  # Port the webhook server listens on. Must match service-webhook.yaml targetPort.
+  port: 9443
   # cert-manager managed certificates (recommended for production HA).
   # Requires cert-manager to be installed in the cluster.
   certManager:
@@ -304,7 +306,3 @@ crds:
   # Keep CRDs on chart uninstall
   keep: true
 
-# Webhook server configuration
-webhook:
-  # Port the webhook server listens on
-  port: 9443
