@@ -1,0 +1,168 @@
+{
+  "uid": "fleet-mgmt-operator-v1",
+  "title": "Fleet Management Operator",
+  "description": "Operational dashboard for the fleet-management-operator. Requires metrics endpoint to be enabled (metrics.enabled: true, metrics.secure: false).",
+  "tags": ["fleet-management", "operator", "kubernetes"],
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Reconcile Rate by Controller",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(controller_runtime_reconcile_total[5m])",
+          "legendFormat": "{{controller}} / {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Reconcile Error Rate by Controller",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(controller_runtime_reconcile_errors_total[5m])",
+          "legendFormat": "{{controller}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Reconcile Duration p50/p95/p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(controller_runtime_reconcile_time_seconds_bucket[5m]))",
+          "legendFormat": "p50 {{controller}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(controller_runtime_reconcile_time_seconds_bucket[5m]))",
+          "legendFormat": "p95 {{controller}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(controller_runtime_reconcile_time_seconds_bucket[5m]))",
+          "legendFormat": "p99 {{controller}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Workqueue Depth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "workqueue_depth",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Workqueue Add Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "rate(workqueue_adds_total[5m])",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Workqueue Processing Duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(workqueue_work_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 {{name}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Fleet API Request Rate (requires OBS-01 metrics)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "rate(fleet_api_requests_total[5m])",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "description": "Requires fleet_api_requests_total metric. Enable after OBS-01 is deployed."
+    },
+    {
+      "id": 8,
+      "title": "Fleet API Error Rate (requires OBS-01 metrics)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "rate(fleet_api_errors_total[5m])",
+          "legendFormat": "{{operation}} / {{status}}"
+        }
+      ],
+      "description": "Requires fleet_api_errors_total metric. Enable after OBS-01 is deployed."
+    },
+    {
+      "id": 9,
+      "title": "Fleet API Rate Limiter Wait p95 (requires OBS-02 metrics)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(fleet_api_rate_limiter_wait_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 wait"
+        }
+      ],
+      "description": "Requires fleet_api_rate_limiter_wait_duration_seconds metric. Enable after OBS-02 is deployed."
+    },
+    {
+      "id": 10,
+      "title": "Process Memory (RSS)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes",
+          "legendFormat": "RSS bytes"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "K8s API Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "targets": [
+        {
+          "expr": "rate(rest_client_requests_total[5m])",
+          "legendFormat": "{{method}} {{code}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "targets": [
+        {
+          "expr": "rate(process_cpu_seconds_total[5m])",
+          "legendFormat": "CPU rate"
+        }
+      ]
+    }
+  ]
+}

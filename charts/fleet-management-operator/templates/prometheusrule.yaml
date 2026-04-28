@@ -1,0 +1,60 @@
+{{- if .Values.alerts.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "fleet-management-operator.fullname" . }}
+  labels:
+    {{- include "fleet-management-operator.labels" . | nindent 4 }}
+    {{- with .Values.alerts.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: fleet-management-operator
+    rules:
+    - alert: FleetOperatorDown
+      expr: absent(up{job=~".*fleet-management-operator.*"}) or up{job=~".*fleet-management-operator.*"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Fleet Management Operator is down
+        description: "No running fleet-management-operator instances detected for 5m. See docs/runbooks/operator-down.md"
+
+    - alert: FleetReconcileErrorRateHigh
+      expr: rate(controller_runtime_reconcile_errors_total[5m]) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High reconcile error rate on {{ "{{" }} $labels.controller {{ "}}" }}"
+        description: "Reconcile errors exceeding 0.1/s for 10m on controller {{ "{{" }} $labels.controller {{ "}}" }}. See docs/runbooks/high-reconcile-error-rate.md"
+
+    - alert: FleetWorkqueueDepthHigh
+      expr: workqueue_depth > 50
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Fleet operator workqueue depth high on {{ "{{" }} $labels.name {{ "}}" }}"
+        description: "Workqueue {{ "{{" }} $labels.name {{ "}}" }} depth > 50 for 5m. Controller may be falling behind reconciling changes."
+
+    - alert: FleetWebhookRejectionRateHigh
+      expr: rate(controller_runtime_webhook_requests_total{code="500"}[5m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Fleet webhook admission errors occurring
+        description: "Admission webhook returning 500s for 5m. Check cert expiry. See docs/runbooks/webhook-unavailable.md"
+
+    # Uncomment once OBS-01 metrics are available (fleet_api_rate_limiter_wait_duration_seconds):
+    # - alert: FleetRateLimitSaturation
+    #   expr: histogram_quantile(0.95, rate(fleet_api_rate_limiter_wait_duration_seconds_bucket[5m])) > 0.9
+    #   for: 5m
+    #   labels:
+    #     severity: warning
+    #   annotations:
+    #     summary: Fleet API rate limiter near saturation
+    #     description: "95th percentile rate-limiter wait > 0.9s. See docs/runbooks/rate-limit-saturation.md"
+{{- end }}
