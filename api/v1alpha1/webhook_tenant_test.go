@@ -203,3 +203,153 @@ func TestExternalAttributeSyncValidator_PassesSelectorMatchers(t *testing.T) {
 		t.Errorf("expected namespace team-billing, got %q", c.calledNs)
 	}
 }
+
+func TestRemoteAttributePolicyValidator_NilCheckerSkipsTenantStep(t *testing.T) {
+	v := &remoteAttributePolicyValidator{checker: nil}
+	p := &RemoteAttributePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "default"},
+		Spec: RemoteAttributePolicySpec{
+			Attributes: map[string]string{"k": "v"},
+			Selector: PolicySelector{
+				Matchers: []string{"team=billing"},
+			},
+		},
+	}
+	if _, err := v.ValidateCreate(context.Background(), p); err != nil {
+		t.Fatalf("create with nil checker should pass, got %v", err)
+	}
+}
+
+func TestRemoteAttributePolicyValidator_CheckerErrorCausesRejection(t *testing.T) {
+	deny := errors.New("denied by tenant policy")
+	c := &fakeChecker{err: deny}
+	v := &remoteAttributePolicyValidator{checker: c}
+
+	p := &RemoteAttributePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: teamBillingNS},
+		Spec: RemoteAttributePolicySpec{
+			Attributes: map[string]string{"k": "v"},
+			Selector: PolicySelector{
+				Matchers: []string{"team=billing"},
+			},
+		},
+	}
+	_, err := v.ValidateCreate(context.Background(), p)
+	if !errors.Is(err, deny) {
+		t.Fatalf("expected denial from tenant checker, got %v", err)
+	}
+}
+
+func TestRemoteAttributePolicyValidator_CheckerCalledOnUpdate(t *testing.T) {
+	c := &fakeChecker{}
+	v := &remoteAttributePolicyValidator{checker: c}
+
+	old := &RemoteAttributePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: teamBillingNS},
+		Spec: RemoteAttributePolicySpec{
+			Attributes: map[string]string{"k": "v"},
+			Selector: PolicySelector{Matchers: []string{"team=billing"}},
+		},
+	}
+	updated := old.DeepCopy()
+	updated.Spec.Selector.Matchers = []string{"team=billing", "env=prod"}
+
+	if _, err := v.ValidateUpdate(context.Background(), old, updated); err != nil {
+		t.Fatalf("update should pass with checker returning nil, got %v", err)
+	}
+	if !c.called {
+		t.Fatalf("checker should have been called on update")
+	}
+	if c.calledNs != teamBillingNS {
+		t.Errorf("expected namespace team-billing, got %q", c.calledNs)
+	}
+	want := []string{"team=billing", "env=prod"}
+	if !reflect.DeepEqual(c.calledMatchers, want) {
+		t.Errorf("update matchers = %v, want %v", c.calledMatchers, want)
+	}
+}
+
+func TestExternalAttributeSyncValidator_NilCheckerSkipsTenantStep(t *testing.T) {
+	v := &externalAttributeSyncValidator{checker: nil}
+	es := &ExternalAttributeSync{
+		ObjectMeta: metav1.ObjectMeta{Name: "es", Namespace: "default"},
+		Spec: ExternalAttributeSyncSpec{
+			Schedule: "5m",
+			Source: ExternalSource{
+				Kind: ExternalSourceKindHTTP,
+				HTTP: &HTTPSourceSpec{URL: "https://example.com/cmdb", Method: "GET"},
+			},
+			Mapping: AttributeMapping{
+				CollectorIDField: "id",
+				AttributeFields:  map[string]string{"team": "team"},
+			},
+			Selector: PolicySelector{Matchers: []string{"team=billing"}},
+		},
+	}
+	if _, err := v.ValidateCreate(context.Background(), es); err != nil {
+		t.Fatalf("create with nil checker should pass, got %v", err)
+	}
+}
+
+func TestExternalAttributeSyncValidator_CheckerErrorCausesRejection(t *testing.T) {
+	deny := errors.New("denied by tenant policy")
+	c := &fakeChecker{err: deny}
+	v := &externalAttributeSyncValidator{checker: c}
+
+	es := &ExternalAttributeSync{
+		ObjectMeta: metav1.ObjectMeta{Name: "es", Namespace: teamBillingNS},
+		Spec: ExternalAttributeSyncSpec{
+			Schedule: "5m",
+			Source: ExternalSource{
+				Kind: ExternalSourceKindHTTP,
+				HTTP: &HTTPSourceSpec{URL: "https://example.com/cmdb", Method: "GET"},
+			},
+			Mapping: AttributeMapping{
+				CollectorIDField: "id",
+				AttributeFields:  map[string]string{"team": "team"},
+			},
+			Selector: PolicySelector{Matchers: []string{"team=billing"}},
+		},
+	}
+	_, err := v.ValidateCreate(context.Background(), es)
+	if !errors.Is(err, deny) {
+		t.Fatalf("expected denial from tenant checker, got %v", err)
+	}
+}
+
+func TestExternalAttributeSyncValidator_CheckerCalledOnUpdate(t *testing.T) {
+	c := &fakeChecker{}
+	v := &externalAttributeSyncValidator{checker: c}
+
+	old := &ExternalAttributeSync{
+		ObjectMeta: metav1.ObjectMeta{Name: "es", Namespace: teamBillingNS},
+		Spec: ExternalAttributeSyncSpec{
+			Schedule: "5m",
+			Source: ExternalSource{
+				Kind: ExternalSourceKindHTTP,
+				HTTP: &HTTPSourceSpec{URL: "https://example.com/cmdb", Method: "GET"},
+			},
+			Mapping: AttributeMapping{
+				CollectorIDField: "id",
+				AttributeFields:  map[string]string{"team": "team"},
+			},
+			Selector: PolicySelector{Matchers: []string{"team=billing"}},
+		},
+	}
+	updated := old.DeepCopy()
+	updated.Spec.Selector.Matchers = []string{"team=billing", "env=prod"}
+
+	if _, err := v.ValidateUpdate(context.Background(), old, updated); err != nil {
+		t.Fatalf("update should pass with checker returning nil, got %v", err)
+	}
+	if !c.called {
+		t.Fatalf("checker should have been called on update")
+	}
+	if c.calledNs != teamBillingNS {
+		t.Errorf("expected namespace team-billing, got %q", c.calledNs)
+	}
+	want := []string{"team=billing", "env=prod"}
+	if !reflect.DeepEqual(c.calledMatchers, want) {
+		t.Errorf("update matchers = %v, want %v", c.calledMatchers, want)
+	}
+}
