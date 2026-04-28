@@ -471,6 +471,12 @@ func (r *CollectorReconciler) updateStatusSuccess(
 		return ctrl.Result{}, nil
 	}
 
+	// OBS-03: record sync age using the previous LastPing before overwriting it
+	if collector.Status.LastPing != nil && !collector.Status.LastPing.IsZero() {
+		fleetResourceSyncAge.WithLabelValues("Collector").
+			Observe(time.Since(collector.Status.LastPing.Time).Seconds())
+	}
+
 	collector.Status.ObservedGeneration = collector.Generation
 	collector.Status.Registered = true
 	collector.Status.CollectorType = newCollectorType

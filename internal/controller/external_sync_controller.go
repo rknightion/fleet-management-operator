@@ -245,12 +245,21 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
 	}
 
+	// OBS-03: record sync age using the previous LastSuccessTime before overwriting it
+	if sync.Status.LastSuccessTime != nil && !sync.Status.LastSuccessTime.IsZero() {
+		fleetResourceSyncAge.WithLabelValues("ExternalAttributeSync").
+			Observe(time.Since(sync.Status.LastSuccessTime.Time).Seconds())
+	}
+
 	sync.Status.LastSyncTime = &now
 	sync.Status.LastSuccessTime = &now
 	sync.Status.RecordsSeen = int32(len(records))
 	sync.Status.RecordsApplied = int32(recordsApplied)
 	sync.Status.OwnedKeys = ownedKeysToStatus(owned)
 	sync.Status.ObservedGeneration = sync.Generation
+
+	// OBS-04: record owned-key count for this CR
+	fleetExternalSyncOwnedKeys.WithLabelValues(sync.Namespace, sync.Name).Set(float64(len(sync.Status.OwnedKeys)))
 
 	setStalledCondition(&sync.Status.Conditions, sync.Generation, false, "")
 	setReadyCondition(&sync.Status.Conditions, sync.Generation, true, externalSyncReasonSynced,
