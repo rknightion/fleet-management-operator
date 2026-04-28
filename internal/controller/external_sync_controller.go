@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -94,10 +95,15 @@ type SourceFactory func(spec fleetmanagementv1alpha1.ExternalSource, secret *cor
 // controller is the sole writer to Fleet for collector remote attributes,
 // and it picks up new ExternalAttributeSync state through the watches it
 // established in SetupWithManager.
+//
+// MaxConcurrentReconciles > 1 is safe: Fetch calls are per-source and do
+// not share external state with other sync reconciles. Configurable via
+// --controller-sync-max-concurrent (default 4).
 type ExternalAttributeSyncReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme                  *runtime.Scheme
+	Recorder                record.EventRecorder
+	MaxConcurrentReconciles int
 
 	// Factory builds a Source from the spec. Tests inject a fake; the
 	// real wiring (cmd/main.go) provides a factory that dispatches to
@@ -481,8 +487,13 @@ func (r *ExternalAttributeSyncReconciler) updateStatusError(
 //     (matchedCollectors would be empty at the first fetch, then never
 //     re-evaluated until the schedule fired).
 func (r *ExternalAttributeSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	maxConcurrent := r.MaxConcurrentReconciles
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrent}).
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.syncsReferencingSecret),

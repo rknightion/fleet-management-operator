@@ -180,10 +180,16 @@ controllers:
   # Reserved for a later phase; present here for forward-compatible values.
   remoteAttributePolicy:
     enabled: false
+    # Max concurrent reconciles. Safe to increase: reconciles are pure K8s
+    # cache reads with no Fleet API calls. Pipeline and Collector always run
+    # at 1 because they share the Fleet API rate budget.
+    maxConcurrent: 4
   # ExternalAttributeSync reconciler. Pulls attributes from CMDB / SQL / HTTP
   # sources on a schedule. Reserved for a later phase.
   externalAttributeSync:
     enabled: false
+    # Max concurrent reconciles. Safe to increase: Fetch calls are per-source.
+    maxConcurrent: 4
   # CollectorDiscovery reconciler. Periodically calls Fleet Management's
   # ListCollectors and mirrors each result as a Collector CR. Requires
   # controllers.collector.enabled=true (the manager startup will refuse
@@ -191,6 +197,8 @@ controllers:
   # create CRs that nobody acts on).
   collectorDiscovery:
     enabled: false
+    # Keep at 1: concurrency > 1 triggers multiple ListCollectors per poll cycle.
+    maxConcurrent: 1
   # TenantPolicy enforcement. When enabled, the validating webhooks for
   # Pipeline, RemoteAttributePolicy, and ExternalAttributeSync require K8s
   # subjects matched by a TenantPolicy CR to include at least one of the

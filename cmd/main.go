@@ -80,6 +80,9 @@ func main() {
 	var enableTenantPolicyEnforcement bool
 	var fleetAPIRPS float64
 	var fleetAPIBurst int
+	var policyMaxConcurrent int
+	var syncMaxConcurrent int
+	var discoveryMaxConcurrent int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -122,6 +125,16 @@ func main() {
 			"request spikes without changing the sustained RPS ceiling. "+
 			"burst=1 causes livelock at scale: request #(rps*30+1) in a restart wave "+
 			"waits 30s and hits the HTTP timeout, indistinguishable from API outage.")
+	flag.IntVar(&policyMaxConcurrent, "controller-policy-max-concurrent", 4,
+		"Max concurrent reconciles for RemoteAttributePolicy. Safe to increase: reconciles "+
+			"are pure K8s cache reads with no external API calls. Pipeline and Collector "+
+			"must stay at 1 because they share the Fleet API rate budget.")
+	flag.IntVar(&syncMaxConcurrent, "controller-sync-max-concurrent", 4,
+		"Max concurrent reconciles for ExternalAttributeSync. Safe to increase: Fetch "+
+			"calls are per-source and do not share external state across reconciles.")
+	flag.IntVar(&discoveryMaxConcurrent, "controller-discovery-max-concurrent", 1,
+		"Max concurrent reconciles for CollectorDiscovery. Keep at 1: concurrency > 1 "+
+			"triggers multiple ListCollectors calls per poll cycle without benefit.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -281,6 +294,25 @@ func main() {
 	fleetClient := fleetclient.NewClient(fleetBaseURL, fleetUsername, fleetPassword,
 		fleetclient.WithRateLimit(fleetAPIRPS, fleetAPIBurst))
 
+	// Two-tier rate limiting:
+	//   Tier 1 — workqueue (controller-runtime default): 10 qps bucket, burst 100.
+	//     Bounds the reconcile-dispatch rate so the K8s API server is not flooded
+	//     during batch events (rolling deploy, mass delete, startup cache warm-up).
+	//   Tier 2 — Fleet API client (--fleet-api-rps / --fleet-api-burst):
+	//     Enforces compliance with the Fleet Management server-side api: rate budget.
+	//
+	// At steady state, up to 10 reconciles/s enter the workqueue; reconciles that
+	// require a Fleet API call wait at limiter.Wait(ctx) in the client interceptor,
+	// holding one goroutine each. This is the correct design: Tier 1 prevents K8s
+	// API storms; Tier 2 is the true Fleet throughput ceiling. Raising
+	// --fleet-api-rps above the server-side limit produces 429s that are
+	// indistinguishable from outages. Do not configure --fleet-api-rps above the
+	// Fleet Management server-side api: setting for this stack.
+	//
+	// Controllers that do NOT call the Fleet API (Policy, ExternalSync, Discovery)
+	// are unaffected by Tier 2; their throughput is bounded only by the workqueue
+	// and by --controller-{policy,sync,discovery}-max-concurrent.
+
 	// Tenant policy enforcement is opt-in and default-off. When disabled,
 	// tenantChecker stays nil and the consuming webhooks behave identically
 	// to a build without this feature. When enabled, the checker reads
@@ -349,9 +381,10 @@ func main() {
 
 	if enablePolicyController {
 		if err := (&controller.RemoteAttributePolicyReconciler{
-			Client:   mgr.GetClient(),
-			Scheme:   mgr.GetScheme(),
-			Recorder: mgr.GetEventRecorderFor("policy-controller"),
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			Recorder:                mgr.GetEventRecorderFor("policy-controller"),
+			MaxConcurrentReconciles: policyMaxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "RemoteAttributePolicy")
 			os.Exit(1)
@@ -365,10 +398,11 @@ func main() {
 
 	if enableExternalSyncController {
 		if err := (&controller.ExternalAttributeSyncReconciler{
-			Client:   mgr.GetClient(),
-			Scheme:   mgr.GetScheme(),
-			Recorder: mgr.GetEventRecorderFor("externalattributesync-controller"),
-			Factory:  buildExternalSourceFactory(),
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			Recorder:                mgr.GetEventRecorderFor("externalattributesync-controller"),
+			Factory:                 buildExternalSourceFactory(),
+			MaxConcurrentReconciles: syncMaxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "ExternalAttributeSync")
 			os.Exit(1)
@@ -382,10 +416,11 @@ func main() {
 
 	if enableCollectorDiscoveryController {
 		if err := (&controller.CollectorDiscoveryReconciler{
-			Client:      mgr.GetClient(),
-			Scheme:      mgr.GetScheme(),
-			FleetClient: fleetClient,
-			Recorder:    mgr.GetEventRecorderFor("collectordiscovery-controller"),
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			FleetClient:             fleetClient,
+			Recorder:                mgr.GetEventRecorderFor("collectordiscovery-controller"),
+			MaxConcurrentReconciles: discoveryMaxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "CollectorDiscovery")
 			os.Exit(1)

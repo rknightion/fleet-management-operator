@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -77,10 +78,15 @@ const (
 // External attribute writes happen from the Collector controller, which
 // reads live Policy state on each reconcile. That keeps Phase 2 simple — no
 // finalizer is needed here because there is nothing external to clean up.
+//
+// MaxConcurrentReconciles > 1 is safe for this controller: reconciles are
+// pure K8s cache reads with no external API calls. Configurable via
+// --controller-policy-max-concurrent (default 4).
 type RemoteAttributePolicyReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme                  *runtime.Scheme
+	Recorder                record.EventRecorder
+	MaxConcurrentReconciles int
 }
 
 var _ reconcile.Reconciler = &RemoteAttributePolicyReconciler{}
@@ -362,8 +368,13 @@ func (r *RemoteAttributePolicyReconciler) updateStatusError(
 // Phase 2 fans out broadly (every Policy in the namespace) on Collector
 // changes; Phase 3 can narrow this down using attributes.MatcherUsesKey.
 func (r *RemoteAttributePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	maxConcurrent := r.MaxConcurrentReconciles
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetmanagementv1alpha1.RemoteAttributePolicy{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrent}).
 		Watches(&fleetmanagementv1alpha1.Collector{},
 			handler.EnqueueRequestsFromMapFunc(r.policiesAffectedByCollector)).
 		Named("remoteattributepolicy").

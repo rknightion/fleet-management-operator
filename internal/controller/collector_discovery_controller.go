@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -85,6 +86,11 @@ type FleetDiscoveryClient interface {
 
 // CollectorDiscoveryReconciler reconciles a CollectorDiscovery object.
 //
+// MaxConcurrentReconciles should stay at 1 (the default). Discovery is
+// poll-driven: concurrency > 1 would trigger multiple ListCollectors calls
+// per poll cycle without benefit, consuming unnecessary Fleet API budget.
+// Configurable via --controller-discovery-max-concurrent.
+//
 // On each reconcile (poll cadence or spec change) the controller:
 //
 //  1. Reads spec.pollInterval and skips if not yet due.
@@ -111,9 +117,10 @@ type FleetDiscoveryClient interface {
 // attributes) is preserved.
 type CollectorDiscoveryReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	FleetClient FleetDiscoveryClient
-	Recorder    record.EventRecorder
+	Scheme                  *runtime.Scheme
+	FleetClient             FleetDiscoveryClient
+	Recorder                record.EventRecorder
+	MaxConcurrentReconciles int
 
 	// Now is overridable in tests. Defaults to time.Now.
 	Now func() time.Time
@@ -592,8 +599,13 @@ func (r *CollectorDiscoveryReconciler) updateStatusError(
 // SetupWithManager wires the reconciler. Discovery is purely
 // poll-driven via RequeueAfter; no cross-resource watches are needed.
 func (r *CollectorDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	maxConcurrent := r.MaxConcurrentReconciles
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetmanagementv1alpha1.CollectorDiscovery{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrent}).
 		Named("collectordiscovery").
 		Complete(r)
 }
