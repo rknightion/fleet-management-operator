@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -302,7 +303,7 @@ func main() {
 			Client:   mgr.GetClient(),
 			Scheme:   mgr.GetScheme(),
 			Recorder: mgr.GetEventRecorderFor("policy-controller"),
-		}).SetupWithManager(mgr); err != nil {
+		}).SetupWithManager(context.Background(), mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "RemoteAttributePolicy")
 			os.Exit(1)
 		}
@@ -319,7 +320,7 @@ func main() {
 			Scheme:   mgr.GetScheme(),
 			Recorder: mgr.GetEventRecorderFor("externalattributesync-controller"),
 			Factory:  buildExternalSourceFactory(),
-		}).SetupWithManager(mgr); err != nil {
+		}).SetupWithManager(context.Background(), mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "ExternalAttributeSync")
 			os.Exit(1)
 		}

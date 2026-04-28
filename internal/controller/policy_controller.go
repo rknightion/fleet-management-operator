@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,6 +49,12 @@ const (
 	policyEventReasonSynced     = "Synced"
 	policyEventReasonNoMatch    = "NoMatch"
 	policyEventReasonListFailed = "ListFailed"
+
+	// policyMatcherKeyIndex is an IndexField on RemoteAttributePolicy indexed
+	// by the label key names referenced in spec.selector.matchers. It lets the
+	// Collector watch handler look up only the Policies whose matchers mention
+	// a key present in the changed Collector, avoiding a full namespace List.
+	policyMatcherKeyIndex = ".spec.selector.matcherKeys"
 )
 
 // RemoteAttributePolicyReconciler reconciles a RemoteAttributePolicy object.
@@ -312,15 +319,25 @@ func (r *RemoteAttributePolicyReconciler) updateStatusError(
 //
 //  1. RemoteAttributePolicy itself (via For()) — reconcile on spec changes.
 //  2. Collector — when collectors come and go, the set of matched IDs may
-//     shift, so re-enqueue every Policy in the same namespace.
-//
-// Phase 2 fans out broadly (every Policy in the namespace) on Collector
-// changes; Phase 3 can narrow this down using attributes.MatcherUsesKey.
-func (r *RemoteAttributePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+//     shift. The handler uses a policyMatcherKeyIndex to enqueue only the
+//     Policies whose matchers reference keys present in the Collector's
+//     attributes, rather than all Policies in the namespace.
+func (r *RemoteAttributePolicyReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(ctx,
+		&fleetmanagementv1alpha1.RemoteAttributePolicy{},
+		policyMatcherKeyIndex,
+		func(o client.Object) []string {
+			p := o.(*fleetmanagementv1alpha1.RemoteAttributePolicy)
+			return attributes.MatcherKeys(p.Spec.Selector.Matchers)
+		},
+	); err != nil {
+		return fmt.Errorf("indexing RemoteAttributePolicy matcher keys: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetmanagementv1alpha1.RemoteAttributePolicy{}).
 		Watches(&fleetmanagementv1alpha1.Collector{},
-			handler.EnqueueRequestsFromMapFunc(r.policiesAffectedByCollector)).
+			handler.EnqueueRequestsFromMapFunc(r.mapCollectorToAffectedPolicies)).
 		Named("remoteattributepolicy").
 		Complete(r)
 }
@@ -340,37 +357,94 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-// policiesAffectedByCollector returns reconcile requests for every
-// RemoteAttributePolicy in the same namespace as the changed Collector.
-// Phase 2 keeps this coarse-grained so adding/removing/changing a Collector
-// always re-evaluates every Policy that could conceivably match it. Phase 3
-// can narrow this with attributes.MatcherUsesKey for hot-path selectors.
-func (r *RemoteAttributePolicyReconciler) policiesAffectedByCollector(ctx context.Context, obj client.Object) []reconcile.Request {
+// mapCollectorToAffectedPolicies returns reconcile requests for only the
+// RemoteAttributePolicies whose matchers reference at least one key present
+// in the changed Collector's attributes. This avoids the O(collectors *
+// policies) fan-out from the naive "enqueue every policy" approach.
+//
+// When the Collector has no spec.remoteAttributes (e.g. a freshly-created CR)
+// we fall back to the broad namespace-wide enqueue so that new Collectors are
+// still evaluated by all Policies, including those that match via
+// CollectorIDs or the synthetic collector.id key.
+func (r *RemoteAttributePolicyReconciler) mapCollectorToAffectedPolicies(
+	ctx context.Context, obj client.Object,
+) []reconcile.Request {
 	log := logf.FromContext(ctx)
 
 	collector, ok := obj.(*fleetmanagementv1alpha1.Collector)
 	if !ok {
-		log.V(1).Info("ignoring non-Collector event in policiesAffectedByCollector",
+		log.V(1).Info("ignoring non-Collector event in mapCollectorToAffectedPolicies",
 			"objectKind", fmt.Sprintf("%T", obj))
 		return nil
 	}
 
-	policies := &fleetmanagementv1alpha1.RemoteAttributePolicyList{}
-	if err := r.List(ctx, policies, client.InNamespace(collector.Namespace)); err != nil {
-		log.Error(err, "failed to list RemoteAttributePolicies for Collector watch fan-out",
-			"namespace", collector.Namespace, "collector", collector.Name)
-		return nil
+	// Build the set of attribute keys the Collector carries. We look at both
+	// spec.remoteAttributes and status.localAttributes: a Collector that was
+	// just created may have only status, while one managed by the operator may
+	// have spec attributes as well.
+	collectorKeys := make(map[string]struct{})
+	for k := range collector.Spec.RemoteAttributes {
+		collectorKeys[k] = struct{}{}
+	}
+	for k := range collector.Status.LocalAttributes {
+		collectorKeys[k] = struct{}{}
+	}
+	// Always include the synthetic collector.id key so Policies using it are
+	// found via the index.
+	collectorKeys["collector.id"] = struct{}{}
+
+	// No attributes at all: fall back to broad enqueue. This covers brand-new
+	// Collectors before any attributes have been populated.
+	if len(collectorKeys) == 0 {
+		return r.allPoliciesInNamespace(ctx, collector.Namespace)
 	}
 
-	requests := make([]reconcile.Request, 0, len(policies.Items))
-	for i := range policies.Items {
-		p := &policies.Items[i]
-		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{
-				Namespace: p.Namespace,
-				Name:      p.Name,
-			},
-		})
+	seen := map[types.NamespacedName]struct{}{}
+	var reqs []reconcile.Request
+	for key := range collectorKeys {
+		var list fleetmanagementv1alpha1.RemoteAttributePolicyList
+		if err := r.List(ctx, &list,
+			client.InNamespace(collector.Namespace),
+			client.MatchingFields{policyMatcherKeyIndex: key},
+		); err != nil {
+			log.Error(err, "failed to list RemoteAttributePolicies by index for Collector watch",
+				"namespace", collector.Namespace, "collector", collector.Name, "key", key)
+			continue
+		}
+		for i := range list.Items {
+			nn := types.NamespacedName{
+				Namespace: list.Items[i].Namespace,
+				Name:      list.Items[i].Name,
+			}
+			if _, dup := seen[nn]; !dup {
+				seen[nn] = struct{}{}
+				reqs = append(reqs, reconcile.Request{NamespacedName: nn})
+			}
+		}
 	}
-	return requests
+	return reqs
+}
+
+// allPoliciesInNamespace returns reconcile requests for every
+// RemoteAttributePolicy in the given namespace. Used as a fallback when a
+// Collector has no attributes to key on.
+func (r *RemoteAttributePolicyReconciler) allPoliciesInNamespace(
+	ctx context.Context, ns string,
+) []reconcile.Request {
+	log := logf.FromContext(ctx)
+
+	var list fleetmanagementv1alpha1.RemoteAttributePolicyList
+	if err := r.List(ctx, &list, client.InNamespace(ns)); err != nil {
+		log.Error(err, "failed to list RemoteAttributePolicies for Collector watch fan-out (fallback)",
+			"namespace", ns)
+		return nil
+	}
+	reqs := make([]reconcile.Request, len(list.Items))
+	for i := range list.Items {
+		reqs[i] = reconcile.Request{NamespacedName: types.NamespacedName{
+			Namespace: list.Items[i].Namespace,
+			Name:      list.Items[i].Name,
+		}}
+	}
+	return reqs
 }
