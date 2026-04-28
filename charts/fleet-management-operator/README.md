@@ -152,10 +152,13 @@ Each controller is independently toggleable. New controllers default to **disabl
 | `controllers.collector.enabled` | Collector reconciler (manages collector remote attributes) | `false` |
 | `controllers.remoteAttributePolicy.enabled` | RemoteAttributePolicy reconciler (bulk attribute assignment by selector) | `false` |
 | `controllers.externalAttributeSync.enabled` | ExternalAttributeSync reconciler (HTTP/SQL-backed scheduled attribute pulls) | `false` |
+| `controllers.collectorDiscovery.enabled` | CollectorDiscovery reconciler (auto-mirrors Fleet collectors as Collector CRs) | `false` |
 
 CRDs are always installed when `crds.install=true` regardless of which controllers are enabled. Unused CRDs are harmless; missing CRDs would prevent users from inspecting pre-existing objects after a downgrade.
 
 When `controllers.collector.enabled=true`, the operator additionally gets `get/list/watch` on `RemoteAttributePolicy` and `ExternalAttributeSync` so it can compute the merged desired-attribute set for each Collector — even when the corresponding controllers are themselves disabled.
+
+`controllers.collectorDiscovery.enabled=true` requires `controllers.collector.enabled=true`. The manager refuses to start otherwise — discovery would create Collector CRs that no controller acts on.
 
 ### RBAC
 
@@ -297,6 +300,50 @@ spec:
 ```
 
 **Precedence (high to low):** ExternalAttributeSync → Collector spec → RemoteAttributePolicy. The Collector controller is the sole writer to Fleet for collector remote attributes; the other controllers maintain status that the Collector reads on each reconcile.
+
+### Auto-Discover Collectors from Fleet Management
+
+```yaml
+controllers:
+  collector:
+    enabled: true
+  collectorDiscovery:
+    enabled: true
+```
+
+```yaml
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: CollectorDiscovery
+metadata:
+  name: prod-linux
+  namespace: fleet-management-system
+spec:
+  pollInterval: 5m
+  selector:
+    matchers:
+      - "collector.os=linux"
+      - "env=prod"
+  # Optional: where to create the mirrored Collector CRs.
+  # Defaults to the CollectorDiscovery's own namespace.
+  targetNamespace: fleet-mirror
+  # Optional: include collectors marked inactive in Fleet (default: false).
+  includeInactive: false
+  policy:
+    # Keep (default) marks vanished CRs as stale; Delete removes them.
+    onCollectorRemoved: Keep
+```
+
+The reconciler periodically calls Fleet's `ListCollectors` and ensures one `Collector` CR exists per matching collector. Each mirrored CR carries a `fleetmanagement.grafana.com/discovery-name` label and a `fleetmanagement.grafana.com/discovered-by` annotation so users can filter and audit.
+
+Discovery only writes `spec.id` at creation time — users add `spec.remoteAttributes` (and the existing Collector reconciler propagates them to Fleet). Manual edits to discovered CRs survive subsequent polls.
+
+Deleting a `CollectorDiscovery` does NOT cascade-delete its mirrored CRs (orphan-on-delete, to preserve user-added attributes). To remove all mirrored CRs of a discovery, do:
+
+```bash
+kubectl delete collector -l fleetmanagement.grafana.com/discovery-name=prod-linux -n fleet-mirror
+```
+
+**Pagination caveat:** the Fleet Management SDK's `ListCollectors` does not currently expose pagination. For fleets with more than ~1000 collectors a single response may be truncated server-side. Shard via multiple `CollectorDiscovery` resources with disjoint selectors as a workaround until SDK pagination lands.
 
 ### Enable Prometheus Monitoring
 

@@ -15,6 +15,7 @@ rules:
 - apiGroups:
   - fleetmanagement.grafana.com
   resources:
+  - collectordiscoveries
   - collectors
   - externalattributesyncs
   - pipelines
@@ -30,13 +31,7 @@ rules:
 - apiGroups:
   - fleetmanagement.grafana.com
   resources:
-  - collectors/finalizers
-  - pipelines/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - fleetmanagement.grafana.com
-  resources:
+  - collectordiscoveries/status
   - collectors/status
   - externalattributesyncs/status
   - pipelines/status
@@ -44,4 +39,11 @@ rules:
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectors/finalizers
+  - pipelines/finalizers
+  verbs:
   - update

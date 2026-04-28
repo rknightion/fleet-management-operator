@@ -173,6 +173,13 @@ controllers:
   # sources on a schedule. Reserved for a later phase.
   externalAttributeSync:
     enabled: false
+  # CollectorDiscovery reconciler. Periodically calls Fleet Management's
+  # ListCollectors and mirrors each result as a Collector CR. Requires
+  # controllers.collector.enabled=true (the manager startup will refuse
+  # to run otherwise — discovery without the Collector reconciler would
+  # create CRs that nobody acts on).
+  collectorDiscovery:
+    enabled: false
 
 # CRD installation. CRDs are installed unconditionally when crds.install=true
 # (per-CRD opt-in is intentionally not supported — an installed-but-unused

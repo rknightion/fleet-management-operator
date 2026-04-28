@@ -1,0 +1,35 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: CollectorDiscovery
+metadata:
+  name: prod-linux
+  namespace: fleet-management-system
+spec:
+  # How often to call Fleet's ListCollectors. Webhook-enforced minimum
+  # is 1 minute to protect the shared 3 req/s rate limiter.
+  pollInterval: 5m
+
+  # Server-side filter passed to ListCollectors. Empty selector mirrors
+  # every collector — accepted but expensive on large fleets.
+  selector:
+    matchers:
+      - "collector.os=linux"
+      - "env=prod"
+
+  # Where to create mirrored Collector CRs. Defaults to this
+  # CollectorDiscovery's own namespace if omitted.
+  # targetNamespace: fleet-mirror
+
+  # Mirror collectors marked inactive in Fleet. Default false.
+  # includeInactive: false
+
+  policy:
+    # Keep (default): a collector that vanishes from Fleet has its CR
+    # marked stale via annotation, but the CR remains so user-added
+    # spec.remoteAttributes survive transient outages.
+    # Delete: removes the CR; the existing Collector finalizer issues
+    # REMOVE ops to Fleet (which 404s for a vanished collector — net
+    # no-op). Use this for clean-mirror semantics where preserving
+    # user data is not a goal.
+    onCollectorRemoved: Keep
+    # v1 only ships Skip — leave conflicting CRs alone.
+    onConflict: Skip

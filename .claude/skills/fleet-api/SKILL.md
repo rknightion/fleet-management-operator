@@ -704,7 +704,7 @@ Same Basic-auth credentials as the Pipeline service. The operator shares one rat
 | `GetCollector(id)` | Read live collector state. The operator uses this on each Collector reconcile to mirror local attributes into status and to compute the diff. |
 | `UpdateCollector(collector)` | Replace ALL fields. Unset fields are cleared. Avoid for selective updates — use BulkUpdateCollectors instead. |
 | `BulkUpdateCollectors(ids, ops)` | Atomic JSON-patch-style mutation. Each op targets a path like `/remote_attributes/<key>` with op = ADD / REPLACE / REMOVE / MOVE / COPY. The operator uses this for selective attribute updates. |
-| `ListCollectors(matchers)` | List collectors matching a Prometheus-style matcher set. |
+| `ListCollectors(matchers)` | List collectors matching a Prometheus-style matcher set. The CollectorDiscovery reconciler calls this on every poll cycle. **Pagination caveat:** the SDK's `ListCollectorsRequest` does not currently expose `page_token` / `page_size` — for large fleets a single response may be truncated server-side. Shard via multiple `CollectorDiscovery` resources with disjoint matchers as a workaround. |
 | `DeleteCollector(id)`, `BulkDeleteCollectors(ids)` | Removal — the operator does not call these (collectors self-register and self-deregister). |
 
 ## BulkUpdateCollectors Operation Syntax

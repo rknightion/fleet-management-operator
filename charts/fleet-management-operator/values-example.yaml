@@ -52,6 +52,11 @@ leaderElection:
 # RemoteAttributePolicy and ExternalAttributeSync so the Collector
 # reconciler can compute the merged desired-attribute set — even when
 # those other controllers are themselves disabled.
+#
+# Note: controllers.collectorDiscovery.enabled=true requires
+# controllers.collector.enabled=true. The manager refuses to start
+# otherwise — discovery without the Collector reconciler creates CRs
+# that no controller acts on.
 controllers:
   pipeline:
     enabled: true                # existing behavior, default on
@@ -61,6 +66,8 @@ controllers:
     enabled: false               # bulk attribute assignment by selector
   externalAttributeSync:
     enabled: false               # HTTP/SQL-backed scheduled attribute pulls
+  collectorDiscovery:
+    enabled: false               # auto-mirror Fleet collectors as Collector CRs
 
 # Optional: High Availability Configuration
 # replicaCount: 2

@@ -30,6 +30,26 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-fleetmanagement-grafana-com-v1alpha1-collectordiscovery
+  failurePolicy: Fail
+  name: vcollectordiscovery.kb.io
+  rules:
+  - apiGroups:
+    - fleetmanagement.grafana.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - collectordiscoveries
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-fleetmanagement-grafana-com-v1alpha1-externalattributesync
   failurePolicy: Fail
   name: vexternalattributesync.kb.io

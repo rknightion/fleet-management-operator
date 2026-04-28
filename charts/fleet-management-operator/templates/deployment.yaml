@@ -49,6 +49,7 @@ spec:
         - --enable-collector-controller={{ .Values.controllers.collector.enabled }}
         - --enable-policy-controller={{ .Values.controllers.remoteAttributePolicy.enabled }}
         - --enable-external-sync-controller={{ .Values.controllers.externalAttributeSync.enabled }}
+        - --enable-collector-discovery-controller={{ .Values.controllers.collectorDiscovery.enabled }}
         env:
         - name: FLEET_MANAGEMENT_BASE_URL
           valueFrom:

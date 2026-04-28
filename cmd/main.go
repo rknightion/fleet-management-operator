@@ -75,6 +75,7 @@ func main() {
 	var enableCollectorController bool
 	var enablePolicyController bool
 	var enableExternalSyncController bool
+	var enableCollectorDiscoveryController bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -100,6 +101,8 @@ func main() {
 		"Enable the RemoteAttributePolicy reconciler and webhook (bulk attribute assignment by selector).")
 	flag.BoolVar(&enableExternalSyncController, "enable-external-sync-controller", false,
 		"Enable the ExternalAttributeSync reconciler and webhook (HTTP/SQL-backed scheduled attribute pulls).")
+	flag.BoolVar(&enableCollectorDiscoveryController, "enable-collector-discovery-controller", false,
+		"Enable the CollectorDiscovery reconciler and webhook (auto-mirrors Fleet Management collectors as Collector CRs).")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -219,8 +222,18 @@ func main() {
 
 	// Refuse to run with no controllers enabled — that's almost certainly a
 	// configuration error and starting an idle manager would be confusing.
-	if !enablePipelineController && !enableCollectorController && !enablePolicyController && !enableExternalSyncController {
+	if !enablePipelineController && !enableCollectorController && !enablePolicyController && !enableExternalSyncController && !enableCollectorDiscoveryController {
 		setupLog.Error(nil, "no controllers enabled; set at least one --enable-*-controller flag to true")
+		os.Exit(1)
+	}
+
+	// Discovery without the Collector reconciler is a misconfiguration:
+	// discovery would create Collector CRs that nobody acts on. Fail
+	// fast instead of silently leaking objects.
+	if enableCollectorDiscoveryController && !enableCollectorController {
+		setupLog.Error(nil,
+			"--enable-collector-discovery-controller requires --enable-collector-controller; "+
+				"discovery without a Collector reconciler creates CRs that no controller acts on")
 		os.Exit(1)
 	}
 
@@ -317,6 +330,22 @@ func main() {
 		}
 	}
 
+	if enableCollectorDiscoveryController {
+		if err := (&controller.CollectorDiscoveryReconciler{
+			Client:      mgr.GetClient(),
+			Scheme:      mgr.GetScheme(),
+			FleetClient: fleetClient,
+			Recorder:    mgr.GetEventRecorderFor("collectordiscovery-controller"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "CollectorDiscovery")
+			os.Exit(1)
+		}
+
+		if err := fleetmanagementv1alpha1.SetupCollectorDiscoveryWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "CollectorDiscovery")
+			os.Exit(1)
+		}
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

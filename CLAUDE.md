@@ -254,6 +254,37 @@ The Collector controller computes the merged desired state on every reconcile an
 
 **Empty-result safety guard.** When `ExternalAttributeSync.Fetch` returns 0 records but the previous run had > 0 and `spec.allowEmptyResults` is false, the previous OwnedKeys claim is preserved and a `Stalled` condition is set. Set `allowEmptyResults: true` to opt out (e.g. when an empty result is legitimate).
 
+## CollectorDiscovery
+
+A fifth CRD, `CollectorDiscovery`, periodically calls Fleet Management's `ListCollectors` and creates one `Collector` CR per matching collector. Opt in via `controllers.collectorDiscovery.enabled` in the chart and `--enable-collector-discovery-controller` on the manager binary.
+
+**Hard requirement.** `--enable-collector-discovery-controller=true` requires `--enable-collector-controller=true`. The manager refuses to start otherwise (discovery without the Collector reconciler creates CRs that nobody acts on).
+
+**Tracking via labels and annotations, NOT OwnerReferences.** Discovered CRs carry:
+- Label `fleetmanagement.grafana.com/discovery-name=<cd-name>` for label-selector lists.
+- Annotation `fleetmanagement.grafana.com/discovered-by=<cd-namespace>/<cd-name>` for human-readable provenance.
+- Annotation `fleetmanagement.grafana.com/fleet-collector-id=<original-id>` so the collector ID can be recovered even after name sanitization.
+
+Owner refs are intentionally avoided so cascade-delete on the CD does NOT clobber user-added `spec.remoteAttributes`. Bulk cleanup uses `kubectl delete collector -l fleetmanagement.grafana.com/discovery-name=<name>`.
+
+**Naming.** Fleet collector IDs are not guaranteed to be DNS-1123 valid (uppercase, dots, slashes are allowed). The reconciler uses `internal/controller/discovery/SanitizedName` to lowercase and replace invalid chars; if the transformation is lossy it appends a 5-character SHA-256 suffix to disambiguate two ids that sanitize to the same form. Collisions among lossless ids are detected and also fall back to the hashed form.
+
+**Spec discipline.** Discovery only writes `spec.id` at creation. It never modifies a Collector CR's spec on subsequent polls — user edits to `spec.remoteAttributes`, `spec.enabled`, etc. survive forever. Discovery only manages CR existence and the stale annotation.
+
+**Vanishing-collector policy.** `spec.policy.onCollectorRemoved` defaults to `Keep` (CR stays with `fleetmanagement.grafana.com/discovery-stale=true` annotation; status reports the collector ID in `staleCollectors`). `Delete` opts into clean-mirror semantics. The existing Collector finalizer issues REMOVE ops to Fleet on delete, but a vanished collector returns 404 (treated as success) — net no-op API call.
+
+**Pagination caveat.** The Fleet Management SDK's `ListCollectorsRequest` does not currently expose `page_token` / `page_size`. For fleets with > ~1000 collectors, shard via multiple `CollectorDiscovery` resources with disjoint matchers. When the SDK adds pagination the controller will adopt it without a CRD change.
+
+**Webhook validation:**
+- `pollInterval` must parse via `time.ParseDuration` and be `>= 1m` (rate-limiter protection).
+- `selector` may be empty (mirror everything is legal); matcher syntax + 200-char cap apply when set.
+- `targetNamespace` (when set) must be a valid DNS-1123 label.
+- `policy.onCollectorRemoved ∈ {Keep, Delete}`; `policy.onConflict ∈ {Skip}` (TakeOwnership reserved for v2).
+
+**Single-writer principle preserved.** The discovery reconciler never calls `BulkUpdateCollectors`. Only the Collector reconciler writes attributes. Discovery only creates / deletes Collector CRs and writes its own status.
+
+**No watches on the discovery controller.** Discovery is purely poll-driven via `RequeueAfter`. Generation bumps (spec edits) bypass the schedule check by clearing the `observedGeneration == generation` guard.
+
 ## External Documentation
 
 For detailed information, use the `/fleet-api` and `/controller-patterns` skills.

@@ -61,11 +61,21 @@ type mockFleetCollectorClient struct {
 	// getErr lets tests inject a non-404 error from GetCollector.
 	getErr error
 
+	// listResult is what ListCollectors returns. The CollectorDiscovery
+	// reconciler also uses this mock through the FleetDiscoveryClient
+	// interface; tests set listResult explicitly per scenario.
+	listResult []*fleetclient.Collector
+
+	// listErr lets tests inject an error from ListCollectors.
+	listErr error
+
 	// Call counters and last-request capture.
 	callCountGet        int
 	callCountBulkUpdate int
+	callCountList       int
 	lastBulkUpdateIDs   []string
 	lastBulkUpdateOps   []*fleetclient.Operation
+	lastListMatchers    []string
 }
 
 func newMockFleetCollectorClient() *mockFleetCollectorClient {
@@ -84,10 +94,14 @@ func (m *mockFleetCollectorClient) reset() {
 	m.notRegistered = make(map[string]bool)
 	m.bulkUpdateErr = nil
 	m.getErr = nil
+	m.listResult = nil
+	m.listErr = nil
 	m.callCountGet = 0
 	m.callCountBulkUpdate = 0
+	m.callCountList = 0
 	m.lastBulkUpdateIDs = nil
 	m.lastBulkUpdateOps = nil
+	m.lastListMatchers = nil
 }
 
 // markNotRegistered configures GetCollector to return 404 for the given id.
@@ -181,6 +195,48 @@ func (m *mockFleetCollectorClient) BulkUpdateCollectors(_ context.Context, ids [
 		c.UpdatedAt = &now
 	}
 	return nil
+}
+
+// ListCollectors returns the test-configured listResult. Empty by
+// default — tests must call setListResult to populate. The mock does
+// not interpret matchers; tests set listResult to the already-filtered
+// content they want the discovery reconciler to see.
+func (m *mockFleetCollectorClient) ListCollectors(_ context.Context, matchers []string) ([]*fleetclient.Collector, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callCountList++
+	m.lastListMatchers = append([]string(nil), matchers...)
+
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+
+	out := make([]*fleetclient.Collector, 0, len(m.listResult))
+	for _, c := range m.listResult {
+		cp := *c
+		if c.RemoteAttributes != nil {
+			cp.RemoteAttributes = make(map[string]string, len(c.RemoteAttributes))
+			for k, v := range c.RemoteAttributes {
+				cp.RemoteAttributes[k] = v
+			}
+		}
+		if c.LocalAttributes != nil {
+			cp.LocalAttributes = make(map[string]string, len(c.LocalAttributes))
+			for k, v := range c.LocalAttributes {
+				cp.LocalAttributes[k] = v
+			}
+		}
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+// setListResult replaces the listResult slice. Used by discovery tests
+// to control what ListCollectors returns on the next reconcile.
+func (m *mockFleetCollectorClient) setListResult(collectors []*fleetclient.Collector) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listResult = append([]*fleetclient.Collector(nil), collectors...)
 }
 
 // stripRemoteAttrPath is the inverse of attributes.remoteAttrPath, simplified

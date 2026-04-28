@@ -143,6 +143,44 @@ rules:
   - list
   - watch
 {{- end }}
+{{- if .Values.controllers.collectorDiscovery.enabled }}
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectordiscoveries
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectordiscoveries/status
+  verbs:
+  - get
+  - patch
+  - update
+# Discovery creates and deletes Collector CRs. Read verbs are already
+# granted by the collector controller (which discovery requires), but we
+# add them here too so the chart's clusterrole is self-contained for
+# any future split.
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - collectors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+{{- end }}
 - apiGroups:
   - ""
   resources:
