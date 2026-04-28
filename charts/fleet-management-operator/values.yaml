@@ -40,6 +40,17 @@ fleetManagement:
     username: username
     password: password
 
+  # Rate-limiter configuration.
+  # apiRatePerSecond: match to your Fleet Management server-side api: rate
+  # setting. Standard stacks default to 3; large or custom deployments may
+  # allow more. Increase only if your Fleet Management stack is configured
+  # with a higher limit — exceeding the server-side limit will produce 429s.
+  # apiRateBurst: burst tokens available at startup/restart before the
+  # sustained RPS ceiling applies. burst=1 causes livelock at scale (request
+  # queue backs up until requests hit the 30s HTTP timeout).
+  apiRatePerSecond: 3
+  apiRateBurst: 50
+
 # Service Account configuration
 serviceAccount:
   # Specifies whether a service account should be created

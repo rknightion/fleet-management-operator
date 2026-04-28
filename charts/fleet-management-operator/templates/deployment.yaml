@@ -51,6 +51,8 @@ spec:
         - --enable-external-sync-controller={{ .Values.controllers.externalAttributeSync.enabled }}
         - --enable-collector-discovery-controller={{ .Values.controllers.collectorDiscovery.enabled }}
         - --enable-tenant-policy-enforcement={{ .Values.controllers.tenantPolicy.enabled }}
+        - --fleet-api-rps={{ .Values.fleetManagement.apiRatePerSecond }}
+        - --fleet-api-burst={{ .Values.fleetManagement.apiRateBurst }}
         env:
         - name: FLEET_MANAGEMENT_BASE_URL
           valueFrom:
