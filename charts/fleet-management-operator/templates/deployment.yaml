@@ -45,6 +45,7 @@ spec:
         - --leader-elect
         {{- end }}
         - --health-probe-bind-address=:{{ .Values.healthProbe.port }}
+        - --webhook-port={{ .Values.webhook.port }}
         - --enable-pipeline-controller={{ .Values.controllers.pipeline.enabled }}
         - --enable-collector-controller={{ .Values.controllers.collector.enabled }}
         - --enable-policy-controller={{ .Values.controllers.remoteAttributePolicy.enabled }}
@@ -70,6 +71,10 @@ spec:
         securityContext:
           {{- toYaml . | nindent 10 }}
         {{- end }}
+        ports:
+        - containerPort: {{ .Values.webhook.port }}
+          name: webhook-server
+          protocol: TCP
         livenessProbe:
           httpGet:
             path: /healthz

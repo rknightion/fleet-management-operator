@@ -33,10 +33,11 @@ import (
 // protocol against the PipelineService and CollectorService using shared
 // rate-limit and basic-auth interceptors.
 type Client struct {
-	baseURL   string
-	limiter   *rate.Limiter
-	pipeline  pipelinev1connect.PipelineServiceClient
-	collector collectorv1connect.CollectorServiceClient
+	baseURL    string
+	limiter    *rate.Limiter
+	httpClient *http.Client
+	pipeline   pipelinev1connect.PipelineServiceClient
+	collector  collectorv1connect.CollectorServiceClient
 }
 
 // NewClient creates a new Fleet Management API client.
@@ -67,11 +68,19 @@ func NewClient(baseURL, username, password string) *Client {
 	)
 
 	return &Client{
-		baseURL:   rootURL,
-		limiter:   limiter,
-		pipeline:  pipelinev1connect.NewPipelineServiceClient(httpClient, rootURL, interceptors),
-		collector: collectorv1connect.NewCollectorServiceClient(httpClient, rootURL, interceptors),
+		baseURL:    rootURL,
+		limiter:    limiter,
+		httpClient: httpClient,
+		pipeline:   pipelinev1connect.NewPipelineServiceClient(httpClient, rootURL, interceptors),
+		collector:  collectorv1connect.NewCollectorServiceClient(httpClient, rootURL, interceptors),
 	}
+}
+
+// Close releases idle connections held by the HTTP transport. Call this when
+// the client will no longer be used (e.g. on manager shutdown) to ensure
+// clean shutdown without waiting for idle-connection timeouts.
+func (c *Client) Close() {
+	c.httpClient.CloseIdleConnections()
 }
 
 // normalizeBaseURL trims trailing slashes and any known service suffix so that
