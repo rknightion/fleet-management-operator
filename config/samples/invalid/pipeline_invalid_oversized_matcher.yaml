@@ -1,0 +1,25 @@
+# INVALID. Do not apply in CI or production.
+#
+# Violation: spec.matchers[0] is 240 characters long, exceeding the
+# 200-character per-matcher limit declared in the CRD schema.
+#
+# Enforced by: API server (OpenAPI structural validation), generated
+# from +kubebuilder:validation:items:MaxLength=200 on
+# api/v1alpha1/pipeline_types.go PipelineSpec.Matchers.
+#
+# Expected error (kubectl):
+#   spec.matchers[0]: Too long: may not be more than 200 bytes
+#
+# Because this is enforced server-side via OpenAPI, the rule applies
+# even when the validating webhook is disabled.
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: invalid-oversized-matcher
+spec:
+  contents: |
+    prometheus.exporter.self "alloy" { }
+  matchers:
+    # 240 chars: a 230-char value paired with a short key.
+    - "team=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  configType: Alloy

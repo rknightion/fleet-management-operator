@@ -1,0 +1,25 @@
+# INVALID. Do not apply in CI or production.
+#
+# Violation: spec.remoteAttributes contains the key "collector.region",
+# which uses the reserved "collector." prefix that Fleet Management
+# claims for collector-reported attributes.
+#
+# Enforced by: TWO layers (defence-in-depth).
+#   1. API server (CEL): +kubebuilder:validation:XValidation on
+#      api/v1alpha1/collector_types.go CollectorSpec.RemoteAttributes
+#      with rule "self.all(k, !k.startsWith('collector.'))".
+#   2. Webhook: api/v1alpha1/collector_webhook.go reserved-prefix check.
+#
+# Expected error (when both layers active, the CEL rule typically fires
+# first):
+#   spec.remoteAttributes: Invalid value: ...: keys must not use the
+#   reserved 'collector.' prefix
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Collector
+metadata:
+  name: invalid-reserved-key
+spec:
+  id: collector-1
+  remoteAttributes:
+    collector.region: us-east-1   # reserved prefix
+    team: platform

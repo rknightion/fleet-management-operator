@@ -1,0 +1,20 @@
+# INVALID. Do not apply in CI or production.
+#
+# Violation: spec.selector is empty (neither matchers nor collectorIDs).
+# An empty selector is rejected so a partially-written Policy can never
+# accidentally target every collector — this is intentional defence
+# against operator-error fan-out.
+#
+# Enforced by: api/v1alpha1/policy_webhook.go validate selector
+# non-empty check.
+#
+# Expected error:
+#   spec.selector must define at least one of matchers or collectorIDs
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: RemoteAttributePolicy
+metadata:
+  name: invalid-empty-selector
+spec:
+  selector: {}
+  attributes:
+    team: platform

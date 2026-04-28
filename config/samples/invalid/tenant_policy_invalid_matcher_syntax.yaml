@@ -1,0 +1,27 @@
+# INVALID. Do not apply in CI or production.
+#
+# Violation: spec.requiredMatchers[0] uses "==" instead of "=".
+#
+# Enforced by: api/v1alpha1/tenant_policy_webhook.go (calls
+# validateMatcherSyntax). The same matcher syntax rules apply to
+# TenantPolicy.requiredMatchers as to Pipeline.matchers.
+#
+# Expected webhook error:
+#   spec.requiredMatchers[0] has invalid syntax: matcher contains '=='
+#   (use '=' for equality matching): team=="team-a"
+#
+# Note: if you somehow get a TenantPolicy admitted with a malformed
+# matcher (e.g. webhook disabled at the time), the TenantPolicy status
+# reconciler surfaces the same parse failure as Ready=False with reason
+# ParseError. See docs/conditions.md.
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: TenantPolicy
+metadata:
+  name: invalid-tenant-matcher-syntax
+spec:
+  subjects:
+    - kind: Group
+      apiGroup: rbac.authorization.k8s.io
+      name: team-a
+  requiredMatchers:
+    - team=="team-a"

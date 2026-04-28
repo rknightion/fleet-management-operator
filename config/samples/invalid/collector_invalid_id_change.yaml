@@ -1,0 +1,30 @@
+# INVALID. Apply this AFTER first applying config/samples/collector_sample.yaml
+# (or any other Collector with a different spec.id).
+#
+# Violation: spec.id is immutable after creation. This manifest has the
+# same metadata.name as collector_sample.yaml but a different spec.id,
+# so applying it as an update triggers the immutability rule.
+#
+# Enforced by: TWO layers.
+#   1. API server (CEL): +kubebuilder:validation:XValidation on
+#      api/v1alpha1/collector_types.go CollectorSpec.ID with rule
+#      "self == oldSelf". This is enforced even with the webhook off.
+#   2. Webhook: api/v1alpha1/collector_webhook.go ValidateUpdate.
+#
+# Expected error:
+#   spec.id: Invalid value: ...: spec.id is immutable
+#
+# Reproduction:
+#   kubectl apply -f config/samples/collector_sample.yaml
+#   kubectl apply -f config/samples/invalid/collector_invalid_id_change.yaml
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Collector
+metadata:
+  # Name MUST match an existing Collector created from collector_sample.yaml
+  # for this to exercise the update path.
+  name: collector-sample
+spec:
+  # Different from the sample's collector ID. The CEL rule rejects the change.
+  id: collector-different-id
+  remoteAttributes:
+    team: platform

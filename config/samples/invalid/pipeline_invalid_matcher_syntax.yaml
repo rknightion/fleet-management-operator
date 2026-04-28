@@ -1,0 +1,21 @@
+# INVALID. Do not apply in CI or production.
+#
+# Violation: spec.matchers[0] uses "==" (double equals) which is not
+# Prometheus Alertmanager syntax. The validating webhook rejects this
+# with the message:
+#   matcher contains '==' (use '=' for equality matching): collector.os==linux
+#
+# Enforced by: api/v1alpha1/pipeline_webhook.go (validateMatcherSyntax).
+# Note: this is a Go-webhook check, NOT a CEL rule. If the webhook is
+# disabled, this manifest will be admitted by the API server (see
+# docs/versioning.md for why we keep the webhook even after CEL parity).
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: invalid-matcher-syntax
+spec:
+  contents: |
+    prometheus.exporter.self "alloy" { }
+  matchers:
+    - collector.os==linux
+  configType: Alloy
