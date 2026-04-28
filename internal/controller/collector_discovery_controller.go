@@ -25,6 +25,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -49,6 +50,17 @@ const (
 	discoveryEventReasonConflict   = "Conflict"
 	discoveryEventReasonSynced     = "Synced"
 	discoveryEventReasonFailed     = "Failed"
+
+	// TruncatedConflicts condition type and reasons for CollectorDiscovery.
+	// Conflicts are diagnostic-only; no controller reads this slice to drive
+	// behaviour, so capping at 100 is safe.
+	discoveryConditionTruncatedConflicts = "TruncatedConflicts"
+	discoveryReasonConflictsTruncated    = "ConflictsTruncated"
+	discoveryReasonNoConflictsTruncated  = "NoConflictsTruncated"
+
+	// maxDiscoveryConflicts caps status.conflicts. Events carry the full
+	// conflict list; the status cap bounds etcd write size.
+	maxDiscoveryConflicts = 100
 
 	// defaultDiscoveryRequeueOnError is the requeue delay for transient
 	// failures (Fleet API errors, k8s API errors). Intentionally faster
@@ -516,7 +528,26 @@ func (r *CollectorDiscoveryReconciler) updateStatusSuccess(
 	cd.Status.CollectorsObserved = int32(observed)
 	cd.Status.CollectorsManaged = int32(managed)
 	cd.Status.StaleCollectors = stale
-	cd.Status.Conflicts = conflicts
+
+	cappedConflicts := conflicts
+	if len(conflicts) > maxDiscoveryConflicts {
+		cappedConflicts = conflicts[:maxDiscoveryConflicts]
+		meta.SetStatusCondition(&cd.Status.Conditions, metav1.Condition{
+			Type:               discoveryConditionTruncatedConflicts,
+			Status:             metav1.ConditionTrue,
+			Reason:             discoveryReasonConflictsTruncated,
+			Message:            fmt.Sprintf("conflicts list truncated to %d entries; check events for the full list", maxDiscoveryConflicts),
+			ObservedGeneration: cd.Generation,
+		})
+	} else {
+		meta.SetStatusCondition(&cd.Status.Conditions, metav1.Condition{
+			Type:               discoveryConditionTruncatedConflicts,
+			Status:             metav1.ConditionFalse,
+			Reason:             discoveryReasonNoConflictsTruncated,
+			ObservedGeneration: cd.Generation,
+		})
+	}
+	cd.Status.Conflicts = cappedConflicts
 
 	message := fmt.Sprintf("Observed %d, managed %d, stale %d, conflicts %d", observed, managed, len(stale), len(conflicts))
 	setReadyCondition(&cd.Status.Conditions, cd.Generation, true, discoveryReasonSynced, message)

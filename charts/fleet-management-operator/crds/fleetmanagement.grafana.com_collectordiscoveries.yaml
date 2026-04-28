@@ -222,8 +222,10 @@ spec:
                 x-kubernetes-list-type: map
               conflicts:
                 description: |-
-                  Conflicts records cases where the controller could not create or
-                  claim a CR because of a name / ownership conflict.
+                  Conflicts records the most recent cases (up to 100) where the
+                  controller could not create or claim a CR due to a name/ownership
+                  conflict. When the cap is hit, a TruncatedConflicts condition is
+                  set; check events for the full conflict list.
                 items:
                   description: |-
                     DiscoveryConflict records a single conflict between the desired CR
@@ -250,6 +252,7 @@ spec:
                   - crName
                   - reason
                   type: object
+                maxItems: 100
                 type: array
                 x-kubernetes-list-map-keys:
                 - collectorID

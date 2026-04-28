@@ -182,11 +182,14 @@ type CollectorDiscoveryStatus struct {
 	// +optional
 	StaleCollectors []string `json:"staleCollectors,omitempty"`
 
-	// Conflicts records cases where the controller could not create or
-	// claim a CR because of a name / ownership conflict.
+	// Conflicts records the most recent cases (up to 100) where the
+	// controller could not create or claim a CR due to a name/ownership
+	// conflict. When the cap is hit, a TruncatedConflicts condition is
+	// set; check events for the full conflict list.
 	// +listType=map
 	// +listMapKey=collectorID
 	// +optional
+	// +kubebuilder:validation:MaxItems=100
 	Conflicts []DiscoveryConflict `json:"conflicts,omitempty"`
 
 	// Conditions represent the current state of the CollectorDiscovery.
