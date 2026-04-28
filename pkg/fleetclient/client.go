@@ -26,6 +26,8 @@ import (
 	"github.com/grafana/fleet-management-api/api/gen/proto/go/collector/v1/collectorv1connect"
 	pipelinev1 "github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1"
 	"github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1/pipelinev1connect"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"golang.org/x/time/rate"
 )
 
@@ -39,13 +41,38 @@ type Client struct {
 	collector collectorv1connect.CollectorServiceClient
 }
 
+// clientConfig holds optional configuration for NewClient.
+type clientConfig struct {
+	tracer trace.Tracer
+}
+
+// ClientOption is a functional option for NewClient.
+type ClientOption func(*clientConfig)
+
+// WithTracer sets the OpenTelemetry tracer used to instrument outgoing Fleet
+// Management API calls. When not set (the default), a noop tracer is used so
+// there is zero overhead.
+func WithTracer(tracer trace.Tracer) ClientOption {
+	return func(c *clientConfig) { c.tracer = tracer }
+}
+
 // NewClient creates a new Fleet Management API client.
 //
 // baseURL may be the historical service-suffixed URL ending in
 // "/pipeline.v1.PipelineService/" (which is what the operator's existing
 // Secret stores) or the bare server root. The service suffix is stripped
 // automatically so existing deployments keep working.
-func NewClient(baseURL, username, password string) *Client {
+func NewClient(baseURL, username, password string, opts ...ClientOption) *Client {
+	cfg := &clientConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+
+	tracer := cfg.tracer
+	if tracer == nil {
+		tracer = noop.NewTracerProvider().Tracer("fleet-management-operator")
+	}
+
 	rootURL := normalizeBaseURL(baseURL)
 
 	httpClient := &http.Client{
@@ -64,6 +91,7 @@ func NewClient(baseURL, username, password string) *Client {
 	interceptors := connect.WithInterceptors(
 		rateLimitInterceptor(limiter),
 		basicAuthInterceptor(username, password),
+		tracingInterceptor(tracer),
 	)
 
 	return &Client{
