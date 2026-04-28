@@ -119,3 +119,33 @@ webhook is added. The single served version makes conversion a no-op
 and we deliberately avoid setting up infrastructure that has nothing
 to convert. When the first v1 type lands, the webhook is added in the
 same change.
+
+## Conversion webhook scaffolding
+
+`api/v1alpha1/hub.go` declares the `Hub()` method on every type, satisfying
+the `controller-runtime/pkg/conversion.Hub` interface. This is the prerequisite
+for kubebuilder's conversion generation.
+
+**When v1beta1 is ready:**
+1. `kubebuilder create api --group fleetmanagement --version v1beta1 --kind <Kind>`
+2. `make generate` — produces `zz_generated.conversion.go` stubs
+3. Implement `ConvertTo(dst *v1beta1.Kind)` / `ConvertFrom(src *v1beta1.Kind)`
+4. Register the conversion webhook in `cmd/main.go`
+5. Set `storage: true` on v1beta1 in CRD; `storage: false` on v1alpha1
+
+## Allowed and forbidden schema changes in v1alpha1
+
+| Change class | Allowed? | Notes |
+|---|---|---|
+| Add optional field (no default) | Yes | Older clients omit it; ignored by cache |
+| Add required field | No | Rejects all existing stored CRs on next touch |
+| Remove field | No | Breaks deserialization of existing stored objects |
+| Rename field | No | Equivalent to remove+add; needs conversion webhook |
+| Tighten validation (stricter) | No | Would reject currently-valid stored CRs |
+| Loosen validation | Yes | Old CRs remain valid |
+| Add new condition Type | Yes | Additive; watchers ignore unknown types |
+| Add new condition Reason for existing Type | Yes | Additive |
+| Rename condition Reason | No | Breaking for dashboards/alerts; additive-then-deprecate window (>=1 release) |
+| Add new status field | Yes | Controllers ignore unknown fields from older CRDs |
+| Remove status field | No | Needs conversion webhook |
+| Add new CRD to the group | Yes | Does not affect existing CRDs |
