@@ -1,3 +1,13 @@
+# fleet-management-operator Helm chart values
+#
+# Controller model: each controller is independently opt-in.
+# - controllers.pipeline.enabled (default: true) — core pipeline reconciler
+# - controllers.collector/remoteAttributePolicy/externalAttributeSync/collectorDiscovery
+#   (default: false) — attribute-management controllers
+# - controllers.tenantPolicy (default: false) — K8s-RBAC-based tenancy enforcement
+#
+# For configuration reference see CLAUDE.md and the individual controller sections below.
+#
 # Default values for fleet-management-operator
 
 # Image configuration
@@ -6,7 +16,10 @@ image:
   pullPolicy: IfNotPresent
   tag: "dev-v1.0.0"
 
-# Image pull secrets for private registries
+# Image pull secrets for private registries.
+# Air-gapped / private registry: set imagePullSecrets and override image.repository.
+# Production digest pinning: set image.tag: "" and use a digest-based repository ref
+#   e.g. image.repository: myregistry/fleet-management-operator@sha256:<digest>
 imagePullSecrets: []
 # - name: regcred
 
@@ -55,8 +68,9 @@ fleetManagement:
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
-  # Automatically mount a ServiceAccount's API credentials
-  automount: true
+  # automount: false — operator uses in-cluster kubeconfig via controller-runtime;
+  # mounting the SA token unnecessarily expands the blast radius of a container compromise.
+  automount: false
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -72,6 +86,7 @@ podLabels: {}
 # Pod security context
 podSecurityContext:
   runAsNonRoot: true
+  fsGroup: 65532     # align with container UID; ensures mounted Secrets are readable
   seccompProfile:
     type: RuntimeDefault
 
@@ -79,6 +94,8 @@ podSecurityContext:
 securityContext:
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false
+  runAsUser: 65532
+  runAsGroup: 65532
   capabilities:
     drop:
     - "ALL"
@@ -87,10 +104,23 @@ securityContext:
 resources:
   limits:
     cpu: 500m
-    memory: 128Mi
+    # Informer cache at 30k Collectors ≈ 150MB; Pipeline cache + Go runtime adds ~100MB.
+    # Sizing guide: <1k CRs: 256Mi; 10k CRs: 512Mi; 30k+ CRs: 1Gi
+    memory: 1Gi
   requests:
     cpu: 10m
-    memory: 64Mi
+    memory: 512Mi
+
+# Logging configuration
+logging:
+  # Log level passed to --zap-log-level: debug, info, warn, error
+  # Production default: info (JSON encoding, no stacktraces below error).
+  # debug enables console encoding with stacktraces on warn+ — very verbose at 30k scale.
+  level: info
+
+# Termination grace period in seconds. Must exceed the Fleet API HTTP client timeout (30s)
+# so in-flight API calls can complete before the pod is forcibly killed. Do not reduce below 30.
+terminationGracePeriodSeconds: 30
 
 # Leader election configuration
 leaderElection:
@@ -108,7 +138,9 @@ healthProbe:
   port: 8081
   # Liveness probe configuration
   liveness:
-    initialDelaySeconds: 15
+    # 45s accounts for informer cache warm-up at 30k Collectors (15-45s on a busy API server).
+    # A shorter delay risks false crash-loops during normal startup.
+    initialDelaySeconds: 45
     periodSeconds: 20
     timeoutSeconds: 1
     failureThreshold: 3
@@ -125,6 +157,10 @@ metrics:
   enabled: true
   # Port for metrics
   port: 8080
+  # secure: serve the metrics endpoint over HTTPS. Default false (HTTP) for easy
+  # Prometheus scraping inside the cluster without TLS cert plumbing.
+  # Set true only if you provide TLS certs for the metrics endpoint.
+  secure: false
   # Service for metrics
   service:
     # Service type
@@ -151,6 +187,16 @@ tolerations: []
 
 # Affinity rules
 affinity: {}
+# Example anti-affinity to spread replicas across nodes (for replicaCount > 1):
+# affinity:
+#   podAntiAffinity:
+#     preferredDuringSchedulingIgnoredDuringExecution:
+#     - weight: 100
+#       podAffinityTerm:
+#         labelSelector:
+#           matchLabels:
+#             app.kubernetes.io/name: fleet-management-operator
+#         topologyKey: kubernetes.io/hostname
 
 # Priority class name
 priorityClassName: ""
@@ -158,13 +204,34 @@ priorityClassName: ""
 # Pod disruption budget
 podDisruptionBudget:
   enabled: false
+  # WARNING: Do NOT enable with minAvailable: 1 when replicaCount: 1 — it will block node drains.
+  # When enabling PDB for HA (replicaCount > 1), prefer maxUnavailable: 1 over minAvailable.
   minAvailable: 1
-  # maxUnavailable: 1
+  # maxUnavailable: 1  # Recommended over minAvailable for graceful rolling updates
 
 # RBAC configuration
 rbac:
   # Specifies whether RBAC resources should be created
   create: true
+
+# Webhook TLS configuration.
+# See docs/webhook-setup.md for cert-manager, manual, and self-signed strategies.
+# Default: controller-runtime auto-generates self-signed certs (dev/test only).
+# Production: enable cert-manager or provide manual certs to avoid cert mismatch on restart.
+webhook:
+  # cert-manager managed certificates (recommended for production HA).
+  # Requires cert-manager to be installed in the cluster.
+  certManager:
+    enabled: false
+    # Reference to a cert-manager Issuer or ClusterIssuer.
+    # Create this Issuer/ClusterIssuer before enabling.
+    issuerRef:
+      name: selfsigned-issuer
+      kind: ClusterIssuer
+  # Directory containing webhook TLS cert files (tls.crt, tls.key).
+  # When set, passed as --webhook-cert-path to the manager.
+  # Leave empty to use controller-runtime's auto-generated self-signed certs.
+  certDir: ""
 
 # Controllers and webhooks are individually opt-in. New controllers default to
 # disabled so existing chart installs see no behavior change. Flip the
@@ -196,6 +263,9 @@ controllers:
   # to run otherwise — discovery without the Collector reconciler would
   # create CRs that nobody acts on).
   collectorDiscovery:
+    # REQUIRES controllers.collector.enabled: true.
+    # The manager will refuse to start if collectorDiscovery is enabled without collector —
+    # discovery creates Collector CRs that nobody reconciles without the Collector controller.
     enabled: false
     # Keep at 1: concurrency > 1 triggers multiple ListCollectors per poll cycle.
     maxConcurrent: 1
@@ -208,6 +278,19 @@ controllers:
   # standard K8s RBAC controls who can create/edit policies.
   tenantPolicy:
     enabled: false
+
+# Grafana dashboard ConfigMap. Picked up automatically by the Grafana sidecar
+# (label grafana_dashboard: "1") or the Grafana Dashboard Operator.
+grafana:
+  dashboards:
+    enabled: false
+
+# Prometheus alert rules. Requires Prometheus Operator CRDs (PrometheusRule).
+alerts:
+  enabled: false
+  # Labels added to the PrometheusRule resource for Prometheus Operator label selectors.
+  # Example: prometheus: kube-prometheus
+  labels: {}
 
 # CRD installation. CRDs are installed unconditionally when crds.install=true
 # (per-CRD opt-in is intentionally not supported — an installed-but-unused
