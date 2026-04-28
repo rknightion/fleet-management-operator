@@ -73,8 +73,15 @@ func (c *Client) BulkUpdateCollectors(ctx context.Context, ids []string, ops []*
 	return nil
 }
 
-// ListCollectors returns all collectors matching the supplied
-// Prometheus-style matchers. An empty matchers slice returns every collector.
+// ListCollectors returns all collectors matching the supplied Prometheus-style
+// matchers in a single response. An empty matchers slice returns every
+// collector.
+//
+// Pagination note: the Fleet SDK's ListCollectorsRequest does not yet expose
+// page_token / page_size. Until the SDK ships pagination support, adopt it
+// transparently here (no CRD change required). For fleets with more than
+// ~1000 collectors, shard via multiple CollectorDiscovery CRs with disjoint
+// matchers rather than using a single broad-selector discovery.
 func (c *Client) ListCollectors(ctx context.Context, matchers []string) ([]*Collector, error) {
 	req := &collectorv1.ListCollectorsRequest{Matchers: matchers}
 

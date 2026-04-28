@@ -89,7 +89,18 @@ func (r *CollectorDiscovery) validateCollectorDiscovery() (admission.Warnings, e
 		return nil, err
 	}
 
-	return nil, nil
+	var warnings admission.Warnings
+	// Warn on empty selector (match-all). Not a hard error — it is a valid
+	// configuration — but at fleets >1000 collectors a single ListCollectors
+	// response can approach 30 MB and may exceed the Fleet Management API's
+	// server-side timeout. Shard instead via disjoint-matcher CRs.
+	if len(r.Spec.Selector.Matchers) == 0 && len(r.Spec.Selector.CollectorIDs) == 0 {
+		warnings = append(warnings,
+			"spec.selector is empty: this CollectorDiscovery will mirror all Fleet collectors. "+
+				"For fleets with more than 1000 collectors, shard into multiple CollectorDiscovery "+
+				"resources with disjoint matchers to avoid single large-response timeouts (see values.yaml).")
+	}
+	return warnings, nil
 }
 
 // validatePollInterval enforces:

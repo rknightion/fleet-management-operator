@@ -133,6 +133,13 @@ make test-e2e
   triggers full reconcile storms on every interval. Use watch events and status-driven
   RequeueAfter instead. Do not add SyncPeriod without understanding the Fleet API
   rate budget.
+- **MaxConcurrentReconciles:** Pipeline and Collector must stay at 1 — they share
+  the Fleet API rate budget; parallelising them queues more requests at the rate
+  limiter without increasing throughput. Policy, ExternalSync, and Discovery are
+  safe to parallelise (local K8s cache reads or per-source Fetch calls with no
+  shared Fleet API calls). Defaults: policy=4, sync=4, discovery=1 (configurable
+  via `--controller-{policy,sync,discovery}-max-concurrent` or the Helm
+  `controllers.*.maxConcurrent` value).
 
 **Finalizer:**
 - Name: `pipeline.fleetmanagement.grafana.com/finalizer`
@@ -316,11 +323,15 @@ Owner refs are intentionally avoided so cascade-delete on the CD does NOT clobbe
 
 **Vanishing-collector policy.** `spec.policy.onCollectorRemoved` defaults to `Keep` (CR stays with `fleetmanagement.grafana.com/discovery-stale=true` annotation; status reports the collector ID in `staleCollectors`). `Delete` opts into clean-mirror semantics. The existing Collector finalizer issues REMOVE ops to Fleet on delete, but a vanished collector returns 404 (treated as success) — net no-op API call.
 
-**Pagination caveat.** The Fleet Management SDK's `ListCollectorsRequest` does not currently expose `page_token` / `page_size`. For fleets with > ~1000 collectors, shard via multiple `CollectorDiscovery` resources with disjoint matchers. When the SDK adds pagination the controller will adopt it without a CRD change.
+**Pagination caveat.** The Fleet Management SDK's `ListCollectorsRequest` does not currently expose `page_token` / `page_size`. A broad selector in a 30k fleet returns all collectors in one response (~30 MB). Adopt pagination transparently in `pkg/fleetclient/collector.go` when the SDK ships it — no CRD change required.
+
+**Sharding pattern.** For fleets with >1000 collectors, create N CollectorDiscovery CRs with disjoint matchers — e.g. `env=production`, `env=staging`, `env=dev`. Each covers ~⌈fleet_size/N⌉ collectors; no single ListCollectors response becomes unwieldy. The admission webhook emits a Warning when `spec.selector` is empty (match-all).
+
+**HA / leader-election.** When `--leader-elect` is set, controller-runtime gates the **entire** controller manager (including all reconcile dispatch) on the leader lease. Non-leader replicas do NOT run any reconciles. Discovery polling therefore runs only on the current leader. A lease failover causes the new leader to immediately begin polling; the first post-failover ListCollectors may consume measurable Fleet API budget.
 
 **Webhook validation:**
 - `pollInterval` must parse via `time.ParseDuration` and be `>= 1m` (rate-limiter protection).
-- `selector` may be empty (mirror everything is legal); matcher syntax + 200-char cap apply when set.
+- `selector` may be empty (mirror everything is legal); matcher syntax + 200-char cap apply when set. Empty selector emits an admission Warning (large-fleet risk).
 - `targetNamespace` (when set) must be a valid DNS-1123 label.
 - `policy.onCollectorRemoved ∈ {Keep, Delete}`; `policy.onConflict ∈ {Skip}` (TakeOwnership reserved for v2).
 

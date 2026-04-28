@@ -17,13 +17,16 @@ a new condition type or reason must update this file in the same PR.
 | `Pipeline`                | `Synced`  | The most recent reconciliation completed without error.                              |
 | `Collector`               | `Ready`   | The merged remote-attribute set is reflected in Fleet for this collector.            |
 | `Collector`               | `Synced`  | The most recent reconciliation completed without error.                              |
-| `RemoteAttributePolicy`   | `Ready`   | The selector matched at least one collector and status is up to date.                |
-| `RemoteAttributePolicy`   | `Synced`  | The selector evaluated successfully (matched ≥0 collectors, no list error).          |
-| `ExternalAttributeSync`   | `Ready`   | The most recent fetch produced a usable result that has been claimed.                |
-| `ExternalAttributeSync`   | `Synced`  | The most recent reconciliation completed without error.                              |
-| `ExternalAttributeSync`   | `Stalled` | An empty fetch was suppressed by `spec.allowEmptyResults=false`; previous claim kept. |
-| `CollectorDiscovery`      | `Ready`   | Most recent `ListCollectors` succeeded and CR mirroring is up to date.               |
-| `CollectorDiscovery`      | `Synced`  | The most recent reconciliation completed without error.                              |
+| `RemoteAttributePolicy`   | `Ready`     | The selector matched at least one collector and status is up to date.                |
+| `RemoteAttributePolicy`   | `Synced`    | The selector evaluated successfully (matched ≥0 collectors, no list error).          |
+| `RemoteAttributePolicy`   | `Truncated` | `status.matchedCollectorIDs` is capped at 1000; `status.matchedCount` holds the full count. |
+| `ExternalAttributeSync`   | `Ready`     | The most recent fetch produced a usable result that has been claimed.                |
+| `ExternalAttributeSync`   | `Synced`    | The most recent reconciliation completed without error.                              |
+| `ExternalAttributeSync`   | `Stalled`   | An empty fetch was suppressed by `spec.allowEmptyResults=false`; previous claim kept. |
+| `ExternalAttributeSync`   | `Truncated` | `status.ownedKeys` is capped at 1000; collectors beyond cap may retain attributes on CR deletion. |
+| `CollectorDiscovery`      | `Ready`              | Most recent `ListCollectors` succeeded and CR mirroring is up to date.   |
+| `CollectorDiscovery`      | `Synced`             | The most recent reconciliation completed without error.                   |
+| `CollectorDiscovery`      | `TruncatedConflicts` | `status.conflicts` is capped at 100; check events for the full list.     |
 | `TenantPolicy`            | `Ready`   | Mirrors `Valid`. Surfaced as the headline status for operators.                      |
 | `TenantPolicy`            | `Valid`   | Spec parses cleanly: matcher syntax + namespace selector are well-formed.            |
 
@@ -56,29 +59,35 @@ additive-then-remove window.
 
 ### RemoteAttributePolicy (`internal/controller/policy_controller.go`)
 
-| Reason       | Used on        | Meaning                                                                       |
-| ------------ | -------------- | ----------------------------------------------------------------------------- |
-| `Matched`    | Ready, Synced  | Selector matched at least one collector.                                      |
-| `NoMatch`    | Ready, Synced  | Selector matched zero collectors. Synced is still True (eval succeeded).      |
-| `ListFailed` | Ready, Synced  | List of Collector CRs failed (cache miss / API error).                        |
+| Reason                 | Used on        | Meaning                                                                                         |
+| ---------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| `Matched`              | Ready, Synced  | Selector matched at least one collector.                                                        |
+| `NoMatch`              | Ready, Synced  | Selector matched zero collectors. Synced is still True (eval succeeded).                        |
+| `ListFailed`           | Ready, Synced  | List of Collector CRs failed (cache miss / API error).                                          |
+| `MatchedIDsTruncated`  | Truncated      | matchedCollectorIDs capped at 1000; matchedCount holds the full count.                          |
+| `NotTruncated`         | Truncated      | matchedCollectorIDs was not capped.                                                             |
 
 ### ExternalAttributeSync (`internal/controller/external_sync_controller.go`)
 
-| Reason            | Used on              | Meaning                                                                            |
-| ----------------- | -------------------- | ---------------------------------------------------------------------------------- |
-| `Synced`          | Ready, Synced        | Fetch returned records and the claim was applied.                                  |
-| `SourceFailed`    | Ready, Synced        | Source `Fetch` returned a non-nil error.                                           |
-| `Stalled`         | Stalled              | `Fetch` returned 0 records and `spec.allowEmptyResults=false`; claim preserved.    |
-| `InvalidSchedule` | Ready, Synced        | `spec.schedule` failed both duration and cron parsers.                             |
+| Reason               | Used on              | Meaning                                                                                      |
+| -------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
+| `Synced`             | Ready, Synced        | Fetch returned records and the claim was applied.                                            |
+| `SourceFailed`       | Ready, Synced        | Source `Fetch` returned a non-nil error.                                                     |
+| `Stalled`            | Stalled              | `Fetch` returned 0 records and `spec.allowEmptyResults=false`; claim preserved.              |
+| `InvalidSchedule`    | Ready, Synced        | `spec.schedule` failed both duration and cron parsers.                                       |
+| `OwnedKeysTruncated` | Truncated            | ownedKeys capped at 1000; collectors beyond cap may retain attributes on CR deletion.        |
+| `NotTruncated`       | Truncated            | ownedKeys was not capped.                                                                    |
 
 ### CollectorDiscovery (`internal/controller/collector_discovery_controller.go`)
 
-| Reason                  | Used on        | Meaning                                                                       |
-| ----------------------- | -------------- | ----------------------------------------------------------------------------- |
-| `Synced`                | Ready, Synced  | ListCollectors succeeded; mirror CRs are up to date.                          |
-| `ListCollectorsFailed`  | Ready, Synced  | Fleet API call failed.                                                        |
-| `UpsertFailed`          | Ready, Synced  | Creating or updating a mirrored Collector CR failed.                          |
-| `InvalidConfig`         | Ready, Synced  | Spec failed validation post-admission (e.g. malformed selector).              |
+| Reason                      | Used on              | Meaning                                                                       |
+| --------------------------- | -------------------- | ----------------------------------------------------------------------------- |
+| `Synced`                    | Ready, Synced        | ListCollectors succeeded; mirror CRs are up to date.                          |
+| `ListCollectorsFailed`      | Ready, Synced        | Fleet API call failed.                                                        |
+| `UpsertFailed`              | Ready, Synced        | Creating or updating a mirrored Collector CR failed.                          |
+| `InvalidConfig`             | Ready, Synced        | Spec failed validation post-admission (e.g. malformed selector).              |
+| `ConflictsTruncated`        | TruncatedConflicts   | status.conflicts truncated to 100; check events for the full conflict list.   |
+| `NoConflictsTruncated`      | TruncatedConflicts   | status.conflicts was not truncated.                                           |
 
 ### TenantPolicy (`internal/controller/tenant_policy_controller.go`)
 
