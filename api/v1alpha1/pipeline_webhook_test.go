@@ -214,7 +214,7 @@ service:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			_, err := tt.pipeline.ValidateCreate(ctx, tt.pipeline)
+			_, err := (&pipelineValidator{}).ValidateCreate(ctx, tt.pipeline)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateCreate() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -284,7 +284,7 @@ func TestPipeline_ValidateUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			_, err := tt.pipeline.ValidateUpdate(ctx, oldPipeline, tt.pipeline)
+			_, err := (&pipelineValidator{}).ValidateUpdate(ctx, oldPipeline, tt.pipeline)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateUpdate() error = %v, wantErr %v", err, tt.wantErr)
 				return

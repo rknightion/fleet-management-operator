@@ -293,7 +293,7 @@ func TestRemoteAttributePolicy_ValidateCreate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			_, err := tt.policy.ValidateCreate(ctx, tt.policy)
+			_, err := (&remoteAttributePolicyValidator{}).ValidateCreate(ctx, tt.policy)
 			if tt.wantErr {
 				if assert.Error(t, err) && tt.errMsg != "" {
 					assert.Contains(t, err.Error(), tt.errMsg)
@@ -457,7 +457,7 @@ func TestRemoteAttributePolicy_ValidateUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			_, err := tt.newObj.ValidateUpdate(ctx, tt.oldObj, tt.newObj)
+			_, err := (&remoteAttributePolicyValidator{}).ValidateUpdate(ctx, tt.oldObj, tt.newObj)
 			if tt.wantErr {
 				if assert.Error(t, err) && tt.errMsg != "" {
 					assert.Contains(t, err.Error(), tt.errMsg)
@@ -476,7 +476,7 @@ func TestRemoteAttributePolicy_ValidateDelete(t *testing.T) {
 			Matchers: []string{"environment=production"},
 		},
 	})
-	warnings, err := p.ValidateDelete(context.Background(), p)
+	warnings, err := (&remoteAttributePolicyValidator{}).ValidateDelete(context.Background(), p)
 	assert.NoError(t, err)
 	assert.Nil(t, warnings)
 }
@@ -498,7 +498,7 @@ func TestRemoteAttributePolicy_validateAttributes_DefenseInDepth(t *testing.T) {
 		},
 	})
 
-	_, err := p.ValidateCreate(context.Background(), p)
+	_, err := (&remoteAttributePolicyValidator{}).ValidateCreate(context.Background(), p)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "exceeds the maximum")
 	}

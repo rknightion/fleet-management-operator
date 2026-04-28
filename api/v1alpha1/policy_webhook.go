@@ -35,35 +35,59 @@ var remoteattributepolicylog = logf.Log.WithName("remoteattributepolicy-resource
 const policyMaxMatcherLength = 200
 
 // SetupRemoteAttributePolicyWebhookWithManager registers the
-// RemoteAttributePolicy webhook with the manager.
-func SetupRemoteAttributePolicyWebhookWithManager(mgr ctrl.Manager) error {
+// RemoteAttributePolicy validating webhook with the manager. Pass a
+// non-nil MatcherChecker to layer tenant-policy enforcement on top of the
+// spec validation; pass nil to skip the tenant check.
+func SetupRemoteAttributePolicyWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker) error {
 	return ctrl.NewWebhookManagedBy(mgr, &RemoteAttributePolicy{}).
-		WithValidator(&RemoteAttributePolicy{}).
+		WithValidator(&remoteAttributePolicyValidator{checker: checker}).
 		Complete()
 }
 
 // +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-remoteattributepolicy,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=remoteattributepolicies,verbs=create;update,versions=v1alpha1,name=vremoteattributepolicy.kb.io,admissionReviewVersions=v1
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *RemoteAttributePolicy) ValidateCreate(ctx context.Context, obj *RemoteAttributePolicy) (admission.Warnings, error) {
-	remoteattributepolicylog.Info("validate create", "name", r.Name)
-
-	return r.validateRemoteAttributePolicy()
+// remoteAttributePolicyValidator is the production webhook validator. It
+// runs the type's spec validation and, when checker is non-nil, layers
+// the tenant policy check on top.
+type remoteAttributePolicyValidator struct {
+	checker MatcherChecker
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *RemoteAttributePolicy) ValidateUpdate(ctx context.Context, oldObj, newObj *RemoteAttributePolicy) (admission.Warnings, error) {
-	remoteattributepolicylog.Info("validate update", "name", r.Name)
+var _ admission.Validator[*RemoteAttributePolicy] = &remoteAttributePolicyValidator{}
 
+// ValidateCreate implements admission.Validator.
+func (v *remoteAttributePolicyValidator) ValidateCreate(ctx context.Context, obj *RemoteAttributePolicy) (admission.Warnings, error) {
+	remoteattributepolicylog.Info("validate create", "name", obj.Name)
+	warnings, err := obj.validateRemoteAttributePolicy()
+	if err != nil {
+		return warnings, err
+	}
+	if v.checker != nil {
+		if err := v.checker.Check(ctx, obj.Namespace, obj.Spec.Selector.Matchers); err != nil {
+			return warnings, err
+		}
+	}
+	return warnings, nil
+}
+
+// ValidateUpdate implements admission.Validator.
+func (v *remoteAttributePolicyValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *RemoteAttributePolicy) (admission.Warnings, error) {
+	remoteattributepolicylog.Info("validate update", "name", newObj.Name)
 	// Priority and selector are mutable; re-run the full validation suite.
-	return r.validateRemoteAttributePolicy()
+	warnings, err := newObj.validateRemoteAttributePolicy()
+	if err != nil {
+		return warnings, err
+	}
+	if v.checker != nil {
+		if err := v.checker.Check(ctx, newObj.Namespace, newObj.Spec.Selector.Matchers); err != nil {
+			return warnings, err
+		}
+	}
+	return warnings, nil
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *RemoteAttributePolicy) ValidateDelete(ctx context.Context, obj *RemoteAttributePolicy) (admission.Warnings, error) {
-	remoteattributepolicylog.Info("validate delete", "name", r.Name)
-
-	// No validation needed for delete
+// ValidateDelete implements admission.Validator.
+func (v *remoteAttributePolicyValidator) ValidateDelete(ctx context.Context, obj *RemoteAttributePolicy) (admission.Warnings, error) {
 	return nil, nil
 }
 

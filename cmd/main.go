@@ -40,6 +40,7 @@ import (
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 	"github.com/grafana/fleet-management-operator/internal/controller"
+	"github.com/grafana/fleet-management-operator/internal/tenant"
 	"github.com/grafana/fleet-management-operator/pkg/fleetclient"
 	"github.com/grafana/fleet-management-operator/pkg/sources"
 	httpsource "github.com/grafana/fleet-management-operator/pkg/sources/http"
@@ -76,6 +77,7 @@ func main() {
 	var enablePolicyController bool
 	var enableExternalSyncController bool
 	var enableCollectorDiscoveryController bool
+	var enableTenantPolicyEnforcement bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -103,6 +105,12 @@ func main() {
 		"Enable the ExternalAttributeSync reconciler and webhook (HTTP/SQL-backed scheduled attribute pulls).")
 	flag.BoolVar(&enableCollectorDiscoveryController, "enable-collector-discovery-controller", false,
 		"Enable the CollectorDiscovery reconciler and webhook (auto-mirrors Fleet Management collectors as Collector CRs).")
+	flag.BoolVar(&enableTenantPolicyEnforcement, "enable-tenant-policy-enforcement", false,
+		"Enable TenantPolicy CRD validation and enforcement. When set, validating webhooks for "+
+			"Pipeline, RemoteAttributePolicy, and ExternalAttributeSync require that K8s subjects "+
+			"matched by a TenantPolicy include at least one of the policy's required matchers in "+
+			"the CR's matcher set. Default false; existing installs see no behavior change until "+
+			"this flag is set.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -237,7 +245,6 @@ func main() {
 		os.Exit(1)
 	}
 
-
 	// Initialize Fleet Management API client
 	fleetBaseURL := os.Getenv("FLEET_MANAGEMENT_BASE_URL")
 	if fleetBaseURL == "" {
@@ -260,6 +267,35 @@ func main() {
 	setupLog.Info("initializing Fleet Management API client", "baseURL", fleetBaseURL, "username", fleetUsername)
 	fleetClient := fleetclient.NewClient(fleetBaseURL, fleetUsername, fleetPassword)
 
+	// Tenant policy enforcement is opt-in and default-off. When disabled,
+	// tenantChecker stays nil and the consuming webhooks behave identically
+	// to a build without this feature. When enabled, the checker reads
+	// TenantPolicy resources via the manager's cached client at admission
+	// time.
+	var tenantChecker fleetmanagementv1alpha1.MatcherChecker
+	if enableTenantPolicyEnforcement {
+		setupLog.Info("tenant policy enforcement enabled; webhooks will consult TenantPolicy resources")
+		tenantChecker = tenant.NewChecker(mgr.GetClient())
+
+		if err := fleetmanagementv1alpha1.SetupTenantPolicyWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "TenantPolicy")
+			os.Exit(1)
+		}
+
+		// Status reconciler is paired with enforcement: when policies are
+		// being consulted at admission, operators want in-cluster signal
+		// for whether each policy is well-formed. Lightweight — no Fleet
+		// API calls, no finalizer.
+		if err := (&controller.TenantPolicyReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Recorder: mgr.GetEventRecorderFor("tenantpolicy-controller"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "TenantPolicy")
+			os.Exit(1)
+		}
+	}
+
 	if enablePipelineController {
 		// Cache: mgr.GetClient() returns a cached client backed by the informer cache.
 		// All Get() and List() calls through this client read from the in-memory cache, not the API server.
@@ -274,7 +310,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := fleetmanagementv1alpha1.SetupPipelineWebhookWithManager(mgr); err != nil {
+		if err := fleetmanagementv1alpha1.SetupPipelineWebhookWithManager(mgr, tenantChecker); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Pipeline")
 			os.Exit(1)
 		}
@@ -307,7 +343,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := fleetmanagementv1alpha1.SetupRemoteAttributePolicyWebhookWithManager(mgr); err != nil {
+		if err := fleetmanagementv1alpha1.SetupRemoteAttributePolicyWebhookWithManager(mgr, tenantChecker); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteAttributePolicy")
 			os.Exit(1)
 		}
@@ -324,7 +360,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := fleetmanagementv1alpha1.SetupExternalAttributeSyncWebhookWithManager(mgr); err != nil {
+		if err := fleetmanagementv1alpha1.SetupExternalAttributeSyncWebhookWithManager(mgr, tenantChecker); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "ExternalAttributeSync")
 			os.Exit(1)
 		}

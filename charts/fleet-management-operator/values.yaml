@@ -180,6 +180,15 @@ controllers:
   # create CRs that nobody acts on).
   collectorDiscovery:
     enabled: false
+  # TenantPolicy enforcement. When enabled, the validating webhooks for
+  # Pipeline, RemoteAttributePolicy, and ExternalAttributeSync require K8s
+  # subjects matched by a TenantPolicy CR to include at least one of the
+  # policy's required matchers in their CR matcher set. Default-allow when
+  # no policy matches the request, so existing installs see no behavior
+  # change until at least one TenantPolicy is created. Cluster-scoped CRD;
+  # standard K8s RBAC controls who can create/edit policies.
+  tenantPolicy:
+    enabled: false
 
 # CRD installation. CRDs are installed unconditionally when crds.install=true
 # (per-CRD opt-in is intentionally not supported — an installed-but-unused

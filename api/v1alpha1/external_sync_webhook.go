@@ -40,35 +40,59 @@ var externalSyncCronParser = cron.NewParser(
 )
 
 // SetupExternalAttributeSyncWebhookWithManager registers the
-// ExternalAttributeSync webhook with the manager.
-func SetupExternalAttributeSyncWebhookWithManager(mgr ctrl.Manager) error {
+// ExternalAttributeSync validating webhook with the manager. Pass a
+// non-nil MatcherChecker to layer tenant-policy enforcement on top of the
+// spec validation; pass nil to skip the tenant check.
+func SetupExternalAttributeSyncWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker) error {
 	return ctrl.NewWebhookManagedBy(mgr, &ExternalAttributeSync{}).
-		WithValidator(&ExternalAttributeSync{}).
+		WithValidator(&externalAttributeSyncValidator{checker: checker}).
 		Complete()
 }
 
 // +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-externalattributesync,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=externalattributesyncs,verbs=create;update,versions=v1alpha1,name=vexternalattributesync.kb.io,admissionReviewVersions=v1
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *ExternalAttributeSync) ValidateCreate(ctx context.Context, obj *ExternalAttributeSync) (admission.Warnings, error) {
-	externalattributesynclog.Info("validate create", "name", r.Name)
-
-	return r.validateExternalAttributeSync()
+// externalAttributeSyncValidator is the production webhook validator. It
+// runs the type's spec validation and, when checker is non-nil, layers
+// the tenant policy check on top.
+type externalAttributeSyncValidator struct {
+	checker MatcherChecker
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *ExternalAttributeSync) ValidateUpdate(ctx context.Context, oldObj, newObj *ExternalAttributeSync) (admission.Warnings, error) {
-	externalattributesynclog.Info("validate update", "name", r.Name)
+var _ admission.Validator[*ExternalAttributeSync] = &externalAttributeSyncValidator{}
 
+// ValidateCreate implements admission.Validator.
+func (v *externalAttributeSyncValidator) ValidateCreate(ctx context.Context, obj *ExternalAttributeSync) (admission.Warnings, error) {
+	externalattributesynclog.Info("validate create", "name", obj.Name)
+	warnings, err := obj.validateExternalAttributeSync()
+	if err != nil {
+		return warnings, err
+	}
+	if v.checker != nil {
+		if err := v.checker.Check(ctx, obj.Namespace, obj.Spec.Selector.Matchers); err != nil {
+			return warnings, err
+		}
+	}
+	return warnings, nil
+}
+
+// ValidateUpdate implements admission.Validator.
+func (v *externalAttributeSyncValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *ExternalAttributeSync) (admission.Warnings, error) {
+	externalattributesynclog.Info("validate update", "name", newObj.Name)
 	// All fields are mutable; re-run the full validation suite.
-	return r.validateExternalAttributeSync()
+	warnings, err := newObj.validateExternalAttributeSync()
+	if err != nil {
+		return warnings, err
+	}
+	if v.checker != nil {
+		if err := v.checker.Check(ctx, newObj.Namespace, newObj.Spec.Selector.Matchers); err != nil {
+			return warnings, err
+		}
+	}
+	return warnings, nil
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *ExternalAttributeSync) ValidateDelete(ctx context.Context, obj *ExternalAttributeSync) (admission.Warnings, error) {
-	externalattributesynclog.Info("validate delete", "name", r.Name)
-
-	// No validation needed for delete
+// ValidateDelete implements admission.Validator.
+func (v *externalAttributeSyncValidator) ValidateDelete(ctx context.Context, obj *ExternalAttributeSync) (admission.Warnings, error) {
 	return nil, nil
 }
 

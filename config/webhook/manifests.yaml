@@ -104,3 +104,23 @@ webhooks:
     resources:
     - remoteattributepolicies
   sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-fleetmanagement-grafana-com-v1alpha1-tenantpolicy
+  failurePolicy: Fail
+  name: vtenantpolicy.kb.io
+  rules:
+  - apiGroups:
+    - fleetmanagement.grafana.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - tenantpolicies
+  sideEffects: None

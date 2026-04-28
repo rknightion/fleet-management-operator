@@ -31,34 +31,59 @@ import (
 // log is for logging in this package.
 var pipelinelog = logf.Log.WithName("pipeline-resource")
 
-// SetupWebhookWithManager registers the webhook with the manager.
-func SetupPipelineWebhookWithManager(mgr ctrl.Manager) error {
+// SetupPipelineWebhookWithManager registers the Pipeline validating
+// webhook with the manager. Pass a non-nil MatcherChecker (e.g. a
+// *tenant.Checker) to layer tenant-policy enforcement on top of the spec
+// validation; pass nil to skip the tenant check.
+func SetupPipelineWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker) error {
 	return ctrl.NewWebhookManagedBy(mgr, &Pipeline{}).
-		WithValidator(&Pipeline{}).
+		WithValidator(&pipelineValidator{checker: checker}).
 		Complete()
 }
 
 // +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-pipeline,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=pipelines,verbs=create;update,versions=v1alpha1,name=vpipeline.kb.io,admissionReviewVersions=v1
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *Pipeline) ValidateCreate(ctx context.Context, obj *Pipeline) (admission.Warnings, error) {
-	pipelinelog.Info("validate create", "name", r.Name)
-
-	return r.validatePipeline()
+// pipelineValidator is the production webhook validator. It runs the
+// type's spec validation and, when checker is non-nil, layers the tenant
+// policy check on top.
+type pipelineValidator struct {
+	checker MatcherChecker
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *Pipeline) ValidateUpdate(ctx context.Context, oldObj, newObj *Pipeline) (admission.Warnings, error) {
-	pipelinelog.Info("validate update", "name", r.Name)
+var _ admission.Validator[*Pipeline] = &pipelineValidator{}
 
-	return r.validatePipeline()
+// ValidateCreate implements admission.Validator.
+func (v *pipelineValidator) ValidateCreate(ctx context.Context, obj *Pipeline) (admission.Warnings, error) {
+	pipelinelog.Info("validate create", "name", obj.Name)
+	warnings, err := obj.validatePipeline()
+	if err != nil {
+		return warnings, err
+	}
+	if v.checker != nil {
+		if err := v.checker.Check(ctx, obj.Namespace, obj.Spec.Matchers); err != nil {
+			return warnings, err
+		}
+	}
+	return warnings, nil
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *Pipeline) ValidateDelete(ctx context.Context, obj *Pipeline) (admission.Warnings, error) {
-	pipelinelog.Info("validate delete", "name", r.Name)
+// ValidateUpdate implements admission.Validator.
+func (v *pipelineValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *Pipeline) (admission.Warnings, error) {
+	pipelinelog.Info("validate update", "name", newObj.Name)
+	warnings, err := newObj.validatePipeline()
+	if err != nil {
+		return warnings, err
+	}
+	if v.checker != nil {
+		if err := v.checker.Check(ctx, newObj.Namespace, newObj.Spec.Matchers); err != nil {
+			return warnings, err
+		}
+	}
+	return warnings, nil
+}
 
-	// No validation needed for delete
+// ValidateDelete implements admission.Validator.
+func (v *pipelineValidator) ValidateDelete(ctx context.Context, obj *Pipeline) (admission.Warnings, error) {
 	return nil, nil
 }
 
@@ -227,4 +252,11 @@ func validateMatcherSyntax(matcher string) error {
 	}
 
 	return nil
+}
+
+// ValidateMatcherSyntax exposes the package-internal matcher validator so
+// non-webhook callers (e.g. the TenantPolicy status reconciler) can run the
+// same parse without re-implementing it.
+func ValidateMatcherSyntax(matcher string) error {
+	return validateMatcherSyntax(matcher)
 }

@@ -581,7 +581,7 @@ func TestExternalAttributeSync_ValidateCreate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			_, err := tt.eas.ValidateCreate(ctx, tt.eas)
+			_, err := (&externalAttributeSyncValidator{}).ValidateCreate(ctx, tt.eas)
 			if tt.wantErr {
 				if assert.Error(t, err) && tt.errMsg != "" {
 					assert.Contains(t, err.Error(), tt.errMsg)
@@ -772,7 +772,7 @@ func TestExternalAttributeSync_ValidateUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			_, err := tt.newObj.ValidateUpdate(ctx, tt.oldObj, tt.newObj)
+			_, err := (&externalAttributeSyncValidator{}).ValidateUpdate(ctx, tt.oldObj, tt.newObj)
 			if tt.wantErr {
 				if assert.Error(t, err) && tt.errMsg != "" {
 					assert.Contains(t, err.Error(), tt.errMsg)
@@ -786,7 +786,7 @@ func TestExternalAttributeSync_ValidateUpdate(t *testing.T) {
 
 func TestExternalAttributeSync_ValidateDelete(t *testing.T) {
 	eas := newExternalSync("test", ExternalAttributeSyncSpec{})
-	warnings, err := eas.ValidateDelete(context.Background(), eas)
+	warnings, err := (&externalAttributeSyncValidator{}).ValidateDelete(context.Background(), eas)
 	assert.NoError(t, err)
 	assert.Nil(t, warnings)
 }
