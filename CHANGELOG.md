@@ -29,10 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+### Upgrade Notes
+<!-- Per-release: list CRD schema changes, Helm value renames, drainage requirements, and manual steps required. -->
+
 ## [0.1.0] - YYYY-MM-DD
 
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/YOUR_USERNAME/fm-crd/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/YOUR_USERNAME/fm-crd/releases/tag/v0.1.0
+[Unreleased]: https://github.com/grafana/fleet-management-operator/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/grafana/fleet-management-operator/releases/tag/v0.1.0

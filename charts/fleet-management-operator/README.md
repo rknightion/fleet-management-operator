@@ -15,7 +15,7 @@ Helm chart for deploying the Grafana Fleet Management Pipeline Operator to Kuber
 
 ```bash
 # Add the Helm repository
-helm repo add fm-operator https://YOUR_USERNAME.github.io/fm-crd
+helm repo add fm-operator https://grafana.github.io/fleet-management-operator
 helm repo update
 
 # Install with minimum configuration
@@ -402,9 +402,62 @@ kubectl get pipelines -A
 kubectl describe pipeline <pipeline-name> -n <namespace>
 ```
 
+## Troubleshooting Installation
+
+### CRDs not found after install
+
+```bash
+kubectl get crd | grep fleetmanagement.grafana.com
+```
+
+If empty, CRDs were not installed. Verify `crds.install: true` (the default) and re-run `helm install`.
+If upgrading from a manual install, apply CRDs first: `kubectl apply -f charts/fleet-management-operator/crds/`
+
+### Webhook admission failures after install
+
+```bash
+kubectl describe validatingwebhookconfiguration | grep -A5 "Failure\|caBundle"
+```
+
+If `caBundle` is empty, the TLS cert has not been injected. See `docs/webhook-setup.md` for TLS strategy options.
+If the webhook Service has no endpoints, the operator pod may still be starting up — wait for Ready status.
+
+### RBAC permission errors
+
+```bash
+kubectl auth can-i create pipelines.fleetmanagement.grafana.com --as=system:serviceaccount:<namespace>:<sa-name>
+```
+
+If denied, verify `rbac.create: true` (default) and that the ClusterRole was created. Check: `kubectl get clusterrole | grep fleet`.
+
+### Operator pod not starting — credential Secret missing
+
+The operator reads Fleet Management credentials from a Secret. If the Secret is missing:
+```bash
+kubectl get secret -n <namespace> | grep fleet-management
+```
+
+Create it if missing:
+```bash
+kubectl create secret generic fleet-management-credentials \
+  --from-literal=base-url=https://fleet-management-<cluster>.grafana.net/... \
+  --from-literal=username=<stack-id> \
+  --from-literal=password=<api-token> \
+  -n <namespace>
+```
+
+### Metrics endpoint not scraped by Prometheus
+
+Verify the metrics endpoint is bound (requires `metrics.enabled: true` and `metrics.secure: false`):
+```bash
+kubectl exec -n <namespace> <pod-name> -- wget -qO- http://localhost:8080/metrics | head -5
+```
+
+If empty, check that `--metrics-bind-address` is being passed (verify pod args: `kubectl describe pod <pod> | grep metrics-bind`).
+
 ## Support
 
 For issues and questions:
-- GitHub Issues: https://github.com/YOUR_USERNAME/fm-crd/issues
+- GitHub Issues: https://github.com/grafana/fleet-management-operator/issues
 - Grafana Fleet Management Documentation: https://grafana.com/docs/grafana-cloud/monitor-infrastructure/fleet-management/
 - Grafana Alloy Documentation: https://grafana.com/docs/alloy/latest/

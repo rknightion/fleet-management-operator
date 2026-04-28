@@ -11,9 +11,9 @@ keywords:
   - opentelemetry
   - observability
   - operator
-home: https://github.com/YOUR_USERNAME/fm-crd
+home: https://github.com/grafana/fleet-management-operator
 sources:
-  - https://github.com/YOUR_USERNAME/fm-crd
+  - https://github.com/grafana/fleet-management-operator
 maintainers:
-  - name: Your Name
-    email: your-email@example.com
+  - name: Grafana Labs
+    email: platform-observability@grafana.com
