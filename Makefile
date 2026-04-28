@@ -59,7 +59,7 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -race $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
@@ -125,17 +125,17 @@ BUILDER_NAME ?= fm-crd-builder
 
 .PHONY: docker-buildx-setup
 docker-buildx-setup: ## Set up docker buildx builder for multi-arch builds
-	@if ! $(CONTAINER_TOOL) buildx ls | grep -q $(BUILDER_NAME); then \
-		echo "Creating buildx builder $(BUILDER_NAME)..."; \
-		$(CONTAINER_TOOL) buildx create --name $(BUILDER_NAME) --driver docker-container --bootstrap --use; \
-	else \
+	@if $(CONTAINER_TOOL) buildx inspect $(BUILDER_NAME) >/dev/null 2>&1; then \
 		echo "Buildx builder $(BUILDER_NAME) already exists"; \
 		$(CONTAINER_TOOL) buildx use $(BUILDER_NAME); \
+	else \
+		echo "Creating buildx builder $(BUILDER_NAME)..."; \
+		$(CONTAINER_TOOL) buildx create --name $(BUILDER_NAME) --driver docker-container --bootstrap --use; \
 	fi
 
 .PHONY: docker-buildx-remove
 docker-buildx-remove: ## Remove docker buildx builder
-	@if $(CONTAINER_TOOL) buildx ls | grep -q $(BUILDER_NAME); then \
+	@if $(CONTAINER_TOOL) buildx inspect $(BUILDER_NAME) >/dev/null 2>&1; then \
 		echo "Removing buildx builder $(BUILDER_NAME)..."; \
 		$(CONTAINER_TOOL) buildx rm $(BUILDER_NAME); \
 	else \
