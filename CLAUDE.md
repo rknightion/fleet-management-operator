@@ -72,8 +72,13 @@ make test-e2e
 - Example: If you omit `matchers`, they will be deleted from the pipeline
 
 **Rate Limiting:**
-- Management endpoints: 3 req/s
-- Implement with golang.org/x/time/rate: `rate.NewLimiter(rate.Limit(3), 1)`
+- Management endpoints: configurable; **default 3 req/s** (match to your Fleet Management
+  server-side `api:` setting via `--fleet-api-rps` / `fleetManagement.apiRatePerSecond`)
+- Implement with golang.org/x/time/rate: `rate.NewLimiter(rate.Limit(rps), burst)`
+- Use `fleetclient.WithRateLimit(rps, burst)` when constructing the client
+- **burst=50 is the default** — absorbs startup/restart spikes. burst=1 causes livelock:
+  with a 30s HTTP timeout, request #(rps×30+1) in a restart wave waits 30s and times out,
+  indistinguishable from a Fleet API outage.
 - Use limiter.Wait(ctx) before each API call
 
 **API Operations:**
@@ -121,11 +126,21 @@ make test-e2e
 - Don't call GetPipeline unless debugging (UpsertPipeline returns full object)
 - Don't call ListPipelines on every reconcile (rate limit)
 - Return errors, don't swallow with Requeue: true
+- **IsConflict on Status().Update()**: return `ctrl.Result{Requeue: true}, nil` —
+  NO error, NO exponential backoff. A conflict is cache lag, not a transient API
+  error; returning an error would trigger workqueue backoff, adding unnecessary delay.
+- **SyncPeriod deliberately NOT set** in ctrl.Options. An explicit resync period
+  triggers full reconcile storms on every interval. Use watch events and status-driven
+  RequeueAfter instead. Do not add SyncPeriod without understanding the Fleet API
+  rate budget.
 
 **Finalizer:**
 - Name: `pipeline.fleetmanagement.grafana.com/finalizer`
+- **Add finalizer BEFORE the first Fleet API call** — persisted first so a crash
+  between add and API call leaves the CR protected, not leaked.
 - On deletion: call DeletePipeline, handle 404 as success, remove finalizer
-- On create: add finalizer before first reconcile
+- **Remove finalizer ONLY after Fleet cleanup succeeds or returns 404** — this
+  ordering is the only window that prevents external resource leaks on pod restart.
 
 **Status Conditions:**
 - Ready: Pipeline successfully synced to Fleet Management
