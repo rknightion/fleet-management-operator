@@ -53,6 +53,18 @@ const (
 
 	externalSyncConditionStalled = "Stalled"
 
+	// Truncated condition type and reasons for ExternalAttributeSync.
+	// Set when status.ownedKeys is capped at maxOwnedKeys. Attributes for
+	// collectors beyond the cap may not be removed on CR deletion.
+	externalSyncConditionTruncated = "Truncated"
+	externalSyncReasonTruncated    = "OwnedKeysTruncated"
+	externalSyncReasonNotTruncated = "NotTruncated"
+
+	// maxOwnedKeys caps status.ownedKeys. At 30k collectors, an uncapped
+	// slice approaches several MB; the Collector reconciler reads this on
+	// every reconcile, so the cap bounds both etcd writes and cache reads.
+	maxOwnedKeys = 1000
+
 	// defaultExternalSyncRequeueOnError is the requeue delay for transient
 	// failures (network, secret resolution); it intentionally backs off
 	// faster than the schedule itself so a misconfigured source surfaces
@@ -245,12 +257,46 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
 	}
 
+	ownedStatus, truncated := ownedKeysToStatus(owned)
+
+	// No-op check: if spec generation, counts, and owned-keys content are
+	// all unchanged, skip the status write. This avoids multi-KB writes to
+	// etcd on every schedule tick when the external source has not changed.
+	if sync.Status.ObservedGeneration == sync.Generation &&
+		sync.Status.RecordsSeen == int32(len(records)) &&
+		sync.Status.RecordsApplied == int32(recordsApplied) &&
+		ownedKeyEntriesEqual(sync.Status.OwnedKeys, ownedStatus) {
+		log.V(1).Info("no-op sync: source and owned-keys unchanged, skipping status write",
+			"namespace", sync.Namespace, "name", sync.Name)
+		return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
+	}
+
 	sync.Status.LastSyncTime = &now
 	sync.Status.LastSuccessTime = &now
 	sync.Status.RecordsSeen = int32(len(records))
 	sync.Status.RecordsApplied = int32(recordsApplied)
-	sync.Status.OwnedKeys = ownedKeysToStatus(owned)
+	sync.Status.OwnedKeys = ownedStatus
 	sync.Status.ObservedGeneration = sync.Generation
+
+	if truncated {
+		r.emitEventf(sync, corev1.EventTypeWarning, "Truncated",
+			"ownedKeys capped at %d; collectors beyond cap may retain attributes on CR deletion",
+			maxOwnedKeys)
+		meta.SetStatusCondition(&sync.Status.Conditions, metav1.Condition{
+			Type:               externalSyncConditionTruncated,
+			Status:             metav1.ConditionTrue,
+			Reason:             externalSyncReasonTruncated,
+			Message:            fmt.Sprintf("ownedKeys truncated to %d entries; attributes for collectors beyond the cap may not be removed on CR deletion — shard sources with >%d collectors", maxOwnedKeys, maxOwnedKeys),
+			ObservedGeneration: sync.Generation,
+		})
+	} else {
+		meta.SetStatusCondition(&sync.Status.Conditions, metav1.Condition{
+			Type:               externalSyncConditionTruncated,
+			Status:             metav1.ConditionFalse,
+			Reason:             externalSyncReasonNotTruncated,
+			ObservedGeneration: sync.Generation,
+		})
+	}
 
 	setStalledCondition(&sync.Status.Conditions, sync.Generation, false, "")
 	setReadyCondition(&sync.Status.Conditions, sync.Generation, true, externalSyncReasonSynced,
@@ -525,13 +571,20 @@ func hasAllRequired(r sources.Record, required []string) bool {
 
 // ownedKeysToStatus converts the projected per-collector attribute map into
 // the OwnedKeyEntry slice the CRD status exposes, sorted by collectorID for
-// deterministic output.
-func ownedKeysToStatus(owned map[string]map[string]string) []fleetmanagementv1alpha1.OwnedKeyEntry {
+// deterministic output. Returns the slice and a truncated flag — when
+// truncated=true the caller must set the Truncated condition and emit a
+// Warning event so operators know that collectors beyond the cap are affected.
+func ownedKeysToStatus(owned map[string]map[string]string) ([]fleetmanagementv1alpha1.OwnedKeyEntry, bool) {
 	ids := make([]string, 0, len(owned))
 	for id := range owned {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	truncated := false
+	if len(ids) > maxOwnedKeys {
+		ids = ids[:maxOwnedKeys]
+		truncated = true
+	}
 	out := make([]fleetmanagementv1alpha1.OwnedKeyEntry, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, fleetmanagementv1alpha1.OwnedKeyEntry{
@@ -539,7 +592,29 @@ func ownedKeysToStatus(owned map[string]map[string]string) []fleetmanagementv1al
 			Attributes:  owned[id],
 		})
 	}
-	return out
+	return out, truncated
+}
+
+// ownedKeyEntriesEqual reports whether two OwnedKeyEntry slices have the
+// same content in the same order. Used by the no-op short-circuit.
+func ownedKeyEntriesEqual(a, b []fleetmanagementv1alpha1.OwnedKeyEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].CollectorID != b[i].CollectorID {
+			return false
+		}
+		if len(a[i].Attributes) != len(b[i].Attributes) {
+			return false
+		}
+		for k, v := range a[i].Attributes {
+			if b[i].Attributes[k] != v {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func durationUntil(t time.Time) time.Duration {

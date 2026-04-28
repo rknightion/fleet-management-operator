@@ -168,9 +168,12 @@ type ExternalAttributeSyncStatus struct {
 	RecordsApplied int32 `json:"recordsApplied,omitempty"`
 
 	// OwnedKeys is the canonical claim list as of the last successful
-	// fetch. Each entry is a collectorID and the set of keys this sync
-	// owns on that collector.
+	// fetch, capped at 1000 entries. The Collector controller reads this
+	// when computing merged desired state. When the cap is hit, a Truncated
+	// condition is set — attributes for collectors beyond the cap may not
+	// be removed on CR deletion; shard sources with >1000 collectors.
 	// +optional
+	// +kubebuilder:validation:MaxItems=1000
 	OwnedKeys []OwnedKeyEntry `json:"ownedKeys,omitempty"`
 
 	// Conditions represent the current state of the ExternalAttributeSync.
