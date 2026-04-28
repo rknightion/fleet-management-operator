@@ -84,8 +84,10 @@ type AttributeMapping struct {
 
 	// AttributeFields maps an output attribute key to the source field
 	// whose value becomes its value. Keys with the reserved "collector."
-	// prefix are rejected.
+	// prefix are rejected by the API server (CEL) and the validating
+	// webhook.
 	// +kubebuilder:validation:MaxProperties=100
+	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('collector.'))",message="keys must not use the reserved 'collector.' prefix"
 	AttributeFields map[string]string `json:"attributeFields"`
 
 	// RequiredKeys is the set of source fields that must be present for a

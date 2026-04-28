@@ -150,10 +150,16 @@ type PipelineSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Contents string `json:"contents"`
 
-	// Matchers to assign pipeline to collectors
-	// Prometheus Alertmanager syntax: key=value, key!=value, key=~regex, key!~regex
+	// Matchers to assign pipeline to collectors. Uses Prometheus Alertmanager
+	// syntax: key=value, key!=value, key=~regex, key!~regex. A maximum of
+	// 100 matchers may be set per pipeline; the cap exists to bound
+	// validation and matching cost across the fleet (Fleet Management
+	// evaluates matchers on every collector poll). Each matcher is
+	// independently capped at 200 characters by the API server (OpenAPI
+	// maxLength) and double-checked by the validating webhook.
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
+	// +kubebuilder:validation:items:MaxLength=200
 	Matchers []string `json:"matchers,omitempty"`
 
 	// Enabled indicates whether the pipeline is enabled for collectors
