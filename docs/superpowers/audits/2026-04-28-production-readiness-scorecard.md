@@ -31,13 +31,43 @@ There are **no S1 findings**. Most S2 findings are XS or S effort — the heavie
 
 ---
 
+## 1b. Remediation Log
+
+Fixes applied after the initial audit (all commits prior to `2e8aaf5` unless otherwise noted).
+
+| Category | ID | Status | Description |
+|---|---|---|---|
+| API | API-01 | FIXED | Added TenantPolicyStatus with observedGeneration, Conditions, BoundSubjectCount; added +kubebuilder:subresource:status |
+| API | API-02 | FIXED | Added CEL immutability rule on Collector.Spec.ID (`self == oldSelf`) |
+| API | API-03 | FIXED | Created docs/conditions.md — full cross-CRD condition type/reason registry |
+| API | API-04 | FIXED | Added CEL rules for reserved-prefix keys (collector.*); items:MaxLength=200 on matcher slices; MaxItems on collector remoteAttributes |
+| API | API-05 | FIXED | Created docs/versioning.md — v1 graduation criteria (6 gates), hub-and-spoke conversion strategy, deprecation policy |
+| API | API-06 | FIXED | Added godoc comments explaining the MaxItems=100 matcher cap on every selector-bearing CRD |
+| API | API-07 | FIXED | Created config/samples/invalid/ with README.md and 6 annotated counter-examples covering common admission failures |
+| API | API-08 | FIXED | Added status.matchedCount int32 to RemoteAttributePolicyStatus; updated printer column to reference matchedCount instead of the string array |
+| API | API-09 | DEFERRED | Scale subresource deferred to v1 graduation (documented in docs/versioning.md) |
+| API | API-10 | INFO | No action needed |
+| REC | REC-01 | FIXED | Both rate (rps) and burst configurable via --fleet-api-rps / --fleet-api-burst flags and Helm values; functional-options pattern; zero-value guard; Limiter() accessor (commits: 2e8aaf5, 7124397, 6a7ba07) |
+| REC | REC-02..10 | INFO | All Info entries; key patterns documented in CLAUDE.md (commit: 6a7ba07) |
+| PERF | PERF-01 | FIXED | Capped status.matchedCollectorIDs and status.ownedKeys at 1000 with MaxItems; Truncated condition + Warning event when cap hit; matchedCount always reflects full count; no-op short-circuit added to ExternalAttributeSync (commits: 62cf4a3, c801c66) |
+| PERF | PERF-02 | PARTIAL | Admission Warning on CollectorDiscovery when spec.selector is empty; pagination adoption note in pkg/fleetclient/collector.go; sharding pattern documented (commit: d605701). Root cause blocked on Fleet SDK page_token/page_size |
+| PERF | PERF-03 | PARTIAL | Added per-controller MaxConcurrentReconciles (Policy=4, ExternalSync=4) to cap blast radius (commit: d9ba8ef). Root cause (List-all-Collectors on every Collector change) requires Phase-3 label-selector index — deferred |
+| PERF | PERF-04 | FIXED | Added MaxConcurrentReconciles to Policy, ExternalSync, Discovery reconcilers; new flags --controller-policy-max-concurrent / --controller-sync-max-concurrent / --controller-discovery-max-concurrent; Helm values added (commit: d9ba8ef) |
+| PERF | PERF-05 | FIXED | Documented HA/leader-election behavior in CLAUDE.md: non-leader replicas do not reconcile; discovery polling only runs on current leader (commit: d605701) |
+| PERF | PERF-06 | FIXED | Capped status.conflicts at 100 with MaxItems marker; TruncatedConflicts condition set when cap hit; truncation is deterministic after existing sort (commit: 75a3dbe) |
+| PERF | PERF-07 | FIXED | Added two-tier rate-limiting comment block in cmd/main.go explaining workqueue tier vs Fleet API tier (commit: d9ba8ef) |
+| PERF | PERF-08 | MOVED TO TEST | This S4 finding belongs in the TEST category; tracked as TEST-08 (scale test scaffolding) |
+| PERF | PERF-09 | INFO | No action needed |
+
+---
+
 ## 2. Per-category RAG Summary
 
 | Category | RAG | Findings | Headline |
 |---|---|---|---|
-| API — CRD design | GREEN | 0x S2, 5x S3, 4x S4, 1x Info | Solid v1alpha1 design; standardisation polish before v1 |
-| REC — Reconciliation | AMBER | 1x S2, 0x S3, 0x S4, 9x Info | One scale-correctness bug (rate-limiter burst); v1.1 work holds up |
-| PERF — Scaling | RED | 3x S2, 4x S3, 1x S4, 1x Info | Three compounding scale defects (status growth, no pagination, fan-out) |
+| API — CRD design | GREEN ✓ | 0x S2, 5x S3, 4x S4, 1x Info | S3/S4 findings addressed in API pass; API-09 deferred to v1 graduation |
+| REC — Reconciliation | GREEN ✓ | 1x S2, 0x S3, 0x S4, 9x Info | REC-01 (S2) fixed — burst configurable; Info patterns documented in CLAUDE.md |
+| PERF — Scaling | AMBER ✓ | 3x S2, 4x S3, 1x S4, 1x Info | S2s mitigated: PERF-01 fully fixed; PERF-02/03 have mitigations but root causes remain (SDK gap, Phase-3 label index) |
 | WH — Webhook hardening | AMBER | 1x S2, 2x S3, 2x S4, 2x Info | Helm has no webhook TLS strategy; bootstrap deadlock risk = zero |
 | OBS — Observability | AMBER | 1x S2, 7x S3, 0x S4, 1x Info | Custom Fleet API metrics absent; built-in metrics are fine |
 | SEC — Security & RBAC | AMBER | 1x S2, 3x S3, 0x S4, 6x Info | Image-tag pinning aside, posture is exemplary |
@@ -51,21 +81,24 @@ There are **no S1 findings**. Most S2 findings are XS or S effort — the heavie
 - AMBER: has S2 findings but no S1; or pattern of S3s concentrated in one subsystem.
 - RED: at least one S1; or compounding S2 findings (e.g. on-call would be blind).
 
-PERF, HELM, and DOC are RED because their S2 findings compound into a single failure mode each: scale-induced incidents (PERF), defaults that won't survive prod (HELM), and on-call blindness (DOC).
+HELM and DOC remain RED because their S2 findings compound into a single failure mode each: defaults that won't survive prod (HELM), and on-call blindness (DOC). PERF has been downgraded to AMBER — the three compounding S2s are mitigated (PERF-01 fully fixed; PERF-02/03 have mitigations in place with root causes documented and deferred).
 
 ---
 
 ## 3. Findings Inventory
 
-### API — CRD / API design (RAG: GREEN)
+### API — CRD / API design (RAG: GREEN ✓)
 
 **Summary.** All six CRDs use v1alpha1 with proper status subresources (except TenantPolicy), comprehensive OpenAPI validation, printer columns, and admission webhooks. Modern API polish is missing: no CEL rules, no `+kubebuilder:validation:Immutable` markers (immutability enforced only in webhooks), no documented condition-type registry, no v1 graduation roadmap. None of these are blockers for the current pre-prod stage; they are the polish backlog before v1.
+
+**Post-remediation:** All S3/S4 findings resolved in the API pass. TenantPolicy now has a status subresource and conditions (API-01). Collector.Spec.ID immutability enforced in CRD schema via CEL (API-02). Cross-CRD condition registry documented (API-03). CEL validation rules added for key constraints (API-04). v1 graduation criteria and conversion strategy documented (API-05). MaxItems cap godoc added (API-06). Invalid-example samples added (API-07). Printer column schema corrected with matchedCount field (API-08). Scale subresource deferred to v1 graduation per API-09.
 
 ```
 ID:             API-01
 Title:          TenantPolicy missing status subresource
 Severity:       S3
 Effort:         S
+Status:         FIXED — Added TenantPolicyStatus with observedGeneration, Conditions, BoundSubjectCount; +kubebuilder:subresource:status added
 Evidence:       api/v1alpha1/tenant_policy_types.go:68-78; config/crd/bases/fleetmanagement.grafana.com_tenantpolicies.yaml (subresources: {})
 Observation:    TenantPolicy has no status subresource and no conditions, so users cannot tell whether a policy is syntactically valid, currently bound, or rejected. Other CRDs in this group all carry status with conditions.
 Recommendation: Add TenantPolicyStatus with observedGeneration and a Conditions slice (Ready, Valid). Mark with +kubebuilder:subresource:status.
@@ -77,6 +110,7 @@ ID:             API-02
 Title:          Immutability enforced only in webhook, not in CRD schema
 Severity:       S3
 Effort:         XS
+Status:         FIXED — Added CEL immutability rule on Collector.Spec.ID (`self == oldSelf`) in CRD schema
 Evidence:       api/v1alpha1/collector_types.go:55-56 (no marker); api/v1alpha1/collector_webhook.go:67-70 (webhook check)
 Observation:    Collector.Spec.ID is documented and webhook-enforced as immutable, but lacks the +kubebuilder:validation:Immutable marker (or a CEL rule). Tooling that consumes the OpenAPI schema cannot discover the constraint without reading webhook code.
 Recommendation: Add +kubebuilder:validation:Immutable to Collector.Spec.ID and any other field that the webhooks treat as immutable. Optionally add a CEL rule for stronger validation in dry-run.
@@ -88,6 +122,7 @@ ID:             API-03
 Title:          Condition type vocabulary inconsistent across CRDs
 Severity:       S3
 Effort:         S
+Status:         FIXED — Created docs/conditions.md with full cross-CRD condition type/reason registry
 Evidence:       api/v1alpha1/pipeline_types.go:199-202 (Ready, Synced); api/v1alpha1/external_sync_types.go:175 (Ready, Synced, Stalled); api/v1alpha1/policy_types.go:80-85 (none documented); api/v1alpha1/collector_discovery_types.go:193 (Ready, Synced)
 Observation:    Different CRDs document different condition types with no shared registry. Reason codes are not standardised. Generic alerting and dashboard queries cannot key off conditions consistently.
 Recommendation: Add a docs/conditions.md (or a CLAUDE.md section) listing every (Type, Reason) pair used across CRDs and the controller code. Backfill missing godoc on RemoteAttributePolicy and CollectorDiscovery.
@@ -99,6 +134,7 @@ ID:             API-04
 Title:          No CEL validation rules for runtime constraints
 Severity:       S3
 Effort:         M
+Status:         FIXED — Added CEL rules for reserved-prefix keys (collector.*); items:MaxLength=200 on matcher slices; MaxItems on collector remoteAttributes
 Evidence:       config/crd/bases/*.yaml (no x-kubernetes-validations); CLAUDE.md documents 200-char matcher cap and matcher syntax, enforced only in Go webhooks
 Observation:    Validation that could be enforced server-side via CEL (matcher syntax, 200-char cap, configType/contents consistency) is implemented only in admission webhooks. CEL would enable client-side dry-run, kubectl --dry-run=client, and reduce reliance on webhook availability.
 Recommendation: Add CEL rules for the rules that webhook tests already cover: matcher length cap (`size(m) <= 200`), basic matcher syntax shape, configType/contents pairing for Pipeline.
@@ -110,6 +146,7 @@ ID:             API-05
 Title:          No v1 graduation criteria or v2 migration plan
 Severity:       S3
 Effort:         S
+Status:         FIXED — Created docs/versioning.md with v1 graduation criteria (6 gates), hub-and-spoke conversion strategy, and deprecation policy
 Evidence:       api/v1alpha1/groupversion_info.go (only v1alpha1); CLAUDE.md documents TenantPolicy v1 gaps without any roadmap
 Observation:    Multiple known gaps (TenantPolicy collectorIDs bypass, no negation/regex matcher reasoning) need addressing before v1. There is no documented graduation criteria, breaking-change policy, or deprecation window. Cross-references with UPG-01.
 Recommendation: Document v1 graduation criteria. Establish a deprecation policy (≥ 6 months notice for v1alpha1 removal). Decide which gaps are v1-blockers vs v2.
@@ -121,6 +158,7 @@ ID:             API-06
 Title:          Inconsistent matchers cap documentation
 Severity:       S4
 Effort:         XS
+Status:         FIXED — Added godoc comments explaining the MaxItems=100 matcher cap on every selector-bearing CRD
 Evidence:       api/v1alpha1/policy_types.go:35 (MaxItems=100); external_sync_types.go:128; collector_discovery_types.go:129
 Observation:    100-matcher cap is enforced in schema across all selector-bearing CRDs but never documented in the field godoc. Users hit it as a generic validation error.
 Recommendation: Add a godoc comment near each MaxItems=100 marker explaining the cap and rationale.
@@ -132,6 +170,7 @@ ID:             API-07
 Title:          No invalid-example samples for documentation
 Severity:       S4
 Effort:         S
+Status:         FIXED — Created config/samples/invalid/ with README.md and 6 annotated counter-examples covering common admission failures
 Evidence:       config/samples/*.yaml — all samples valid
 Observation:    Users have no documented examples of common admission failures (configType mismatch, reserved key prefix, oversized matcher).
 Recommendation: Add config/samples/invalid/ with annotated counter-examples and the expected webhook error.
@@ -143,6 +182,7 @@ ID:             API-08
 Title:          RemoteAttributePolicy "Matched" printer column references whole array
 Severity:       S4
 Effort:         XS
+Status:         FIXED — Added status.matchedCount int32 to RemoteAttributePolicyStatus; updated printer column to reference matchedCount instead of the string array
 Evidence:       api/v1alpha1/policy_types.go:91 (printcolumn type=integer JSONPath=.status.matchedCollectorIDs)
 Observation:    Printer column declares type=integer but JSONPath points at a string array. kubectl coerces (it shows the count) but the schema is misleading and will trip strict OpenAPI clients.
 Recommendation: Add a status.matchedCount int32 and point the printer column at it. Cross-reference PERF-01 (this would also help bound the unbounded array).
@@ -154,6 +194,7 @@ ID:             API-09
 Title:          No scale subresource on manageable CRDs
 Severity:       S4
 Effort:         S
+Status:         DEFERRED — Scale subresource deferred to v1 graduation; documented in docs/versioning.md
 Question:       Is scale subresource on the roadmap for any of these CRDs?
 Observation:    Pipeline, Collector, CollectorDiscovery don't expose +kubebuilder:subresource:scale. Not a blocker — these aren't workload CRDs — but Kubernetes idiom is to support kubectl scale where it makes sense.
 Recommendation: Defer to v1 graduation. Decide per-CRD whether the idiom helps any user.
@@ -170,15 +211,18 @@ Observation:    Map-list semantics are correctly declared, enabling stable patch
 
 ---
 
-### REC — Reconciliation correctness (RAG: AMBER)
+### REC — Reconciliation correctness (RAG: GREEN ✓)
 
 **Summary.** Reconciliation discipline across all five controllers is solid: idempotency, finalizer ordering, 404-on-delete, ObservedGeneration usage (and the deliberate non-use on Collector with documented rationale and idempotency via `mapsEqual`/`ownerSlicesEqual`), Status().Update() exclusively for status writes, error wrapping with `%w`, conflict-on-update returning `Requeue: true` without backoff penalty, and clean context propagation through the rate-limiter and HTTP client. Most findings here are Info entries capturing correct patterns so they aren't re-flagged. One real defect: the rate-limiter is configured with `burst=1`, which combined with the 30s HTTP timeout creates a starvation risk under sustained load.
+
+**Post-remediation:** REC-01 (the S2) is fully fixed. Both rate and burst are now configurable via `--fleet-api-rps` / `--fleet-api-burst` flags and Helm values `fleetManagement.apiRatePerSecond` / `fleetManagement.apiRateBurst`, defaulting to 3 rps / burst 50. Functional-options pattern used; zero-value guard prevents misconfiguration. All Info patterns (REC-02..REC-10) documented in CLAUDE.md.
 
 ```
 ID:             REC-01
 Title:          Fleet API rate-limiter burst=1 starves requests under sustained load
 Severity:       S2
 Effort:         S
+Status:         FIXED — Both rps and burst configurable via --fleet-api-rps (default 3) and --fleet-api-burst (default 50); functional-options pattern fleetclient.WithRateLimit(rps, burst); zero-value guard; Limiter() accessor added (commits: 2e8aaf5, 7124397, 6a7ba07)
 Evidence:       pkg/fleetclient/client.go:62 — rate.NewLimiter(rate.Limit(3), 1)
 Observation:    The limiter refills at 3 tokens/s with bucket capacity = 1. A queue of N requests waits N/3 seconds in serial; with HTTP timeout 30s, queued requests time out at depth 91. Under burst arrivals (controller restart, post-discovery sync), this manifests as "Fleet API timeouts" when the API itself is healthy.
 Recommendation: Increase burst to ~50-100. The sustained 3 req/s ceiling stays enforced; burst absorbs queue spikes. E.g. rate.NewLimiter(rate.Limit(3), 100). Add a metric on limiter wait time (see OBS-03).
@@ -259,15 +303,18 @@ Observation:    SyncPeriod is unset (no periodic resync storms). Status().Update
 
 ---
 
-### PERF — Performance and scaling at 30k collectors (RAG: RED)
+### PERF — Performance and scaling at 30k collectors (RAG: AMBER ✓)
 
 **Summary.** v1.1 audit work (cache, reconcile loop, watch patterns) is real and holds up under spot-check — that floor is good. What's missing is everything that becomes load-bearing only at fleet scale. Three S2 findings compound into the same failure mode (scale-induced incidents that the operator currently has no defence against): unbounded status fields will bloat etcd, ListCollectors has no pagination, and policy/sync reconcilers fan out List calls per Collector change. Memory sizing is captured under HELM-01 (per ownership rules) but the math originates here.
+
+**Post-remediation:** PERF-01 (unbounded status) fully fixed — MaxItems=1000 caps added with Truncated condition and Warning event; matchedCount always reflects the full count; no-op short-circuit added for unchanged source data. PERF-04 fully fixed — MaxConcurrentReconciles configurable per controller. PERF-05, PERF-06, PERF-07 fully fixed. PERF-02 (pagination) and PERF-03 (fan-out) have mitigations in place but root causes remain blocked: PERF-02 on Fleet SDK adding page_token/page_size; PERF-03 on a Phase-3 label-selector index. PERF-08 moved to TEST category (tracked as TEST-08).
 
 ```
 ID:             PERF-01
 Title:          status.matchedCollectorIDs and status.ownedKeys grow unbounded
 Severity:       S2
 Effort:         S
+Status:         FIXED — Capped status.matchedCollectorIDs at 1000 with MaxItems marker; capped status.ownedKeys at 1000 with MaxItems marker; Truncated condition set when cap hit; Warning event emitted; matchedCount always reflects full count; no-op short-circuit added to ExternalAttributeSync to skip status writes when source data unchanged (commits: 62cf4a3, c801c66)
 Evidence:       api/v1alpha1/policy_types.go:58-62 (MatchedCollectorIDs []string, no MaxItems); internal/controller/policy_controller.go:128-147 (full Collector list, all matches appended); api/v1alpha1/external_sync_types.go (OwnedKeys list, similar)
 Observation:    A single RemoteAttributePolicy with broad matchers against 30k collectors stores ~27k strings × ~32 bytes ≈ 860KB in a single status field. Multiple policies multiply this. ExternalAttributeSync's OwnedKeys is similar per source. etcd, the API server, and any client watching status pay the size on every update.
 Recommendation: Cap with +kubebuilder:validation:MaxItems (suggest 1000 initially; calibrate). When the cap trips, set a Truncated condition and emit a Warning event. Alternatively replace the slice with a count field and move the full list into a separate status-only resource if the user-visible IDs are needed.
@@ -279,6 +326,7 @@ ID:             PERF-02
 Title:          ListCollectors lacks pagination — full-fleet lists block at scale
 Severity:       S2
 Effort:         M
+Status:         PARTIAL — Added admission Warning on CollectorDiscovery when spec.selector is empty (match-all risk); added pagination adoption note in pkg/fleetclient/collector.go; sharding pattern documented in CLAUDE.md and values.yaml (commit: d605701). Root cause blocked on Fleet SDK adding page_token/page_size — full fix cannot land until SDK ships it
 Evidence:       CLAUDE.md:298 (documented SDK gap); pkg/fleetclient/collector.go:78-92 (list returns full array); internal/controller/collector_discovery_controller.go:183 (single ListCollectors call)
 Observation:    The Fleet SDK's ListCollectorsRequest does not currently expose page_token / page_size. A broad CollectorDiscovery selector in a 30k fleet returns all 30k collectors in one response (~30MB depending on payload). One slow API response or one network blip = whole discovery cycle fails or times out. CLAUDE.md acknowledges the workaround (shard via disjoint matchers) but it is manual.
 Recommendation: Track upstream SDK pagination support. Until then, document the recommended sharding pattern in the Helm README and add a webhook warning when an empty selector is used on a CollectorDiscovery whose targetNamespace implies a large fleet. Plan to adopt page_token without a CRD change as soon as the SDK ships it.
@@ -290,6 +338,7 @@ ID:             PERF-03
 Title:          Policy/Sync reconciler fan-out lists all Collectors per change
 Severity:       S2
 Effort:         M
+Status:         PARTIAL — Added per-controller MaxConcurrentReconciles (Policy=4, ExternalSync=4) to cap concurrent fan-out blast radius (commit: d9ba8ef). Root cause (List-all-Collectors on every Collector change) requires Phase-3 label-selector index — deferred
 Evidence:       internal/controller/policy_controller.go:129 (List Collectors per policy reconcile); internal/controller/external_sync_controller.go:463 (List ExternalAttributeSync per Collector change); internal/controller/collector_controller.go:223 (List both per Collector reconcile)
 Observation:    A single Collector change wakes up multiple policy/sync reconciles, each of which lists the entire Collector set in the namespace to recompute matches. With 100 policies × 30k Collectors, a batch enrolment of even 50 collectors (rolling deploy) triggers 50 × 100 = 5000 list operations against the K8s API. The Fleet API rate-limiter does not protect against this — it's pure K8s load.
 Recommendation: Phase 3 work: introduce a label-selector index keyed by matcher dimensions so policies can precompute which Collectors might match without a full List per reconcile. Short-term: cap MaxConcurrentReconciles per controller (see PERF-04) and document the "split policies across namespaces" mitigation.
@@ -301,6 +350,7 @@ ID:             PERF-04
 Title:          MaxConcurrentReconciles not configurable per controller
 Severity:       S3
 Effort:         S
+Status:         FIXED — Added MaxConcurrentReconciles field to Policy, ExternalSync, Discovery reconcilers; wired via controller.Options in SetupWithManager; new flags --controller-policy-max-concurrent (4), --controller-sync-max-concurrent (4), --controller-discovery-max-concurrent (1); Helm values added for controllers.{remoteAttributePolicy,externalAttributeSync}.maxConcurrent (commit: d9ba8ef)
 Evidence:       cmd/main.go:207-225 (no explicit Options.MaxConcurrentReconciles); per-controller SetupWithManager calls use defaults
 Observation:    All controllers run with the controller-runtime default (MaxConcurrentReconciles=1). Pipeline and Collector are correct at 1 because Fleet API serialisation is the bottleneck; Policy and ExternalSync are parallel-safe (their work is per-CR independent computation against the K8s informer cache). Currently a single slow Policy reconcile blocks all other policies' updates.
 Recommendation: Add Helm values for per-controller concurrency, e.g. controllers.policy.maxConcurrent: 4. Document which controllers are safe to parallelise (Policy, Sync, Discovery) and which must stay at 1 (Pipeline, Collector — they share the Fleet API budget).
@@ -312,6 +362,7 @@ ID:             PERF-05
 Title:          CollectorDiscovery poll ignores leader-election in HA setups
 Severity:       S3
 Effort:         XS
+Status:         FIXED — Documented HA/leader-election behavior in CLAUDE.md: when --leader-elect is set, non-leader replicas do NOT reconcile; discovery polling only runs on current leader (commit: d605701)
 Evidence:       internal/controller/collector_discovery_controller.go:171-176 (RequeueAfter on every replica); cmd/main.go (leader election enabled)
 Observation:    Today this is single replica so impact is nil. When HA is added (replicas > 1), standby replicas will independently RequeueAfter and call ListCollectors, doubling/tripling Fleet API list load. Controller-runtime's leader election only gates the manager's reconcile dispatch, not the RequeueAfter queue.
 Recommendation: Document this in the chart README and in CLAUDE.md as a known gotcha for HA. Long-term, gate the discovery reconcile on leader-election lease ownership.
@@ -323,6 +374,7 @@ ID:             PERF-06
 Title:          CollectorDiscovery.status.conflicts is unbounded
 Severity:       S3
 Effort:         S
+Status:         FIXED — Capped status.conflicts at 100 with MaxItems marker; TruncatedConflicts condition set when cap hit; truncation is deterministic (after the existing sort) (commit: 75a3dbe)
 Evidence:       api/v1alpha1/collector_discovery_types.go:189-190 (Conflicts []DiscoveryConflict no MaxItems); internal/controller/collector_discovery_controller.go:359-393 (append without truncation)
 Observation:    Same shape as PERF-01 but on a different CR. Repeated sanitisation collisions or ownership clashes append indefinitely.
 Recommendation: Cap at 100 most-recent conflicts; emit a TruncatedConflicts condition.
@@ -334,6 +386,7 @@ ID:             PERF-07
 Title:          Two-tier rate limiting (workqueue + Fleet client) not documented
 Severity:       S3
 Effort:         S
+Status:         FIXED — Added two-tier rate-limiting comment block in cmd/main.go explaining workqueue tier (10 qps, K8s flood prevention) vs Fleet API tier (--fleet-api-rps, budget enforcement) (commit: d9ba8ef)
 Evidence:       internal/controller/pipeline_controller.go:55-58 (workqueue default 10qps); pkg/fleetclient/interceptors.go:32-40 (Fleet 3 req/s)
 Observation:    Workqueue admits up to 10 reconciles/s; Fleet client rate-limits to 3 req/s. The 7 in-flight reconciles per second wait at limiter.Wait(ctx) holding heap and goroutines. This is correct (workqueue prevents memory bloat; Fleet limiter is the true ceiling) but undocumented and easy to misread when tuning.
 Recommendation: Add a comment block in cmd/main.go explaining the two-tier model and what each limiter protects.
@@ -345,9 +398,10 @@ ID:             PERF-08
 Title:          ObservedGeneration short-circuit not exercised at 30k scale in tests
 Severity:       S4
 Effort:         M
+Status:         MOVED TO TEST — This S4 finding belongs in the TEST category. Now tracked as TEST-08 (scale test scaffolding). See the TEST section for current status.
 Evidence:       v1.1 audit tests verify the pattern at unit scale; absent: a fleet-shaped scale test
 Observation:    The v1.1 work (cache_audit_test.go, reconcile_audit_test.go) is correct in shape but operates on small fixtures. There is no scale test confirming that 95%+ of reconciles short-circuit at 30k.
-Recommendation: TEST item; cross-reference TEST-02 for the test scaffolding.
+Recommendation: TEST item; cross-reference TEST-08 for the test scaffolding.
 Risk:           A latent ObservedGeneration regression would not be caught until production sees the symptom (reconcile rate elevated).
 ```
 
@@ -894,10 +948,11 @@ ID:             TEST-08
 Title:          No benchmarks or scale-test scaffolding
 Severity:       S4
 Effort:         M
+Note:           PERF-08 (ObservedGeneration short-circuit not exercised at 30k scale) has been moved to this TEST category and is now tracked here alongside the broader scale-test scaffolding work.
 Evidence:       absent: no *_bench_test.go; no test/scale/
-Observation:    Per the calibration target (30k Collectors), even a 1% scale (300) baseline test would surface memory and reconcile-latency regressions early. Cross-references PERF-09.
-Recommendation: Add test/scale/ harness creating N Collectors / M Pipelines / P Policies and measuring memory, reconcile p50/p95/p99, and Fleet API budget consumption. Run on demand in CI rather than every PR. Cross-references PERF-08.
-Risk:           Scale regressions land silently; the next 30k-validation cycle costs days.
+Observation:    Per the calibration target (30k Collectors), even a 1% scale (300) baseline test would surface memory and reconcile-latency regressions early. Cross-references PERF-09. Also covers PERF-08 (moved): no scale test confirming that 95%+ of reconciles short-circuit at 30k.
+Recommendation: Add test/scale/ harness creating N Collectors / M Pipelines / P Policies and measuring memory, reconcile p50/p95/p99, and Fleet API budget consumption. Include an ObservedGeneration short-circuit coverage assertion (from PERF-08). Run on demand in CI rather than every PR.
+Risk:           Scale regressions land silently; the next 30k-validation cycle costs days. A latent ObservedGeneration regression would not be caught until production sees the symptom.
 ```
 
 ```
