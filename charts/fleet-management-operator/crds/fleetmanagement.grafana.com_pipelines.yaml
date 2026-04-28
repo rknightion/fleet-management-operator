@@ -77,9 +77,15 @@ spec:
                 type: boolean
               matchers:
                 description: |-
-                  Matchers to assign pipeline to collectors
-                  Prometheus Alertmanager syntax: key=value, key!=value, key=~regex, key!~regex
+                  Matchers to assign pipeline to collectors. Uses Prometheus Alertmanager
+                  syntax: key=value, key!=value, key=~regex, key!~regex. A maximum of
+                  100 matchers may be set per pipeline; the cap exists to bound
+                  validation and matching cost across the fleet (Fleet Management
+                  evaluates matchers on every collector poll). Each matcher is
+                  independently capped at 200 characters by the API server (OpenAPI
+                  maxLength) and double-checked by the validating webhook.
                 items:
+                  maxLength: 200
                   type: string
                 maxItems: 100
                 type: array

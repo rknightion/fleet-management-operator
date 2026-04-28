@@ -124,8 +124,13 @@ spec:
                     description: |-
                       Matchers in Prometheus Alertmanager syntax (=, !=, =~, !~), evaluated
                       against the matched Collector's local attributes plus its ID under
-                      the synthetic key "collector.id".
+                      the synthetic key "collector.id". A maximum of 100 matchers may be
+                      set per selector; the cap exists to bound validation cost and keep
+                      `kubectl describe` output readable. Each matcher is independently
+                      capped at 200 characters by the API server (OpenAPI maxLength) and
+                      double-checked by the validating webhook.
                     items:
+                      maxLength: 200
                       type: string
                     maxItems: 100
                     type: array
@@ -154,7 +159,9 @@ spec:
               conditions:
                 description: |-
                   Conditions represent the current state of the CollectorDiscovery.
-                  Standard types: Ready, Synced.
+                  Known types: Ready, Synced. Reasons: Synced, ListCollectorsFailed,
+                  UpsertFailed, InvalidConfig. See docs/conditions.md for the
+                  cross-CRD registry.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
