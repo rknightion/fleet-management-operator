@@ -51,8 +51,11 @@ const (
 // reconcile will keep retrying and surface the situation in status.
 type CollectorSpec struct {
 	// ID is the Fleet Management collector ID. Required and immutable after
-	// creation (enforced by the webhook).
+	// creation. Immutability is declared via a CEL rule so the API server
+	// enforces it independently of the validating webhook (defence-in-depth
+	// and discoverable to schema consumers).
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.id is immutable"
 	ID string `json:"id"`
 
 	// Name is the optional display name set on the collector in Fleet
@@ -67,10 +70,14 @@ type CollectorSpec struct {
 	Enabled *bool `json:"enabled,omitempty"`
 
 	// RemoteAttributes managed by this CR. Keys with prefix "collector." are
-	// reserved by Fleet Management and rejected by the webhook. Removing a
-	// key from this map removes it from Fleet (delete-detected via
+	// reserved by Fleet Management and rejected by the API server (CEL) and
+	// the validating webhook. Each value is capped at 1024 characters by
+	// the API server (OpenAPI maxLength) — values are user-facing strings,
+	// not configuration blobs, so the cap protects etcd. Removing a key
+	// from this map removes it from Fleet (delete-detected via
 	// status.attributeOwners).
 	// +kubebuilder:validation:MaxProperties=100
+	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('collector.'))",message="keys must not use the reserved 'collector.' prefix"
 	// +optional
 	RemoteAttributes map[string]string `json:"remoteAttributes,omitempty"`
 }
