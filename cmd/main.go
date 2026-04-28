@@ -78,6 +78,8 @@ func main() {
 	var enableExternalSyncController bool
 	var enableCollectorDiscoveryController bool
 	var enableTenantPolicyEnforcement bool
+	var fleetAPIRPS float64
+	var fleetAPIBurst int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -111,6 +113,15 @@ func main() {
 			"matched by a TenantPolicy include at least one of the policy's required matchers in "+
 			"the CR's matcher set. Default false; existing installs see no behavior change until "+
 			"this flag is set.")
+	flag.Float64Var(&fleetAPIRPS, "fleet-api-rps", 3,
+		"Fleet Management API sustained rate limit in requests per second. "+
+			"Match this to your Fleet Management server-side api: rate setting. "+
+			"The standard stack default is 3; large or custom deployments may be higher.")
+	flag.IntVar(&fleetAPIBurst, "fleet-api-burst", 50,
+		"Fleet Management API rate-limiter burst size. Absorbs startup and post-restart "+
+			"request spikes without changing the sustained RPS ceiling. "+
+			"burst=1 causes livelock at scale: request #(rps*30+1) in a restart wave "+
+			"waits 30s and hits the HTTP timeout, indistinguishable from API outage.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -264,8 +275,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("initializing Fleet Management API client", "baseURL", fleetBaseURL, "username", fleetUsername)
-	fleetClient := fleetclient.NewClient(fleetBaseURL, fleetUsername, fleetPassword)
+	setupLog.Info("initializing Fleet Management API client",
+		"baseURL", fleetBaseURL, "username", fleetUsername,
+		"rps", fleetAPIRPS, "burst", fleetAPIBurst)
+	fleetClient := fleetclient.NewClient(fleetBaseURL, fleetUsername, fleetPassword,
+		fleetclient.WithRateLimit(fleetAPIRPS, fleetAPIBurst))
 
 	// Tenant policy enforcement is opt-in and default-off. When disabled,
 	// tenantChecker stays nil and the consuming webhooks behave identically

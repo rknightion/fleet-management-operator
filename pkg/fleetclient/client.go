@@ -29,6 +29,36 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// clientConfig holds optional configuration for NewClient. Populated by
+// applying ClientOption values; zero fields fall back to safe defaults.
+type clientConfig struct {
+	rps   float64
+	burst int
+}
+
+// ClientOption configures a Fleet Management API client.
+type ClientOption func(*clientConfig)
+
+// WithRateLimit sets the sustained request rate (rps) and burst size for the
+// client's rate limiter. Both values must be positive; zero or negative values
+// are silently replaced by the package defaults (3 rps / burst 50).
+//
+// Match rps to your Fleet Management server-side api: rate setting. The
+// default 3 rps matches the standard stack default; large fleets with a
+// higher server-side limit can increase this accordingly.
+//
+// burst controls how many requests may fire immediately before the sustained
+// ceiling applies. burst=1 causes livelock at scale: with a 30s HTTP timeout,
+// request #(rps*30+1) in a restart wave waits exactly 30s and times out —
+// indistinguishable from a Fleet API outage. burst=50 absorbs startup and
+// post-restart spikes without changing the sustained throughput ceiling.
+func WithRateLimit(rps float64, burst int) ClientOption {
+	return func(c *clientConfig) {
+		c.rps = rps
+		c.burst = burst
+	}
+}
+
 // Client is a client for the Fleet Management API. It speaks the connect
 // protocol against the PipelineService and CollectorService using shared
 // rate-limit and basic-auth interceptors.
@@ -39,13 +69,30 @@ type Client struct {
 	collector collectorv1connect.CollectorServiceClient
 }
 
+// Limiter returns the rate.Limiter used by this client. Exposed for
+// observability instrumentation (OBS category) and testing.
+func (c *Client) Limiter() *rate.Limiter { return c.limiter }
+
 // NewClient creates a new Fleet Management API client.
 //
 // baseURL may be the historical service-suffixed URL ending in
 // "/pipeline.v1.PipelineService/" (which is what the operator's existing
 // Secret stores) or the bare server root. The service suffix is stripped
 // automatically so existing deployments keep working.
-func NewClient(baseURL, username, password string) *Client {
+//
+// Use WithRateLimit to override the default rate (3 rps) and burst (50).
+func NewClient(baseURL, username, password string, opts ...ClientOption) *Client {
+	cfg := clientConfig{rps: 3, burst: 50}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if cfg.rps <= 0 {
+		cfg.rps = 3
+	}
+	if cfg.burst <= 0 {
+		cfg.burst = 50
+	}
+
 	rootURL := normalizeBaseURL(baseURL)
 
 	httpClient := &http.Client{
@@ -57,9 +104,7 @@ func NewClient(baseURL, username, password string) *Client {
 		},
 	}
 
-	// Fleet Management API rate limit: 3 req/s for management endpoints. This
-	// is shared across both PipelineService and (future) CollectorService.
-	limiter := rate.NewLimiter(rate.Limit(3), 1)
+	limiter := rate.NewLimiter(rate.Limit(cfg.rps), cfg.burst)
 
 	interceptors := connect.WithInterceptors(
 		rateLimitInterceptor(limiter),

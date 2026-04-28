@@ -460,3 +460,24 @@ func TestNormalizeBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestNewClient_DefaultRateLimiter(t *testing.T) {
+	// Default burst=50 prevents livelock on restart waves (see REC-01).
+	// Default rate=3 rps matches the standard Fleet Management server-side
+	// api: setting; override via WithRateLimit for higher-limit deployments.
+	c := NewClient("https://example.grafana.net", "u", "p")
+	assert.Equal(t, 50, c.Limiter().Burst())
+	assert.InDelta(t, 3.0, float64(c.Limiter().Limit()), 0.001)
+}
+
+func TestNewClient_WithRateLimit(t *testing.T) {
+	c := NewClient("https://example.grafana.net", "u", "p", WithRateLimit(10, 200))
+	assert.Equal(t, 200, c.Limiter().Burst())
+	assert.InDelta(t, 10.0, float64(c.Limiter().Limit()), 0.001)
+}
+
+func TestNewClient_WithRateLimit_ZeroValueFallsBackToDefaults(t *testing.T) {
+	c := NewClient("https://example.grafana.net", "u", "p", WithRateLimit(0, 0))
+	assert.Equal(t, 50, c.Limiter().Burst(), "zero burst should fall back to default 50")
+	assert.InDelta(t, 3.0, float64(c.Limiter().Limit()), 0.001, "zero rps should fall back to default 3")
+}
