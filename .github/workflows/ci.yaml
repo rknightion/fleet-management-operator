@@ -61,6 +61,22 @@ jobs:
         run: |
           git diff --exit-code || (echo "Uncommitted changes detected. Run 'make manifests generate' and commit." && exit 1)
 
+  verify-docs:
+    name: Verify Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify auto-generated documentation
+        run: make docs-check
+
   verify-helm:
     name: Verify Helm Chart
     runs-on: ubuntu-latest
@@ -87,3 +103,6 @@ jobs:
             --set fleetManagement.username=test \
             --set fleetManagement.password=test \
             > /dev/null
+
+      - name: Verify chart README is regenerated from values.yaml
+        run: make chart-docs-check
