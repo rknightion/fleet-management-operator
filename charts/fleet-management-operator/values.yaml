@@ -26,11 +26,11 @@
 # already contains "@", to surface the conflict early.
 image:
   # -- Container image repository.
-  repository: fleet-management-operator
+  repository: ghcr.io/rknightion/fleet-management-operator
   # -- Image pull policy.
   pullPolicy: IfNotPresent
   # -- Image tag. Ignored when `image.digest` is set.
-  tag: "dev-v1.0.0"
+  tag: "dev"
   # -- (string) Image digest pin (e.g. `sha256:<hex>`). Recommended for production.
   # digest: ""
 

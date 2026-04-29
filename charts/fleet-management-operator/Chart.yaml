@@ -13,9 +13,9 @@ keywords:
   - opentelemetry
   - observability
   - operator
-home: https://github.com/grafana/fleet-management-operator
+home: https://github.com/rknightion/fleet-management-operator
 sources:
-  - https://github.com/grafana/fleet-management-operator
+  - https://github.com/rknightion/fleet-management-operator
 maintainers:
-  - name: Grafana Labs
-    email: platform-observability@grafana.com
+  - name: Rob Knight
+    email: rob.knight@grafana.com
