@@ -20,10 +20,13 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net/url"
 	"sort"
+	gosync "sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -120,6 +123,30 @@ type ExternalAttributeSyncReconciler struct {
 	// CronParser parses cron-format schedules. If nil, a sensible default
 	// is used (5-field standard cron). Exposed for tests.
 	CronParser cron.Parser
+
+	// SourceTargetRate is the per-target rate limit (tokens per second)
+	// applied before each Source.Fetch call. Two ExternalAttributeSync CRs
+	// pointing at the same upstream (HTTP host or SQL secret reference)
+	// share the same limiter, preventing MaxConcurrentReconciles from
+	// stampeding a customer-owned upstream during burst conditions
+	// (rolling restarts, batched spec edits). Zero or negative disables
+	// per-target limiting entirely (default).
+	SourceTargetRate float64
+
+	// SourceTargetBurst is the bucket size for the per-target limiter.
+	// Ignored when SourceTargetRate <= 0. Defaults to 4 (matching the
+	// default --controller-sync-max-concurrent so a single concurrency
+	// generation always passes through immediately, then refills at
+	// SourceTargetRate per second).
+	SourceTargetBurst int
+
+	// targetLimitersMu guards targetLimiters. The map is created lazily
+	// on first access so tests that don't exercise the rate-limit path
+	// pay nothing. The std-lib sync import is aliased to gosync so it
+	// doesn't shadow the receiver parameter name `sync` used throughout
+	// this file (a *ExternalAttributeSync).
+	targetLimitersMu gosync.Mutex
+	targetLimiters   map[string]*rate.Limiter
 }
 
 var _ reconcile.Reconciler = &ExternalAttributeSyncReconciler{}
@@ -233,6 +260,18 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{RequeueAfter: defaultExternalSyncRequeueOnError}, nil
+	}
+
+	// E19: per-target rate limiting. Two syncs pointing at the same
+	// upstream share a token bucket so MaxConcurrentReconciles cannot
+	// stampede a single customer-owned source during a restart wave.
+	// Disabled by default (SourceTargetRate <= 0); operators opt in via
+	// --controller-sync-target-rate.
+	if lim := r.limiterForSource(sync.Spec.Source); lim != nil {
+		if waitErr := lim.Wait(ctx); waitErr != nil {
+			outcome = externalSyncReasonSourceFailed
+			return ctrl.Result{}, waitErr
+		}
 	}
 
 	records, err := src.Fetch(ctx)
@@ -617,6 +656,68 @@ func (r *ExternalAttributeSyncReconciler) updateStatusError(
 //     the matched-collector set may shift, so re-fetch and re-project. The
 //     handler uses externalSyncMatcherKeyIndex to enqueue only the syncs
 //     whose matchers reference keys present in the Collector's attributes.
+
+// sourceTargetKey returns a stable bucket key for per-target rate limiting.
+// Two ExternalAttributeSync CRs that resolve to the same upstream (same HTTP
+// host, same SQL secret) produce the same key. The key is opaque; callers do
+// not interpret it.
+//
+// HTTP keys collapse to scheme://host so different paths against the same
+// host share a token bucket (the upstream is the same machine either way).
+// SQL keys use the secret reference because the operator does not parse the
+// DSN at this layer; same secret = same target by construction. When SQL has
+// no SecretRef the driver name is the only stable handle, so it falls back
+// to that.
+func sourceTargetKey(spec fleetmanagementv1alpha1.ExternalSource) string {
+	switch spec.Kind {
+	case fleetmanagementv1alpha1.ExternalSourceKindHTTP:
+		if spec.HTTP == nil {
+			return "http:"
+		}
+		u, err := url.Parse(spec.HTTP.URL)
+		if err != nil || u.Host == "" {
+			return "http:" + spec.HTTP.URL
+		}
+		return "http:" + u.Scheme + "://" + u.Host
+	case fleetmanagementv1alpha1.ExternalSourceKindSQL:
+		if spec.SecretRef != nil {
+			return "sql:" + spec.SecretRef.Namespace + "/" + spec.SecretRef.Name
+		}
+		if spec.SQL != nil {
+			return "sql:driver=" + spec.SQL.Driver
+		}
+		return "sql:"
+	}
+	return string(spec.Kind)
+}
+
+// limiterForSource returns the per-target rate limiter for the given source
+// spec, or nil when per-target limiting is disabled
+// (SourceTargetRate <= 0). The returned limiter is shared across every
+// reconcile that resolves to the same target key, so concurrent reconciles
+// for distinct CRs against the same upstream cooperate on a single bucket.
+func (r *ExternalAttributeSyncReconciler) limiterForSource(spec fleetmanagementv1alpha1.ExternalSource) *rate.Limiter {
+	if r.SourceTargetRate <= 0 {
+		return nil
+	}
+	burst := r.SourceTargetBurst
+	if burst <= 0 {
+		burst = 4
+	}
+	key := sourceTargetKey(spec)
+	r.targetLimitersMu.Lock()
+	defer r.targetLimitersMu.Unlock()
+	if r.targetLimiters == nil {
+		r.targetLimiters = make(map[string]*rate.Limiter)
+	}
+	lim, ok := r.targetLimiters[key]
+	if !ok {
+		lim = rate.NewLimiter(rate.Limit(r.SourceTargetRate), burst)
+		r.targetLimiters[key] = lim
+	}
+	return lim
+}
+
 func (r *ExternalAttributeSyncReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(ctx,
 		&fleetmanagementv1alpha1.ExternalAttributeSync{},

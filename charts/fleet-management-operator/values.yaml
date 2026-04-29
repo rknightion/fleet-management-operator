@@ -275,6 +275,18 @@ controllers:
     enabled: false
     # Max concurrent reconciles. Safe to increase: Fetch calls are per-source.
     maxConcurrent: 4
+    # Per-target rate limit (tokens/sec). Two syncs that resolve to the same
+    # upstream (HTTP host or SQL secret) share a token bucket so a restart
+    # wave or batched spec edit cannot stampede a customer-owned source.
+    # 0 (default) disables per-target limiting; the operator controller-runtime
+    # workqueue and the reconciler's MaxConcurrentReconciles still apply.
+    # Set to 1 for one fetch/sec/upstream — typically plenty since sync
+    # schedules run every minute or longer.
+    sourceTargetRate: 0
+    # Token bucket size for the per-target limiter. Ignored when
+    # sourceTargetRate is 0. Default 4 = matches maxConcurrent so a single
+    # concurrency generation passes through immediately.
+    sourceTargetBurst: 4
   # CollectorDiscovery reconciler. Periodically calls Fleet Management's
   # ListCollectors and mirrors each result as a Collector CR. Requires
   # controllers.collector.enabled=true (the manager startup will refuse

@@ -73,6 +73,8 @@ spec:
         - --fleet-api-burst={{ .Values.fleetManagement.apiRateBurst }}
         - --controller-policy-max-concurrent={{ .Values.controllers.remoteAttributePolicy.maxConcurrent }}
         - --controller-sync-max-concurrent={{ .Values.controllers.externalAttributeSync.maxConcurrent }}
+        - --controller-sync-target-rate={{ .Values.controllers.externalAttributeSync.sourceTargetRate }}
+        - --controller-sync-target-burst={{ .Values.controllers.externalAttributeSync.sourceTargetBurst }}
         - --controller-discovery-max-concurrent={{ .Values.controllers.collectorDiscovery.maxConcurrent }}
         {{- if .Values.metrics.enabled }}
         - --metrics-bind-address=:{{ .Values.metrics.port }}

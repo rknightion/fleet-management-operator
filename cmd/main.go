@@ -94,6 +94,8 @@ func main() {
 	var policyMaxConcurrent int
 	var syncMaxConcurrent int
 	var discoveryMaxConcurrent int
+	var syncSourceTargetRate float64
+	var syncSourceTargetBurst int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -147,6 +149,16 @@ func main() {
 	flag.IntVar(&discoveryMaxConcurrent, "controller-discovery-max-concurrent", 1,
 		"Max concurrent reconciles for CollectorDiscovery. Keep at 1: concurrency > 1 "+
 			"triggers multiple ListCollectors calls per poll cycle without benefit.")
+	flag.Float64Var(&syncSourceTargetRate, "controller-sync-target-rate", 0,
+		"Per-target rate limit (tokens/sec) applied before each ExternalAttributeSync Source.Fetch "+
+			"call. Two syncs against the same upstream (HTTP host or SQL secret) share a token "+
+			"bucket so MaxConcurrentReconciles cannot stampede a customer-owned source. Zero (default) "+
+			"disables per-target limiting. Set 1 for one fetch/sec/upstream — typically plenty given "+
+			"that sync schedules run every minute or longer.")
+	flag.IntVar(&syncSourceTargetBurst, "controller-sync-target-burst", 4,
+		"Bucket size for the per-target ExternalAttributeSync limiter. Ignored when "+
+			"--controller-sync-target-rate=0. Default 4 (matching --controller-sync-max-concurrent so "+
+			"a single concurrency generation always passes through immediately).")
 	var leaderElectionLeaseDuration time.Duration
 	var leaderElectionRenewDeadline time.Duration
 	var leaderElectionRetryPeriod time.Duration
@@ -494,6 +506,8 @@ func main() {
 			Recorder:                mgr.GetEventRecorderFor("externalattributesync-controller"),
 			Factory:                 buildExternalSourceFactory(),
 			MaxConcurrentReconciles: syncMaxConcurrent,
+			SourceTargetRate:        syncSourceTargetRate,
+			SourceTargetBurst:       syncSourceTargetBurst,
 		}).SetupWithManager(context.Background(), mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "ExternalAttributeSync")
 			os.Exit(1)
