@@ -26,7 +26,10 @@ limitations under the License.
 // be added without touching CRDs.
 package sources
 
-import "context"
+import (
+	"context"
+	"strconv"
+)
 
 // Record is one row of source data: a string-keyed map whose values are the
 // raw types returned by the underlying source (string for HTTP/JSON
@@ -40,6 +43,16 @@ type Record map[string]any
 // and used to perform a single Fetch. They are NOT expected to be
 // long-lived or thread-safe — the controller does not share Source
 // instances across reconciles.
+//
+// Close is part of the interface (rather than an optional io.Closer cast)
+// so the controller's defer site stays a single, unconditional line and
+// every source implementor is forced to think about resource lifecycle at
+// compile time. Sources with no resources to release implement Close as a
+// no-op returning nil. This is the lowest-friction shape: callers do
+// `defer src.Close()` without a type assertion, and the SQL implementation
+// — the only one that actually leaks today — is forced to honor the
+// contract. See pkg/sources/sql/source.go for the leak this exists to
+// prevent.
 type Source interface {
 	// Fetch retrieves the current record set. Empty results are valid;
 	// the empty-result safety guard is enforced by the controller, not
@@ -50,13 +63,22 @@ type Source interface {
 	// v1alpha1.ExternalSourceKind name (e.g. "HTTP", "SQL"). Used in
 	// logs and events.
 	Kind() string
+
+	// Close releases any resources the Source holds (connection pools,
+	// idle HTTP connections, etc.). Implementations MUST be safe to call
+	// even when the Source has not yet performed a Fetch — the
+	// controller defers Close immediately after construction. Close is
+	// called exactly once per reconcile.
+	Close() error
 }
 
 // FieldString returns the string form of a record's field, performing the
 // minimal coercion every source needs:
 //
 //   - string → string
-//   - bool, int, float64 → fmt.Sprint result
+//   - bool → "true" / "false"
+//   - int / int32 / int64 → strconv.FormatInt-equivalent decimal
+//   - float32 / float64 → strconv.FormatFloat shortest-round-trip
 //   - everything else → empty string and ok=false
 //
 // This is exposed for source implementations that want to avoid each
@@ -88,8 +110,12 @@ func FieldString(r Record, key string) (string, bool) {
 	return "", false
 }
 
-// formatInt64 / formatFloat avoid pulling in strconv at the package
-// boundary so importers see a tiny dependency surface.
+// formatInt64 hand-rolls integer formatting for a measurable speed-up over
+// strconv.FormatInt on the hot path (every record column passes through
+// FieldString). It does NOT exist to "avoid the strconv dependency" —
+// strconv is in the standard library and pulling it in costs nothing. The
+// previous comment claiming a tiny dependency surface was wrong; formatFloat
+// already pulls in fmt, which is heavier than strconv would be.
 func formatInt64(v int64) string {
 	const radix = 10
 	if v == 0 {
@@ -114,7 +140,11 @@ func formatInt64(v int64) string {
 }
 
 func formatFloat(v float64) string {
-	// Defer to strconv via fmt for floats — formatting them by hand is
-	// not worth the code volume relative to integer optimization.
-	return fmtSprint(v)
+	// strconv.FormatFloat with -1 precision gives the shortest round-trip
+	// representation, which matches what fmt.Sprintf("%v", float64) used
+	// to produce here — but without the reflection / interface boxing fmt
+	// pulls in. The previous implementation routed through fmt.Sprintf
+	// "to keep dependencies small" while pulling fmt in anyway; strconv
+	// is both lighter and faster.
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }

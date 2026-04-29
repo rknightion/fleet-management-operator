@@ -46,10 +46,11 @@ import (
 // configure the records-to-return and observe call counts; the controller
 // uses it via a SourceFactory closure.
 type fakeSource struct {
-	mu      sync.Mutex
-	records []sources.Record
-	err     error
-	calls   int32
+	mu         sync.Mutex
+	records    []sources.Record
+	err        error
+	calls      int32
+	closeCalls int32
 }
 
 func (f *fakeSource) Kind() string { return "FAKE" }
@@ -66,6 +67,14 @@ func (f *fakeSource) Fetch(_ context.Context) ([]sources.Record, error) {
 	return out, nil
 }
 
+// Close satisfies sources.Source. The counter lets tests verify the
+// controller's defer-Close contract holds across success, fetch-error and
+// projection-error paths (S1).
+func (f *fakeSource) Close() error {
+	atomic.AddInt32(&f.closeCalls, 1)
+	return nil
+}
+
 func (f *fakeSource) setRecords(rs []sources.Record) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -74,6 +83,10 @@ func (f *fakeSource) setRecords(rs []sources.Record) {
 
 func (f *fakeSource) callCount() int32 {
 	return atomic.LoadInt32(&f.calls)
+}
+
+func (f *fakeSource) closeCount() int32 {
+	return atomic.LoadInt32(&f.closeCalls)
 }
 
 var (
@@ -327,6 +340,95 @@ var _ = Describe("ExternalAttributeSync Controller", func() {
 			}
 			return ""
 		}, extTimeout, extInterval).Should(Equal(externalSyncReasonSourceFailed))
+	})
+
+	It("closes the Source on every reconcile, on both success and failure paths (S1)", func() {
+		// S1: the controller defers src.Close() at the Fetch call site so
+		// SQL connection pools are released even on early-error paths.
+		// We exercise both branches in the same test:
+		//   1. a healthy Fetch increments callCount AND closeCount.
+		//   2. an erroring Fetch ALSO increments closeCount, proving
+		//      defer fires before the function returns the error.
+		// Without the defer, closeCount would lag callCount and the SQL
+		// source would leak a *sql.DB per reconcile.
+		ctx := context.Background()
+		collectorID := "extsync-collector-" + uniqueExternalSyncSuffix()
+		registerMockCollector(collectorID, map[string]string{"collector.os": "linux"})
+
+		Expect(k8sClient.Create(ctx, &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: extNS},
+			Spec:       fleetmanagementv1alpha1.CollectorSpec{ID: collectorID, RemoteAttributes: map[string]string{}},
+		})).To(Succeed())
+
+		Eventually(func() bool {
+			c := &fleetmanagementv1alpha1.Collector{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "edge"}, c)
+			return err == nil && len(c.Status.LocalAttributes) > 0
+		}, extTimeout, extInterval).Should(BeTrue())
+
+		externalSyncFakeSource.setRecords([]sources.Record{
+			{"hostname": collectorID, "env": "prod"},
+		})
+
+		Expect(k8sClient.Create(ctx, &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{Name: "close-on-success", Namespace: extNS},
+			Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+				Source: fleetmanagementv1alpha1.ExternalSource{
+					Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+					HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
+				},
+				Schedule: "5m",
+				Selector: fleetmanagementv1alpha1.PolicySelector{CollectorIDs: []string{collectorID}},
+				Mapping: fleetmanagementv1alpha1.AttributeMapping{
+					CollectorIDField: "hostname",
+					AttributeFields:  map[string]string{"env": "env"},
+				},
+			},
+		})).To(Succeed())
+
+		// Wait for the success-path reconcile to land.
+		Eventually(func() int32 {
+			s := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "close-on-success"}, s); err != nil {
+				return -1
+			}
+			return s.Status.RecordsApplied
+		}, extTimeout, extInterval).Should(Equal(int32(1)))
+
+		// On the success path, every Fetch call must be paired with a
+		// Close call. We use Eventually because the deferred Close
+		// runs after the controller's status write returns, and the
+		// status visibility from Eventually does not prove the defer
+		// has executed yet.
+		Eventually(func() bool {
+			calls := externalSyncFakeSource.callCount()
+			closes := externalSyncFakeSource.closeCount()
+			return calls > 0 && closes == calls
+		}, extTimeout, extInterval).Should(BeTrue(),
+			"closeCount must equal callCount on success path; got calls=%d closes=%d",
+			externalSyncFakeSource.callCount(), externalSyncFakeSource.closeCount())
+
+		// Now flip the source to error. Each new Fetch must also be
+		// paired with a Close even though the controller takes the
+		// updateStatusError path.
+		preCalls := externalSyncFakeSource.callCount()
+		externalSyncFakeSource.err = errors.New("upstream is down")
+		// Bump the spec generation to guarantee a re-reconcile.
+		s := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: extNS, Name: "close-on-success"}, s)).To(Succeed())
+		// Any schedule different from the original triggers a generation bump.
+		s.Spec.Schedule = "15m"
+		Expect(k8sClient.Update(ctx, s)).To(Succeed())
+
+		Eventually(func() bool {
+			calls := externalSyncFakeSource.callCount()
+			closes := externalSyncFakeSource.closeCount()
+			// Wait until at least one new Fetch has happened post-spec-bump
+			// AND every Fetch is matched by a Close.
+			return calls > preCalls && closes == calls
+		}, extTimeout, extInterval).Should(BeTrue(),
+			"closeCount must equal callCount on error path; got calls=%d closes=%d",
+			externalSyncFakeSource.callCount(), externalSyncFakeSource.closeCount())
 	})
 
 	It("requeues at the duration schedule", func() {

@@ -80,6 +80,12 @@ type Config struct {
 type Source struct {
 	cfg        Config
 	httpClient *http.Client
+	// redactedURL is cfg.URL run through (*url.URL).Redacted at construction
+	// time. Errors and log messages embed THIS string rather than cfg.URL so
+	// userinfo (e.g. https://user:tok@host/path) can never leak into operator
+	// events or controller logs. Reusing the parsed-once form avoids
+	// re-parsing on every Fetch error.
+	redactedURL string
 }
 
 // Compile-time interface check.
@@ -126,7 +132,26 @@ func New(cfg Config) (*Source, error) {
 		},
 	}
 
-	return &Source{cfg: cfg, httpClient: httpClient}, nil
+	return &Source{
+		cfg:         cfg,
+		httpClient:  httpClient,
+		redactedURL: parsed.Redacted(),
+	}, nil
+}
+
+// Close releases any resources the Source holds. The HTTP client uses
+// http.DefaultTransport-style connection pooling, but the pool is owned by
+// the Transport assigned in New — closing idle connections is the most we
+// can do here, and it is best-effort: a Source that never performed a
+// Fetch has no idle connections to close. Returning nil keeps the
+// interface contract simple.
+func (s *Source) Close() error {
+	if s.httpClient != nil {
+		if t, ok := s.httpClient.Transport.(*http.Transport); ok {
+			t.CloseIdleConnections()
+		}
+	}
+	return nil
 }
 
 // Kind returns the stable identifier matching v1alpha1.ExternalSourceKindHTTP.
@@ -157,7 +182,10 @@ func (s *Source) Fetch(ctx context.Context) ([]sources.Record, error) {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("httpsource: %s %s: %w", s.cfg.Method, s.cfg.URL, err)
+		// Use redactedURL (not cfg.URL) so userinfo never leaks into
+		// the controller's events / logs. (*url.URL).Redacted replaces
+		// any password component with "xxxxx".
+		return nil, fmt.Errorf("httpsource: %s %s: %w", s.cfg.Method, s.redactedURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -165,7 +193,7 @@ func (s *Source) Fetch(ctx context.Context) ([]sources.Record, error) {
 		excerpt := readBodyExcerpt(resp.Body, bodyExcerptLimit)
 		return nil, fmt.Errorf(
 			"httpsource: %s %s: status %d: %s",
-			s.cfg.Method, s.cfg.URL, resp.StatusCode, excerpt,
+			s.cfg.Method, s.redactedURL, resp.StatusCode, excerpt,
 		)
 	}
 

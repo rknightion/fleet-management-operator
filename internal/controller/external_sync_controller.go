@@ -261,6 +261,15 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		}
 		return ctrl.Result{RequeueAfter: defaultExternalSyncRequeueOnError}, nil
 	}
+	// S1: defer Close so the SQL source's *sql.DB is released on every exit
+	// path (success, fetch error, projection error, status conflict). Without
+	// this, each reconcile leaks a connection pool — at the schedule's
+	// cadence with 30k collectors that's measurable upstream pressure within
+	// a few hours. HTTP's Close is a no-op-ish CloseIdleConnections, but the
+	// defer-once contract is uniform across kinds. Errors from Close are
+	// intentionally discarded: by the time defer runs we either have the
+	// real result or a more interesting error to return.
+	defer func() { _ = src.Close() }()
 
 	// E19: per-target rate limiting. Two syncs pointing at the same
 	// upstream share a token bucket so MaxConcurrentReconciles cannot

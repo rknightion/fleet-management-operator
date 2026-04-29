@@ -368,6 +368,34 @@ func TestSQLSource_Fetch_FallbackTypeFormatting(t *testing.T) {
 	assert.Contains(t, s, "weird")
 }
 
+// TestSQLSource_Fetch_PingPath guards S3: handle() must run PingContext
+// after a successful sql.Open so DSN / network / auth problems surface
+// with a "ping" prefix instead of being deferred to QueryContext. We
+// exercise the production handle() branch with a real postgres DSN that
+// sql.Open accepts (lib/pq parses the DSN at Open without dialling) but
+// Ping cannot satisfy, since port 1 is reserved and refuses connections.
+// A short timeout keeps the test fast; the wrapping format is what we
+// actually want to lock in.
+func TestSQLSource_Fetch_PingPath(t *testing.T) {
+	src := &Source{cfg: Config{
+		Driver:  "postgres",
+		Query:   "SELECT 1",
+		DSN:     "host=127.0.0.1 port=1 sslmode=disable connect_timeout=1",
+		Timeout: 2 * time.Second,
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, fetchErr := src.Fetch(ctx)
+	require.Error(t, fetchErr)
+	assert.Contains(t, fetchErr.Error(), "sqlsource: ping",
+		"ping failure must be labeled distinctly from a query failure")
+	assert.Contains(t, fetchErr.Error(), "postgres")
+	assert.Nil(t, src.db,
+		"failed Ping must clear the cached handle so the next reconcile retries Open")
+}
+
 // Confirm that go-sqlmock's *sql.DB satisfies the same interface our
 // source uses — this is a guard against silent dependency-version drift.
 var _ *sql.DB = (*sql.DB)(nil)

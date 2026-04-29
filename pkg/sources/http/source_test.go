@@ -434,6 +434,76 @@ func TestHTTPSource_FetchNetworkError(t *testing.T) {
 		"expected method+URL prefix in error, got %q", err.Error())
 }
 
+// TestHTTPSource_FetchErrorRedactsURLCredentials guards S2: if a URL is
+// configured with userinfo (basic auth in the URL itself, which is
+// supported by url.Parse), error messages MUST NOT echo the bare
+// password. (*url.URL).Redacted replaces it with "xxxxx", and the source
+// must use that form in every Fetch error path so the controller's
+// kubectl-visible events do not leak credentials.
+func TestHTTPSource_FetchErrorRedactsURLCredentials(t *testing.T) {
+	t.Run("network-error", func(t *testing.T) {
+		// Port 1 is reserved — connect refused / timeout produces the
+		// "do request" branch that previously embedded cfg.URL verbatim.
+		src, err := New(Config{URL: "http://user:s3cret-token@127.0.0.1:1/path"})
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		_, err = src.Fetch(ctx)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "s3cret-token",
+			"password from URL must not appear in error message")
+		assert.Contains(t, err.Error(), "xxxxx",
+			"redacted password marker must appear in error message")
+		// Host should still be there so operators can identify the target.
+		assert.Contains(t, err.Error(), "127.0.0.1:1")
+	})
+
+	t.Run("non-2xx-error", func(t *testing.T) {
+		// Build a server, then synthesize a Source with redactedURL set
+		// to point at it but cfg.URL carrying a credential. We can't use
+		// httptest.NewServer + url-with-userinfo directly because Go's
+		// http.Client strips userinfo before sending — so we build the
+		// Source via New on a credentialed URL pointing at the test
+		// server.
+		var hits int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, "server boom")
+		}))
+		defer srv.Close()
+
+		// Inject userinfo into the test server URL so the redacted form
+		// is genuinely different from the raw form.
+		credentialed := strings.Replace(srv.URL, "http://", "http://user:s3cret-token@", 1)
+		src, err := New(Config{URL: credentialed})
+		require.NoError(t, err)
+
+		_, err = src.Fetch(context.Background())
+		require.Error(t, err)
+		assert.GreaterOrEqual(t, hits, 1, "request must reach the server")
+		assert.NotContains(t, err.Error(), "s3cret-token",
+			"password from URL must not appear in non-2xx error")
+		assert.Contains(t, err.Error(), "xxxxx",
+			"redacted password marker must appear in non-2xx error")
+		assert.Contains(t, err.Error(), "status 500")
+	})
+}
+
+// TestHTTPSource_Close confirms Close is callable and returns nil even on
+// a Source whose httpClient never made a request. The interface contract
+// requires Close to be a no-op-safe operation so the controller's
+// defer-Close pattern works on every reconcile path.
+func TestHTTPSource_Close(t *testing.T) {
+	src, err := New(Config{URL: "http://example.com/"})
+	require.NoError(t, err)
+	assert.NoError(t, src.Close())
+	// Idempotent: a second Close must also succeed.
+	assert.NoError(t, src.Close())
+}
+
 // Compile-time verification: ensure assert/require imports are not
 // orphaned if a future edit deletes the only test that uses them.
 var _ = fmt.Sprintf

@@ -22,6 +22,19 @@ limitations under the License.
 //
 // The package name is sqlsource (not sql) to avoid a collision with the
 // database/sql standard library import.
+//
+// DSN validation. database/sql.Open is itself lazy: it only validates the
+// DSN's syntactic shape and defers the actual connection (and any
+// driver-specific DSN errors) until the first query. That makes the worst
+// kind of misconfiguration — a malformed DSN — surface as a "query"
+// error on the first reconcile, which the controller events label as a
+// transient source failure. To collapse that distance, handle() runs a
+// PingContext immediately after Open: any DSN, network, or auth error
+// surfaces with a "ping" prefix so operators can tell connection setup
+// from query failure at a glance. The full DSN validation surface (driver
+// specific) is deliberately not duplicated in the admission webhook — the
+// drivers disagree on syntax, and reproducing their parsers is a
+// maintenance trap.
 package sqlsource
 
 import (
@@ -150,7 +163,7 @@ func (s *Source) Fetch(ctx context.Context) ([]sources.Record, error) {
 	ctx, cancel := s.fetchContext(ctx)
 	defer cancel()
 
-	db, err := s.handle()
+	db, err := s.handle(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -213,13 +226,26 @@ func (s *Source) Close() error {
 
 // handle returns the lazily-opened *sql.DB. Open is only attempted on the
 // first call; subsequent Fetches reuse the same handle.
-func (s *Source) handle() (*sql.DB, error) {
+//
+// After a successful Open, handle PingContexts the DB so DSN / auth /
+// network problems surface with a "sqlsource: ping" prefix instead of
+// being deferred to the first QueryContext (where they would be
+// indistinguishable from a real query failure). The Ping uses ctx so the
+// caller's deadline applies.
+func (s *Source) handle(ctx context.Context) (*sql.DB, error) {
 	if s.db != nil {
 		return s.db, nil
 	}
 	db, err := sql.Open(s.cfg.Driver, s.cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("sqlsource: open %s: %w", s.cfg.Driver, err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		// If the Ping fails the DB handle is unusable; close it so we
+		// don't leak the underlying connection slot, and clear the
+		// cached handle so the next Fetch retries Open from scratch.
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlsource: ping %s: %w", s.cfg.Driver, err)
 	}
 	s.db = db
 	return db, nil
