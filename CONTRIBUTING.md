@@ -340,8 +340,12 @@ meta.SetStatusCondition(&pipeline.Status.Conditions, metav1.Condition{
 1. **Run tests**: `make test`
 2. **Run linter**: `make lint`
 3. **Generate manifests**: `make manifests generate`
-4. **Test locally**: `make run`
-5. **Check git diff**: Ensure no unintended changes
+4. **Regenerate docs**: `make docs` — required if your change touches a flag in
+   `cmd/main.go`, a Prometheus metric, an event reason, a sample CR, a CRD
+   field godoc comment, or a status condition. CI runs `make docs-check` and
+   fails on drift.
+5. **Test locally**: `make run`
+6. **Check git diff**: Ensure no unintended changes
 
 ### Commit Messages
 
