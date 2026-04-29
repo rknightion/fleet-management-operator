@@ -14,76 +14,140 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller_test
+package controller
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	fleetclient "github.com/grafana/fleet-management-operator/pkg/fleetclient"
+	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
+	"github.com/grafana/fleet-management-operator/pkg/fleetclient"
 )
 
-// slowFleetClient blocks UpsertPipeline until context cancels,
-// simulating a slow or stalled Fleet API call.
-type slowFleetClient struct{}
+// stallingFleetClient blocks UpsertPipeline / DeletePipeline until the call's
+// context is cancelled, mimicking a Fleet API server that has stopped
+// responding (the same wedge condition that motivates REC-04 and the 30s
+// HTTP client timeout in pkg/fleetclient).
+//
+// It signals startedC when a call is in flight so tests can synchronise on
+// "we are wedged" before triggering shutdown.
+type stallingFleetClient struct {
+	startedOnce sync.Once
+	startedC    chan struct{}
+}
 
-// Verify interface implementation at compile time.
-var _ interface {
-	UpsertPipeline(ctx context.Context, req *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error)
-	DeletePipeline(ctx context.Context, id string) error
-} = &slowFleetClient{}
+func newStallingFleetClient() *stallingFleetClient {
+	return &stallingFleetClient{startedC: make(chan struct{})}
+}
 
-func (s *slowFleetClient) UpsertPipeline(ctx context.Context, req *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error) {
+func (s *stallingFleetClient) markStarted() {
+	s.startedOnce.Do(func() { close(s.startedC) })
+}
+
+func (s *stallingFleetClient) UpsertPipeline(ctx context.Context, _ *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error) {
+	s.markStarted()
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
-func (s *slowFleetClient) DeletePipeline(_ context.Context, _ string) error {
-	return nil
+func (s *stallingFleetClient) DeletePipeline(ctx context.Context, _ string) error {
+	s.markStarted()
+	<-ctx.Done()
+	return ctx.Err()
 }
 
-// TestGracefulShutdown_ContextCancellationPropagates asserts that context
-// cancellation (as triggered by SIGTERM via controller-runtime's graceful
-// shutdown path, REC-04) propagates through to in-flight Fleet API calls.
+// TestGracefulShutdown_ReconcileObservesContextCancellation drives a real
+// PipelineReconciler against a fake K8s client and a stalling Fleet client.
+// REC-04: when the controller-runtime manager cancels its root context (as it
+// does on SIGTERM), every in-flight Reconcile must observe the cancellation
+// via its own ctx parameter and propagate it through to FleetClient.UpsertPipeline.
 //
-// Invariant: a goroutine blocked inside UpsertPipeline must unblock within
-// 5 seconds of context cancellation, and the returned error must be
-// context.Canceled.
-func TestGracefulShutdown_ContextCancellationPropagates(t *testing.T) {
-	client := &slowFleetClient{}
+// This test catches the regression where any link in the chain (reconciler,
+// client wrapper, interceptor) accidentally swallows the parent ctx and
+// substitutes context.Background() — which would let a wedged Fleet API call
+// outlive the manager and block process exit past the pod's terminationGracePeriod.
+func TestGracefulShutdown_ReconcileObservesContextCancellation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, fleetmanagementv1alpha1.AddToScheme(scheme))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	pipeline := &fleetmanagementv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "wedged-pipeline",
+			Namespace:  "default",
+			Generation: 1,
+			Finalizers: []string{pipelineFinalizer},
+		},
+		Spec: fleetmanagementv1alpha1.PipelineSpec{
+			Contents:   "prometheus.scrape \"default\" {}",
+			ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+			Enabled:    true,
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+		WithObjects(pipeline).
+		Build()
+
+	stalling := newStallingFleetClient()
+	r := &PipelineReconciler{
+		Client:      k8sClient,
+		Scheme:      scheme,
+		FleetClient: stalling,
+	}
+
+	parentCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	type result struct {
-		pipeline *fleetclient.Pipeline
-		err      error
+		res ctrl.Result
+		err error
 	}
 	done := make(chan result, 1)
-
 	go func() {
-		p, err := client.UpsertPipeline(ctx, &fleetclient.UpsertPipelineRequest{
-			Pipeline: &fleetclient.Pipeline{
-				Name:     "test-pipeline",
-				Contents: "prometheus.scrape \"default\" { }",
-				Enabled:  true,
-			},
+		res, err := r.Reconcile(parentCtx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: "default", Name: "wedged-pipeline"},
 		})
-		done <- result{pipeline: p, err: err}
+		done <- result{res: res, err: err}
 	}()
 
-	// Cancel the context, simulating SIGTERM propagation.
+	// Wait for the reconciler to enter UpsertPipeline. Without this barrier
+	// the test could race past the wedge and the cancel below would land
+	// before any call is in flight, defeating the point of the test.
+	select {
+	case <-stalling.startedC:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Reconcile did not enter UpsertPipeline within 5s")
+	}
+
+	// Simulate manager.Stop / SIGTERM cancelling the root reconcile context.
 	cancel()
 
+	// REC-04 invariant: Reconcile must return promptly after its ctx cancels.
+	// 5s is well within the 30s pod terminationGracePeriod the chart sets.
+	// Whether the returned error is nil or wraps context.Canceled is an
+	// implementation choice (this controller treats Canceled as non-transient
+	// and returns nil to skip workqueue backoff); what matters is that the
+	// reconcile *unblocks* — proving the cancellation propagated through the
+	// FleetClient call back into the reconciler.
 	select {
-	case res := <-done:
-		require.Error(t, res.err, "expected error after context cancellation")
-		assert.Nil(t, res.pipeline)
-		assert.ErrorIs(t, res.err, context.Canceled, "error must be context.Canceled")
+	case got := <-done:
+		// On the cancellation path the reconciler should not request a requeue
+		// (it would just refire and re-block on the still-stalled client).
+		assert.Equal(t, ctrl.Result{}, got.res, "ctx-cancelled reconcile must not request requeue")
+		_ = got.err // accepted: nil or context.Canceled — see comment above
 	case <-time.After(5 * time.Second):
-		t.Fatal("UpsertPipeline did not return within 5 seconds of context cancellation")
+		t.Fatal("Reconcile did not return within 5s of ctx cancellation; FleetClient call probably ignored its parent context")
 	}
 }
