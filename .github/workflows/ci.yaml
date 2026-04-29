@@ -96,7 +96,7 @@ jobs:
           cache: true
 
       - name: Regenerate install.yaml
-        run: make build-installer IMG=ghcr.io/example/fleet-management-operator:ci
+        run: make build-installer
 
       - name: Verify install.yaml is committed
         run: |
