@@ -94,8 +94,7 @@ type RemoteAttributePolicyStatus struct {
 	MatchedCount int32 `json:"matchedCount,omitempty"`
 
 	// Conditions represent the current state of the Policy.
-	// Known types: Ready, Synced. Reasons: Matched, NoMatch, ListFailed.
-	// See docs/conditions.md for the cross-CRD registry.
+	// See docs/conditions.md for the cross-CRD condition registry.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

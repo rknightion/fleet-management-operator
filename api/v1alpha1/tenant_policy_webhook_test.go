@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -215,6 +216,90 @@ func TestTenantPolicy_Validate(t *testing.T) {
 			}
 			if err != nil && tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
 				t.Errorf("validateTenantPolicy() error %q does not contain %q", err.Error(), tt.errMsg)
+			}
+		})
+	}
+}
+
+// TestTenantPolicy_EmptyNamespaceSelectorEmitsWarning pins the C5 fix:
+// an empty namespaceSelector is functionally equivalent to omitting the
+// field, but it is almost always a misconfiguration (the author wanted to
+// scope the policy and forgot to fill in labels). The webhook must accept
+// it but warn so the user can correct or confirm.
+func TestTenantPolicy_EmptyNamespaceSelectorEmitsWarning(t *testing.T) {
+	tests := []struct {
+		name        string
+		selector    *metav1.LabelSelector
+		wantWarning bool
+	}{
+		{
+			name:        "nil selector emits no warning",
+			selector:    nil,
+			wantWarning: false,
+		},
+		{
+			name:        "empty selector emits warning",
+			selector:    &metav1.LabelSelector{},
+			wantWarning: true,
+		},
+		{
+			name: "non-empty MatchLabels emits no warning",
+			selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"tenant": "billing"},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "non-empty MatchExpressions emits no warning",
+			selector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{Key: "tenant", Operator: metav1.LabelSelectorOpExists},
+				},
+			},
+			wantWarning: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tp := &TenantPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "tp"},
+				Spec: TenantPolicySpec{
+					Subjects: []rbacv1.Subject{
+						{Kind: rbacv1.GroupKind, Name: "team-billing-engineers"},
+					},
+					RequiredMatchers:  []string{"team=billing"},
+					NamespaceSelector: tt.selector,
+				},
+			}
+
+			warnings, err := tp.ValidateCreate(context.Background(), tp)
+			if err != nil {
+				t.Fatalf("ValidateCreate returned error: %v", err)
+			}
+			gotWarning := false
+			for _, w := range warnings {
+				if strings.Contains(w, "namespaceSelector is empty") {
+					gotWarning = true
+				}
+			}
+			if gotWarning != tt.wantWarning {
+				t.Fatalf("warning emitted = %v, want %v (warnings: %v)", gotWarning, tt.wantWarning, warnings)
+			}
+
+			// Update path emits the same warning.
+			updateWarnings, err := tp.ValidateUpdate(context.Background(), tp.DeepCopy(), tp)
+			if err != nil {
+				t.Fatalf("ValidateUpdate returned error: %v", err)
+			}
+			gotUpdateWarning := false
+			for _, w := range updateWarnings {
+				if strings.Contains(w, "namespaceSelector is empty") {
+					gotUpdateWarning = true
+				}
+			}
+			if gotUpdateWarning != tt.wantWarning {
+				t.Fatalf("update warning emitted = %v, want %v (warnings: %v)", gotUpdateWarning, tt.wantWarning, updateWarnings)
 			}
 		})
 	}

@@ -177,7 +177,7 @@ type ExternalAttributeSyncStatus struct {
 	OwnedKeys []OwnedKeyEntry `json:"ownedKeys,omitempty"`
 
 	// Conditions represent the current state of the ExternalAttributeSync.
-	// Standard types: Ready, Synced, Stalled.
+	// See docs/conditions.md for the cross-CRD condition registry.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

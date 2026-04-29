@@ -193,9 +193,7 @@ type CollectorDiscoveryStatus struct {
 	Conflicts []DiscoveryConflict `json:"conflicts,omitempty"`
 
 	// Conditions represent the current state of the CollectorDiscovery.
-	// Known types: Ready, Synced. Reasons: Synced, ListCollectorsFailed,
-	// UpsertFailed, InvalidConfig. See docs/conditions.md for the
-	// cross-CRD registry.
+	// See docs/conditions.md for the cross-CRD condition registry.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

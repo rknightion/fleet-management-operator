@@ -44,18 +44,24 @@ func SetupTenantPolicyWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-tenantpolicy,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=tenantpolicies,verbs=create;update,versions=v1alpha1,name=vtenantpolicy.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-tenantpolicy,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=tenantpolicies,verbs=create;update,versions=v1alpha1,name=vtenantpolicy.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
 // ValidateCreate implements admission.Validator.
 func (r *TenantPolicy) ValidateCreate(ctx context.Context, obj *TenantPolicy) (admission.Warnings, error) {
 	tenantpolicylog.Info("validate create", "name", obj.Name)
-	return nil, obj.validateTenantPolicy()
+	if err := obj.validateTenantPolicy(); err != nil {
+		return nil, err
+	}
+	return obj.tenantPolicyWarnings(), nil
 }
 
 // ValidateUpdate implements admission.Validator.
 func (r *TenantPolicy) ValidateUpdate(ctx context.Context, oldObj, newObj *TenantPolicy) (admission.Warnings, error) {
 	tenantpolicylog.Info("validate update", "name", newObj.Name)
-	return nil, newObj.validateTenantPolicy()
+	if err := newObj.validateTenantPolicy(); err != nil {
+		return nil, err
+	}
+	return newObj.tenantPolicyWarnings(), nil
 }
 
 // ValidateDelete implements admission.Validator.
@@ -145,4 +151,23 @@ func (r *TenantPolicy) validateNamespaceSelector() error {
 		return fmt.Errorf("spec.namespaceSelector is not a valid LabelSelector: %w", err)
 	}
 	return nil
+}
+
+// tenantPolicyWarnings returns admission warnings that do not block
+// creation but should surface in `kubectl apply` / `kubectl create` output.
+//
+// Currently emits one warning: when spec.namespaceSelector is set but
+// empty (no MatchLabels and no MatchExpressions), the selector matches
+// every namespace — which is functionally identical to omitting the
+// field. The author probably intended to scope the policy and forgot to
+// fill in labels; surface it so they can correct or confirm.
+func (r *TenantPolicy) tenantPolicyWarnings() admission.Warnings {
+	var warnings admission.Warnings
+	if sel := r.Spec.NamespaceSelector; sel != nil &&
+		len(sel.MatchLabels) == 0 && len(sel.MatchExpressions) == 0 {
+		warnings = append(warnings,
+			"spec.namespaceSelector is empty; this policy applies to every namespace "+
+				"(omit the field to make this explicit)")
+	}
+	return warnings
 }

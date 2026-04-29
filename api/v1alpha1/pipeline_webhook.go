@@ -41,7 +41,7 @@ func SetupPipelineWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker) e
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-pipeline,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=pipelines,verbs=create;update,versions=v1alpha1,name=vpipeline.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-pipeline,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=pipelines,verbs=create;update,versions=v1alpha1,name=vpipeline.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
 // pipelineValidator is the production webhook validator. It runs the
 // type's spec validation and, when checker is non-nil, layers the tenant

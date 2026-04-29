@@ -20,9 +20,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 // teamBillingNS is the namespace used in this file's table-driven tests
@@ -34,11 +36,20 @@ const teamBillingNS = "team-billing"
 // validator wrappers should pass the CR's namespace and the right matcher
 // list (Pipeline.Spec.Matchers, Spec.Selector.Matchers, etc.) through to
 // the checker.
+//
+// matches gates the C4 collectorIDs guard: tests can simulate "this user is
+// under a TenantPolicy" by setting matches=true. matchesErr lets a test
+// inject a Matches() failure independently of Check().
 type fakeChecker struct {
 	err            error
 	called         bool
 	calledNs       string
 	calledMatchers []string
+
+	matches        bool
+	matchesErr     error
+	matchesCalled  bool
+	matchesCalledN string
 }
 
 func (f *fakeChecker) Check(_ context.Context, ns string, matchers []string) error {
@@ -46,6 +57,12 @@ func (f *fakeChecker) Check(_ context.Context, ns string, matchers []string) err
 	f.calledNs = ns
 	f.calledMatchers = matchers
 	return f.err
+}
+
+func (f *fakeChecker) Matches(_ context.Context, ns string) (bool, error) {
+	f.matchesCalled = true
+	f.matchesCalledN = ns
+	return f.matches, f.matchesErr
 }
 
 func TestPipelineValidator_NilCheckerSkipsTenantStep(t *testing.T) {
@@ -248,7 +265,7 @@ func TestRemoteAttributePolicyValidator_CheckerCalledOnUpdate(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: teamBillingNS},
 		Spec: RemoteAttributePolicySpec{
 			Attributes: map[string]string{"k": "v"},
-			Selector: PolicySelector{Matchers: []string{"team=billing"}},
+			Selector:   PolicySelector{Matchers: []string{"team=billing"}},
 		},
 	}
 	updated := old.DeepCopy()
@@ -351,5 +368,176 @@ func TestExternalAttributeSyncValidator_CheckerCalledOnUpdate(t *testing.T) {
 	want := []string{"team=billing", "env=prod"}
 	if !reflect.DeepEqual(c.calledMatchers, want) {
 		t.Errorf("update matchers = %v, want %v", c.calledMatchers, want)
+	}
+}
+
+// --- C4 collectorIDs guard tests --------------------------------------
+//
+// These pin the C4 behavior: a user under a TenantPolicy may not bypass
+// matcher-based scope by listing collectors directly under
+// spec.selector.collectorIDs. The guard runs only when the matcher Check
+// passed AND a TenantPolicy actually applied to the user.
+//
+// TODO(v2): close collectorIDs bypass gap end-to-end once
+// MatcherChecker.Check sees the full selector (matchers + collectorIDs)
+// and reasons over both — these tests then become defense-in-depth.
+
+func TestRemoteAttributePolicyValidator_CollectorIDsRejectedUnderTenantPolicy(t *testing.T) {
+	c := &fakeChecker{matches: true}
+	v := &remoteAttributePolicyValidator{checker: c}
+
+	p := &RemoteAttributePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: teamBillingNS},
+		Spec: RemoteAttributePolicySpec{
+			Attributes: map[string]string{"k": "v"},
+			Selector: PolicySelector{
+				Matchers:     []string{"team=billing"},
+				CollectorIDs: []string{"col-1", "col-2"},
+			},
+		},
+	}
+	_, err := v.ValidateCreate(context.Background(), p)
+	if err == nil {
+		t.Fatalf("expected rejection when user under TenantPolicy uses collectorIDs")
+	}
+
+	var fieldErr *field.Error
+	if !errors.As(err, &fieldErr) {
+		t.Fatalf("expected returned error to wrap a *field.Error, got %T: %v", err, err)
+	}
+	if fieldErr.Type != field.ErrorTypeForbidden {
+		t.Errorf("expected field.ErrorTypeForbidden, got %v", fieldErr.Type)
+	}
+	if got, want := fieldErr.Field, "spec.selector.collectorIDs"; got != want {
+		t.Errorf("expected field path %q, got %q", want, got)
+	}
+	if !strings.Contains(err.Error(), "TenantPolicy") {
+		t.Errorf("error message should mention TenantPolicy, got %q", err.Error())
+	}
+}
+
+func TestRemoteAttributePolicyValidator_CollectorIDsAllowedWithoutTenantPolicy(t *testing.T) {
+	// matches=false simulates "no policy applies" — the default-allow case.
+	// CollectorIDs must not be rejected when the user is not tenanted.
+	c := &fakeChecker{matches: false}
+	v := &remoteAttributePolicyValidator{checker: c}
+
+	p := &RemoteAttributePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "default"},
+		Spec: RemoteAttributePolicySpec{
+			Attributes: map[string]string{"k": "v"},
+			Selector: PolicySelector{
+				CollectorIDs: []string{"col-1"},
+			},
+		},
+	}
+	if _, err := v.ValidateCreate(context.Background(), p); err != nil {
+		t.Fatalf("collectorIDs should be allowed when no TenantPolicy applies, got %v", err)
+	}
+	if !c.matchesCalled {
+		t.Errorf("Matches should have been consulted because collectorIDs is non-empty")
+	}
+}
+
+func TestRemoteAttributePolicyValidator_CollectorIDsGuardSkipsWhenMatchersOnly(t *testing.T) {
+	// matches=true would normally trigger the guard, but with no
+	// CollectorIDs there is nothing to gate — Matches must not even be
+	// consulted (it's a wasted apiserver round-trip).
+	c := &fakeChecker{matches: true}
+	v := &remoteAttributePolicyValidator{checker: c}
+
+	p := &RemoteAttributePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: teamBillingNS},
+		Spec: RemoteAttributePolicySpec{
+			Attributes: map[string]string{"k": "v"},
+			Selector:   PolicySelector{Matchers: []string{"team=billing"}},
+		},
+	}
+	if _, err := v.ValidateCreate(context.Background(), p); err != nil {
+		t.Fatalf("matchers-only selector should pass, got %v", err)
+	}
+	if c.matchesCalled {
+		t.Errorf("Matches should NOT have been consulted when CollectorIDs is empty")
+	}
+}
+
+func TestExternalAttributeSyncValidator_CollectorIDsRejectedUnderTenantPolicy(t *testing.T) {
+	c := &fakeChecker{matches: true}
+	v := &externalAttributeSyncValidator{checker: c}
+
+	es := &ExternalAttributeSync{
+		ObjectMeta: metav1.ObjectMeta{Name: "es", Namespace: teamBillingNS},
+		Spec: ExternalAttributeSyncSpec{
+			Schedule: "5m",
+			Source: ExternalSource{
+				Kind: ExternalSourceKindHTTP,
+				HTTP: &HTTPSourceSpec{URL: "https://example.com/cmdb", Method: "GET"},
+			},
+			Mapping: AttributeMapping{
+				CollectorIDField: "id",
+				AttributeFields:  map[string]string{"team": "team"},
+			},
+			Selector: PolicySelector{
+				Matchers:     []string{"team=billing"},
+				CollectorIDs: []string{"col-1"},
+			},
+		},
+	}
+	_, err := v.ValidateCreate(context.Background(), es)
+	if err == nil {
+		t.Fatalf("expected rejection when user under TenantPolicy uses collectorIDs")
+	}
+
+	var fieldErr *field.Error
+	if !errors.As(err, &fieldErr) {
+		t.Fatalf("expected returned error to wrap a *field.Error, got %T: %v", err, err)
+	}
+	if fieldErr.Type != field.ErrorTypeForbidden {
+		t.Errorf("expected field.ErrorTypeForbidden, got %v", fieldErr.Type)
+	}
+	if got, want := fieldErr.Field, "spec.selector.collectorIDs"; got != want {
+		t.Errorf("expected field path %q, got %q", want, got)
+	}
+}
+
+func TestExternalAttributeSyncValidator_CollectorIDsAllowedWithoutTenantPolicy(t *testing.T) {
+	c := &fakeChecker{matches: false}
+	v := &externalAttributeSyncValidator{checker: c}
+
+	es := &ExternalAttributeSync{
+		ObjectMeta: metav1.ObjectMeta{Name: "es", Namespace: "default"},
+		Spec: ExternalAttributeSyncSpec{
+			Schedule: "5m",
+			Source: ExternalSource{
+				Kind: ExternalSourceKindHTTP,
+				HTTP: &HTTPSourceSpec{URL: "https://example.com/cmdb", Method: "GET"},
+			},
+			Mapping: AttributeMapping{
+				CollectorIDField: "id",
+				AttributeFields:  map[string]string{"team": "team"},
+			},
+			Selector: PolicySelector{CollectorIDs: []string{"col-1"}},
+		},
+	}
+	if _, err := v.ValidateCreate(context.Background(), es); err != nil {
+		t.Fatalf("collectorIDs should be allowed when no TenantPolicy applies, got %v", err)
+	}
+}
+
+func TestRunTenantChecks_NilCheckerIsNoOp(t *testing.T) {
+	if err := runTenantChecks(context.Background(), nil, "ns", []string{"team=billing"}, []string{"col-1"}); err != nil {
+		t.Fatalf("nil checker should make runTenantChecks a no-op, got %v", err)
+	}
+}
+
+func TestRunTenantChecks_PropagatesMatchesError(t *testing.T) {
+	// If Matches() fails, runTenantChecks must propagate the error rather
+	// than silently allowing the request — defense in depth against an
+	// apiserver hiccup masking the guard.
+	matchesErr := errors.New("apiserver: timeout listing TenantPolicy")
+	c := &fakeChecker{matches: false, matchesErr: matchesErr}
+	err := runTenantChecks(context.Background(), c, "ns", []string{"team=billing"}, []string{"col-1"})
+	if !errors.Is(err, matchesErr) {
+		t.Fatalf("expected Matches error to propagate, got %v", err)
 	}
 }

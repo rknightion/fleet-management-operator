@@ -44,7 +44,7 @@ func SetupRemoteAttributePolicyWebhookWithManager(mgr ctrl.Manager, checker Matc
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-remoteattributepolicy,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=remoteattributepolicies,verbs=create;update,versions=v1alpha1,name=vremoteattributepolicy.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-remoteattributepolicy,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=remoteattributepolicies,verbs=create;update,versions=v1alpha1,name=vremoteattributepolicy.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
 // remoteAttributePolicyValidator is the production webhook validator. It
 // runs the type's spec validation and, when checker is non-nil, layers
@@ -62,10 +62,8 @@ func (v *remoteAttributePolicyValidator) ValidateCreate(ctx context.Context, obj
 	if err != nil {
 		return warnings, err
 	}
-	if v.checker != nil {
-		if err := v.checker.Check(ctx, obj.Namespace, obj.Spec.Selector.Matchers); err != nil {
-			return warnings, err
-		}
+	if err := runTenantChecks(ctx, v.checker, obj.Namespace, obj.Spec.Selector.Matchers, obj.Spec.Selector.CollectorIDs); err != nil {
+		return warnings, err
 	}
 	return warnings, nil
 }
@@ -78,10 +76,8 @@ func (v *remoteAttributePolicyValidator) ValidateUpdate(ctx context.Context, old
 	if err != nil {
 		return warnings, err
 	}
-	if v.checker != nil {
-		if err := v.checker.Check(ctx, newObj.Namespace, newObj.Spec.Selector.Matchers); err != nil {
-			return warnings, err
-		}
+	if err := runTenantChecks(ctx, v.checker, newObj.Namespace, newObj.Spec.Selector.Matchers, newObj.Spec.Selector.CollectorIDs); err != nil {
+		return warnings, err
 	}
 	return warnings, nil
 }

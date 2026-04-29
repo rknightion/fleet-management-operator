@@ -49,7 +49,7 @@ func SetupExternalAttributeSyncWebhookWithManager(mgr ctrl.Manager, checker Matc
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-externalattributesync,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=externalattributesyncs,verbs=create;update,versions=v1alpha1,name=vexternalattributesync.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-externalattributesync,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=externalattributesyncs,verbs=create;update,versions=v1alpha1,name=vexternalattributesync.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
 // externalAttributeSyncValidator is the production webhook validator. It
 // runs the type's spec validation and, when checker is non-nil, layers
@@ -67,10 +67,8 @@ func (v *externalAttributeSyncValidator) ValidateCreate(ctx context.Context, obj
 	if err != nil {
 		return warnings, err
 	}
-	if v.checker != nil {
-		if err := v.checker.Check(ctx, obj.Namespace, obj.Spec.Selector.Matchers); err != nil {
-			return warnings, err
-		}
+	if err := runTenantChecks(ctx, v.checker, obj.Namespace, obj.Spec.Selector.Matchers, obj.Spec.Selector.CollectorIDs); err != nil {
+		return warnings, err
 	}
 	return warnings, nil
 }
@@ -83,10 +81,8 @@ func (v *externalAttributeSyncValidator) ValidateUpdate(ctx context.Context, old
 	if err != nil {
 		return warnings, err
 	}
-	if v.checker != nil {
-		if err := v.checker.Check(ctx, newObj.Namespace, newObj.Spec.Selector.Matchers); err != nil {
-			return warnings, err
-		}
+	if err := runTenantChecks(ctx, v.checker, newObj.Namespace, newObj.Spec.Selector.Matchers, newObj.Spec.Selector.CollectorIDs); err != nil {
+		return warnings, err
 	}
 	return warnings, nil
 }

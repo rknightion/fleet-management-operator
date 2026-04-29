@@ -18,6 +18,7 @@ package tenant
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -29,7 +30,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
@@ -219,6 +222,127 @@ func TestChecker_MultiPolicyUnion(t *testing.T) {
 	}
 	if err := c.Check(ctx, "default", []string{"env=prod"}); err == nil {
 		t.Fatalf("CR missing every union element should be rejected")
+	}
+}
+
+// TestChecker_NamespaceFetchErrorFailsOpen pins the C3 fix: any non-nil
+// error from the namespace Get (NotFound, Forbidden, ServerTimeout, etc.)
+// must collapse to "policy does not apply" so a transient apiserver hiccup
+// cannot block legitimate writes. The previous behavior returned the
+// underlying error, which Check() then propagated as an admission denial.
+func TestChecker_NamespaceFetchErrorFailsOpen(t *testing.T) {
+	scheme := newScheme(t)
+
+	policy := &fleetmanagementv1alpha1.TenantPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "team-billing"},
+		Spec: fleetmanagementv1alpha1.TenantPolicySpec{
+			Subjects:         []rbacv1.Subject{{Kind: rbacv1.GroupKind, Name: "team-billing"}},
+			RequiredMatchers: []string{"team=billing"},
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"tenant": "billing"},
+			},
+		},
+	}
+
+	// Inject a generic apiserver error on Namespace Get — emulates a
+	// transient server-side failure that is neither NotFound nor Forbidden.
+	transientErr := errors.New("etcdserver: request timed out")
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(policy).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*corev1.Namespace); ok {
+					return transientErr
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+	c := NewChecker(cl)
+
+	ctx := ctxWithUser(t, authnv1.UserInfo{
+		Username: "alice",
+		Groups:   []string{"team-billing"},
+	})
+
+	// The CR has no required matcher — but with the namespace fetch
+	// failing we must NOT propagate the error and must NOT treat the
+	// policy as applicable. Net result: allow.
+	if err := c.Check(ctx, "billing", []string{}); err != nil {
+		t.Fatalf("namespace fetch error must fail-open and allow the request, got %v", err)
+	}
+}
+
+// TestChecker_MatchesReturnsTrueWhenPolicyApplies pins the C4 underpinning:
+// Matches must report true when at least one TenantPolicy matches the
+// requesting user (subject + namespace selector). The webhook helpers use
+// this signal to decide whether to apply the collectorIDs guard.
+func TestChecker_MatchesReturnsTrueWhenPolicyApplies(t *testing.T) {
+	scheme := newScheme(t)
+	policies := []runtime.Object{
+		&fleetmanagementv1alpha1.TenantPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "team-billing"},
+			Spec: fleetmanagementv1alpha1.TenantPolicySpec{
+				Subjects:         []rbacv1.Subject{{Kind: rbacv1.GroupKind, Name: "team-billing"}},
+				RequiredMatchers: []string{"team=billing"},
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(policies...).Build()
+	c := NewChecker(cl)
+
+	ctx := ctxWithUser(t, authnv1.UserInfo{
+		Username: "alice",
+		Groups:   []string{"team-billing"},
+	})
+	matched, err := c.Matches(ctx, "default")
+	if err != nil {
+		t.Fatalf("Matches returned error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected Matches=true for user in policy subject group")
+	}
+}
+
+func TestChecker_MatchesReturnsFalseWhenNoPolicyApplies(t *testing.T) {
+	scheme := newScheme(t)
+	policies := []runtime.Object{
+		&fleetmanagementv1alpha1.TenantPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "team-billing"},
+			Spec: fleetmanagementv1alpha1.TenantPolicySpec{
+				Subjects:         []rbacv1.Subject{{Kind: rbacv1.GroupKind, Name: "team-billing"}},
+				RequiredMatchers: []string{"team=billing"},
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(policies...).Build()
+	c := NewChecker(cl)
+
+	ctx := ctxWithUser(t, authnv1.UserInfo{
+		Username: "alice",
+		Groups:   []string{"unrelated-group"},
+	})
+	matched, err := c.Matches(ctx, "default")
+	if err != nil {
+		t.Fatalf("Matches returned error: %v", err)
+	}
+	if matched {
+		t.Fatalf("expected Matches=false for user not in any policy subject")
+	}
+}
+
+func TestChecker_MatchesNilCheckerAndNoAdmissionRequest(t *testing.T) {
+	var nilC *Checker
+	if matched, err := nilC.Matches(context.Background(), "default"); err != nil || matched {
+		t.Fatalf("nil Checker.Matches must be (false, nil), got (%v, %v)", matched, err)
+	}
+
+	scheme := newScheme(t)
+	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := NewChecker(cl)
+	if matched, err := c.Matches(context.Background(), "default"); err != nil || matched {
+		t.Fatalf("Matches without admission.Request must be (false, nil), got (%v, %v)", matched, err)
 	}
 }
 

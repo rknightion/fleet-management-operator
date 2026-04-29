@@ -51,7 +51,7 @@ func SetupCollectorWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-collector,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=collectors,verbs=create;update,versions=v1alpha1,name=vcollector.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-collector,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=collectors,verbs=create;update,versions=v1alpha1,name=vcollector.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
 func (r *Collector) ValidateCreate(ctx context.Context, obj *Collector) (admission.Warnings, error) {

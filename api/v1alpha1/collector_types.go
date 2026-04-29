@@ -72,9 +72,9 @@ type CollectorSpec struct {
 	// RemoteAttributes managed by this CR. Keys with prefix "collector." are
 	// reserved by Fleet Management and rejected by the API server (CEL) and
 	// the validating webhook. Each value is capped at 1024 characters by
-	// the API server (OpenAPI maxLength) — values are user-facing strings,
-	// not configuration blobs, so the cap protects etcd. Removing a key
-	// from this map removes it from Fleet (delete-detected via
+	// the admission webhook — values are user-facing strings, not
+	// configuration blobs, so the cap protects etcd. Removing a key from
+	// this map removes it from Fleet (delete-detected via
 	// status.attributeOwners).
 	// +kubebuilder:validation:MaxProperties=100
 	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('collector.'))",message="keys must not use the reserved 'collector.' prefix"

@@ -28,13 +28,15 @@ package v1alpha1
 // Until v1beta1 lands, these are no-ops satisfying the
 // sigs.k8s.io/controller-runtime/pkg/conversion.Hub interface prerequisite.
 
-func (*Pipeline) Hub()                      {}
-func (*PipelineList) Hub()                  {}
-func (*Collector) Hub()                     {}
-func (*CollectorList) Hub()                 {}
-func (*RemoteAttributePolicy) Hub()         {}
-func (*RemoteAttributePolicyList) Hub()     {}
-func (*ExternalAttributeSync) Hub()         {}
-func (*ExternalAttributeSyncList) Hub()     {}
-func (*CollectorDiscovery) Hub()            {}
-func (*CollectorDiscoveryList) Hub()        {}
+func (*Pipeline) Hub()                  {}
+func (*PipelineList) Hub()              {}
+func (*Collector) Hub()                 {}
+func (*CollectorList) Hub()             {}
+func (*RemoteAttributePolicy) Hub()     {}
+func (*RemoteAttributePolicyList) Hub() {}
+func (*ExternalAttributeSync) Hub()     {}
+func (*ExternalAttributeSyncList) Hub() {}
+func (*CollectorDiscovery) Hub()        {}
+func (*CollectorDiscoveryList) Hub()    {}
+func (*TenantPolicy) Hub()              {}
+func (*TenantPolicyList) Hub()          {}

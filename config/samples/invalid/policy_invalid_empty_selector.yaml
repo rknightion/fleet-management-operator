@@ -8,8 +8,8 @@
 # Enforced by: api/v1alpha1/policy_webhook.go validate selector
 # non-empty check.
 #
-# Expected error:
-#   spec.selector must define at least one of matchers or collectorIDs
+# Expected error (verbatim from policy_webhook.go validateSelector):
+#   spec.selector must specify at least one of matchers or collectorIDs; an empty selector matches no collectors
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: RemoteAttributePolicy
 metadata:
