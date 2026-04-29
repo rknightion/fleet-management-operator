@@ -9,6 +9,7 @@ metadata:
     cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/{{ include "fleet-management-operator.fullname" . }}-webhook"
   {{- end }}
 webhooks:
+{{- if .Values.controllers.collector.enabled }}
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -30,6 +31,8 @@ webhooks:
     resources:
     - collectors
   sideEffects: None
+{{- end }}
+{{- if .Values.controllers.collectorDiscovery.enabled }}
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -51,6 +54,8 @@ webhooks:
     resources:
     - collectordiscoveries
   sideEffects: None
+{{- end }}
+{{- if .Values.controllers.externalAttributeSync.enabled }}
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -72,6 +77,8 @@ webhooks:
     resources:
     - externalattributesyncs
   sideEffects: None
+{{- end }}
+{{- if .Values.controllers.pipeline.enabled }}
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -93,6 +100,8 @@ webhooks:
     resources:
     - pipelines
   sideEffects: None
+{{- end }}
+{{- if .Values.controllers.remoteAttributePolicy.enabled }}
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -114,6 +123,8 @@ webhooks:
     resources:
     - remoteattributepolicies
   sideEffects: None
+{{- end }}
+{{- if .Values.controllers.tenantPolicy.enabled }}
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -135,3 +146,4 @@ webhooks:
     resources:
     - tenantpolicies
   sideEffects: None
+{{- end }}

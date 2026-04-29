@@ -48,13 +48,12 @@ spec:
         summary: Fleet webhook admission errors occurring
         description: "Admission webhook returning 500s for 5m. Check cert expiry. See docs/runbooks/webhook-unavailable.md"
 
-    # Uncomment once OBS-01 metrics are available (fleet_api_rate_limiter_wait_duration_seconds):
-    # - alert: FleetRateLimitSaturation
-    #   expr: histogram_quantile(0.95, rate(fleet_api_rate_limiter_wait_duration_seconds_bucket[5m])) > 0.9
-    #   for: 5m
-    #   labels:
-    #     severity: warning
-    #   annotations:
-    #     summary: Fleet API rate limiter near saturation
-    #     description: "95th percentile rate-limiter wait > 0.9s. See docs/runbooks/rate-limit-saturation.md"
+    - alert: FleetRateLimitSaturation
+      expr: histogram_quantile(0.95, rate(fleet_api_rate_limiter_wait_duration_seconds_bucket[5m])) > 0.9
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Fleet API rate limiter near saturation
+        description: "95th percentile rate-limiter wait > 0.9s. See docs/runbooks/rate-limit-saturation.md"
 {{- end }}

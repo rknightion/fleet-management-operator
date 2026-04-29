@@ -10,18 +10,27 @@
 #
 # Default values for fleet-management-operator
 
-# Image configuration
+# Image configuration.
+#
+# Two reference styles are supported. Pick exactly one:
+#   1. Tag-based (default; suitable for dev / non-production):
+#        image.repository: <registry>/<image>
+#        image.tag: <tag>
+#   2. Digest-pinned (recommended for production / supply-chain hardening):
+#        image.repository: <registry>/<image>
+#        image.digest: sha256:<hex>      # overrides tag
+#        image.tag: ""                   # ignored when digest is set
+#
+# Do NOT embed a digest inside image.repository (e.g. "...@sha256:..."). The
+# chart will fail-fast on render if image.digest is set AND image.repository
+# already contains "@", to surface the conflict early.
 image:
   repository: fleet-management-operator
   pullPolicy: IfNotPresent
   tag: "dev-v1.0.0"
-  # digest: ""  # When set, overrides tag. Use sha256:<digest> for supply-chain security.
-  # Example: digest: "sha256:abc123..."
+  # digest: ""  # When set, overrides tag. Use sha256:<hex>.
 
-# Image pull secrets for private registries.
-# Air-gapped / private registry: set imagePullSecrets and override image.repository.
-# Production digest pinning: set image.tag: "" and use a digest-based repository ref
-#   e.g. image.repository: myregistry/fleet-management-operator@sha256:<digest>
+# Image pull secrets for private / air-gapped registries.
 imagePullSecrets: []
 # - name: regcred
 
@@ -102,13 +111,18 @@ securityContext:
     drop:
     - "ALL"
 
-# Resource limits and requests
+# Resource limits and requests.
+# Sizing guidance (informer cache + Pipeline cache + Go runtime headroom):
+#   <1k CRs: limits.memory 512Mi
+#   10k CRs: limits.memory 1Gi
+#   30k+ CRs: limits.memory 2Gi (default below — covers the 30k tier with
+#            burst headroom for restarts, GC pause spikes, and large
+#            ListCollectors responses)
+# requests.memory stays at 512Mi: steady-state working set after warm-up.
 resources:
   limits:
     cpu: 500m
-    # Informer cache at 30k Collectors ≈ 150MB; Pipeline cache + Go runtime adds ~100MB.
-    # Sizing guide: <1k CRs: 256Mi; 10k CRs: 512Mi; 30k+ CRs: 1Gi
-    memory: 1Gi
+    memory: 2Gi
   requests:
     cpu: 10m
     memory: 512Mi
@@ -296,13 +310,12 @@ alerts:
   # Example: prometheus: kube-prometheus
   labels: {}
 
-# CRD installation. CRDs are installed unconditionally when crds.install=true
-# (per-CRD opt-in is intentionally not supported — an installed-but-unused
-# CRD is harmless, but a missing CRD would prevent inspection of existing
-# objects after a downgrade).
-crds:
-  # Install CRDs as part of the chart
-  install: true
-  # Keep CRDs on chart uninstall
-  keep: true
+# CRD lifecycle is governed by Helm 3 conventions, not chart values:
+#   * On install/upgrade, every YAML in the chart's crds/ directory is applied
+#     once. Helm does NOT re-apply or update CRDs on subsequent upgrades.
+#   * On uninstall, Helm does NOT delete CRDs (intentional, to preserve user
+#     CRs across reinstalls). To remove CRDs, run kubectl delete crd ... by
+#     hand. See README "Uninstalling the Chart" for the exact commands.
+# This chart therefore does not expose crds.install / crds.keep — they would
+# have no effect.
 

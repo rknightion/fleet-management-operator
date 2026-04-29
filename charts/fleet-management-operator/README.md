@@ -54,20 +54,18 @@ fleetManagement:
   username: "12345"
   password: "glc_xxxxx"
 
-resources:
-  limits:
-    cpu: 1000m
-    memory: 256Mi
-  requests:
-    cpu: 100m
-    memory: 128Mi
-
 metrics:
   enabled: true
   service:
     serviceMonitor:
       enabled: true
 ```
+
+> Resource limits and requests are intentionally omitted from this example —
+> the chart defaults (limits 500m CPU / 2Gi memory, requests 10m CPU / 512Mi
+> memory) are tuned for the 30k-Collector tier. Override `resources.*` only
+> if you have measured your fleet size and steady-state working set; see the
+> sizing guidance comment in `values.yaml`.
 
 Install with the values file:
 
@@ -169,7 +167,7 @@ Each controller is independently toggleable. New controllers default to **disabl
 | `controllers.externalAttributeSync.enabled` | ExternalAttributeSync reconciler (HTTP/SQL-backed scheduled attribute pulls) | `false` |
 | `controllers.collectorDiscovery.enabled` | CollectorDiscovery reconciler (auto-mirrors Fleet collectors as Collector CRs) | `false` |
 
-CRDs are always installed when `crds.install=true` regardless of which controllers are enabled. Unused CRDs are harmless; missing CRDs would prevent users from inspecting pre-existing objects after a downgrade.
+CRDs are always installed regardless of which controllers are enabled. Unused CRDs are harmless; missing CRDs would prevent users from inspecting pre-existing objects after a downgrade. See the "CRD lifecycle" section below for how Helm 3 manages CRD install/upgrade/uninstall semantics.
 
 When `controllers.collector.enabled=true`, the operator additionally gets `get/list/watch` on `RemoteAttributePolicy` and `ExternalAttributeSync` so it can compute the merged desired-attribute set for each Collector — even when the corresponding controllers are themselves disabled.
 
@@ -200,8 +198,23 @@ helm uninstall fleet-management-operator --namespace fleet-management-system
 **Note**: This will NOT delete the CRDs. To delete CRDs:
 
 ```bash
-kubectl delete crd pipelines.fleetmanagement.grafana.com
+kubectl delete crd pipelines.fleetmanagement.grafana.com \
+                   collectors.fleetmanagement.grafana.com \
+                   collectordiscoveries.fleetmanagement.grafana.com \
+                   externalattributesyncs.fleetmanagement.grafana.com \
+                   remoteattributepolicies.fleetmanagement.grafana.com \
+                   tenantpolicies.fleetmanagement.grafana.com
 ```
+
+### CRD lifecycle (Helm 3)
+
+This chart relies on Helm 3 conventions for CRD installation:
+
+- On `helm install`, every YAML file in the chart's `crds/` directory is applied to the cluster exactly once.
+- Helm 3 does **not** re-apply or update CRDs on subsequent `helm upgrade`. To roll out CRD schema changes, run `kubectl apply -f charts/fleet-management-operator/crds/` manually before upgrading the release.
+- Helm 3 does **not** delete CRDs on `helm uninstall`. This is intentional — it preserves any user-created custom resources across reinstalls. Use the `kubectl delete crd ...` command shown above to remove them by hand.
+
+The chart therefore does not expose `crds.install` / `crds.keep` values; both would have no effect under Helm 3.
 
 ## Examples
 
@@ -425,8 +438,8 @@ kubectl describe pipeline <pipeline-name> -n <namespace>
 kubectl get crd | grep fleetmanagement.grafana.com
 ```
 
-If empty, CRDs were not installed. Verify `crds.install: true` (the default) and re-run `helm install`.
-If upgrading from a manual install, apply CRDs first: `kubectl apply -f charts/fleet-management-operator/crds/`
+If empty, CRDs were not installed. Helm 3 installs CRDs from the chart's `crds/` directory unconditionally on `helm install`; re-run install or apply manually:
+`kubectl apply -f charts/fleet-management-operator/crds/`
 
 ### Webhook admission failures after install
 

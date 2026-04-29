@@ -17,9 +17,8 @@ To view operator logs:
 
   $ kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "fleet-management-operator.fullname" . }} -f
 
-{{- if .Values.crds.install }}
-
-The Pipeline CRD has been installed. To create a Pipeline:
+The Pipeline CRD is installed automatically by Helm 3 from the chart's
+crds/ directory. To create a Pipeline:
 
   $ kubectl apply -f - <<EOF
   apiVersion: fleetmanagement.grafana.com/v1alpha1
@@ -39,7 +38,6 @@ The Pipeline CRD has been installed. To create a Pipeline:
 To view your pipelines:
 
   $ kubectl get pipelines -A
-{{- end }}
 
 {{- if .Values.metrics.enabled }}
 

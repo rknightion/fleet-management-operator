@@ -34,6 +34,9 @@ spec:
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
+      {{- if and .Values.image.digest (contains "@" .Values.image.repository) }}
+      {{- fail "image.digest is set but image.repository already contains a digest (image.repository must not contain '@' when image.digest is set)" }}
+      {{- end }}
       containers:
       - name: manager
         image: "{{ .Values.image.repository }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ else }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ end }}"
@@ -46,7 +49,7 @@ spec:
           containerPort: {{ .Values.metrics.port }}
           protocol: TCP
         - name: webhook
-          containerPort: 9443
+          containerPort: {{ .Values.webhook.port }}
           protocol: TCP
         command:
         - /manager
@@ -77,7 +80,9 @@ spec:
         - --metrics-bind-address=0
         {{- end }}
         - --metrics-secure={{ .Values.metrics.secure }}
-        {{- if and .Values.webhook .Values.webhook.certDir }}
+        {{- if .Values.webhook.certManager.enabled }}
+        - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+        {{- else if and .Values.webhook .Values.webhook.certDir }}
         - --webhook-cert-path={{ .Values.webhook.certDir }}
         {{- end }}
         env:
@@ -100,10 +105,14 @@ spec:
         securityContext:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        ports:
-        - containerPort: {{ .Values.webhook.port }}
-          name: webhook-server
-          protocol: TCP
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        {{- if .Values.webhook.certManager.enabled }}
+        - name: webhook-certs
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /healthz
@@ -137,3 +146,12 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      {{- if .Values.webhook.certManager.enabled }}
+      - name: webhook-certs
+        secret:
+          secretName: {{ include "fleet-management-operator.fullname" . }}-webhook-certs
+          defaultMode: 0444
+      {{- end }}

@@ -4,6 +4,8 @@ description: A Kubernetes operator for managing Grafana Cloud Fleet Management P
 type: application
 version: 0.1.0
 appVersion: "v0.1.0"
+kubeVersion: ">=1.23.0-0"
+icon: https://grafana.com/static/img/menu/grafana-cloud.svg
 keywords:
   - grafana
   - fleet-management
