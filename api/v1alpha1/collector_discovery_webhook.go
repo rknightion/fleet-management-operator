@@ -47,24 +47,30 @@ func SetupCollectorDiscoveryWebhookWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-collectordiscovery,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=collectordiscoveries,verbs=create;update,versions=v1alpha1,name=vcollectordiscovery.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type.
+//
+// The receiver `r` is the empty skeleton registered via WithValidator and is
+// shared across every admission call; the incoming user object is `obj`.
+// Validation MUST run against obj — running against r would validate the
+// empty skeleton, silently allowing malformed CRs through admission.
 func (r *CollectorDiscovery) ValidateCreate(ctx context.Context, obj *CollectorDiscovery) (admission.Warnings, error) {
-	collectordiscoverylog.Info("validate create", "name", r.Name)
+	collectordiscoverylog.Info("validate create", "name", obj.Name)
 
-	return r.validateCollectorDiscovery()
+	return obj.validateCollectorDiscovery()
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (r *CollectorDiscovery) ValidateUpdate(ctx context.Context, oldObj, newObj *CollectorDiscovery) (admission.Warnings, error) {
-	collectordiscoverylog.Info("validate update", "name", r.Name)
+	collectordiscoverylog.Info("validate update", "name", newObj.Name)
 
-	// All fields are mutable; re-run the full validation suite.
-	return r.validateCollectorDiscovery()
+	// All fields are mutable; re-run the full validation suite against the
+	// incoming newObj (not the empty receiver — see ValidateCreate godoc).
+	return newObj.validateCollectorDiscovery()
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
 func (r *CollectorDiscovery) ValidateDelete(ctx context.Context, obj *CollectorDiscovery) (admission.Warnings, error) {
-	collectordiscoverylog.Info("validate delete", "name", r.Name)
+	collectordiscoverylog.Info("validate delete", "name", obj.Name)
 
 	// No validation needed for delete
 	return nil, nil

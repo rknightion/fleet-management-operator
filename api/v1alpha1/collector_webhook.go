@@ -53,28 +53,35 @@ func SetupCollectorWebhookWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-collector,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=collectors,verbs=create;update,versions=v1alpha1,name=vcollector.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type.
+//
+// The receiver `r` is the empty skeleton registered via WithValidator and is
+// shared across every admission call; the incoming user object is `obj`.
+// Validation MUST run against obj — running against r would validate the
+// empty skeleton, silently allowing malformed CRs through admission.
 func (r *Collector) ValidateCreate(ctx context.Context, obj *Collector) (admission.Warnings, error) {
-	collectorlog.Info("validate create", "name", r.Name)
+	collectorlog.Info("validate create", "name", obj.Name)
 
-	return r.validateCollector()
+	return obj.validateCollector()
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (r *Collector) ValidateUpdate(ctx context.Context, oldObj, newObj *Collector) (admission.Warnings, error) {
-	collectorlog.Info("validate update", "name", r.Name)
+	collectorlog.Info("validate update", "name", newObj.Name)
 
 	// spec.id is immutable. Refuse updates that change it.
 	if oldObj != nil && newObj != nil && oldObj.Spec.ID != newObj.Spec.ID {
 		return nil, fmt.Errorf("spec.id is immutable; create a new Collector resource instead")
 	}
 
-	return r.validateCollector()
+	// Validate the new (incoming) object, not the empty receiver. See
+	// ValidateCreate godoc for why.
+	return newObj.validateCollector()
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
 func (r *Collector) ValidateDelete(ctx context.Context, obj *Collector) (admission.Warnings, error) {
-	collectorlog.Info("validate delete", "name", r.Name)
+	collectorlog.Info("validate delete", "name", obj.Name)
 
 	// No validation needed for delete
 	return nil, nil
