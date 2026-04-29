@@ -24,14 +24,14 @@ kubectl logs -n <namespace> -l app.kubernetes.io/name=fleet-management-operator 
 **Signal:** `kubectl describe pod` shows `OOMKilled` in Last State Reason.
 
 At 30k Collectors, informer-cache footprint is approximately 150MB + Pipeline cache + Go runtime.
-Default limit of 1Gi should be sufficient; lower limits (pre-HELM-01 fix: 128Mi) will OOMKill.
+Default limit of 2Gi should be sufficient; lower limits (pre-HELM-01 fix: 128Mi) will OOMKill.
 
 **Fix:**
 
 ```bash
-# Increase memory limit via Helm upgrade
+# Increase memory limit via Helm upgrade (rarely needed above the 2Gi default)
 helm upgrade fleet-management-operator charts/fleet-management-operator \
-  --set resources.limits.memory=2Gi \
+  --set resources.limits.memory=4Gi \
   --set resources.requests.memory=1Gi \
   --reuse-values
 ```
@@ -42,11 +42,12 @@ helm upgrade fleet-management-operator charts/fleet-management-operator \
 
 ```bash
 # Verify the credentials Secret exists and has the expected keys
-kubectl get secret fleet-management-credentials -n <namespace> -o yaml | \
+# (chart names this <release>-credentials; default release name = fleet-management-operator)
+kubectl get secret fleet-management-operator-credentials -n <namespace> -o yaml | \
   grep -E "base-url|username|password"
 
 # If missing, create it
-kubectl create secret generic fleet-management-credentials \
+kubectl create secret generic fleet-management-operator-credentials \
   --from-literal=base-url=https://fleet-management-<cluster>.grafana.net/... \
   --from-literal=username=<stack-id> \
   --from-literal=password=<api-token> \

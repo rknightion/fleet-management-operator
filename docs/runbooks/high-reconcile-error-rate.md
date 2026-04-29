@@ -40,11 +40,11 @@ kubectl logs -n <namespace> -l app.kubernetes.io/name=fleet-management-operator 
   grep SyncFailed | tail -20
 
 # Verify Fleet API reachability
-BASE_URL=$(kubectl get secret fleet-management-credentials -n <namespace> \
+BASE_URL=$(kubectl get secret fleet-management-operator-credentials -n <namespace> \
   -o jsonpath='{.data.base-url}' | base64 -d)
-USER=$(kubectl get secret fleet-management-credentials -n <namespace> \
+USER=$(kubectl get secret fleet-management-operator-credentials -n <namespace> \
   -o jsonpath='{.data.username}' | base64 -d)
-PASS=$(kubectl get secret fleet-management-credentials -n <namespace> \
+PASS=$(kubectl get secret fleet-management-operator-credentials -n <namespace> \
   -o jsonpath='{.data.password}' | base64 -d)
 curl -u "${USER}:${PASS}" "${BASE_URL}"
 ```

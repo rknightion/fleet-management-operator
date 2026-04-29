@@ -140,6 +140,13 @@ make test-e2e
   shared Fleet API calls). Defaults: policy=4, sync=4, discovery=1 (configurable
   via `--controller-{policy,sync,discovery}-max-concurrent` or the Helm
   `controllers.*.maxConcurrent` value).
+- **Per-target ExternalAttributeSync rate limit (E19).** Two ExternalAttributeSync
+  CRs pointing at the same upstream (HTTP host or SQL DSN secret) share a token
+  bucket so `--controller-sync-max-concurrent` cannot stampede a customer-owned
+  source. Configure via `--controller-sync-target-rate=<tokens/sec>` (default 0
+  = disabled) and `--controller-sync-target-burst=<bucket-size>` (default 4,
+  matching sync max-concurrent). Setting target-rate to 1 yields one fetch per
+  second per upstream — typically plenty given that EAS schedules run at ≥1m.
 
 **Finalizer:**
 - Name: `pipeline.fleetmanagement.grafana.com/finalizer`
@@ -209,20 +216,36 @@ and `CollectorDiscovery` are not covered. See `docs/tenant-policy.md`.
 
 ## Kubernetes Events
 
-**Controller emits events for debugging:**
-- Normal/Created: Pipeline created in Fleet Management
-- Normal/Updated: Pipeline updated
-- Normal/Synced: Successful reconciliation
-- Normal/Deleted: Pipeline deleted
-- Warning/SyncFailed: API errors
-- Warning/ValidationFailed: Validation errors
-- Warning/RateLimited: Hit rate limit
-- Warning/Recreated: External deletion detected
+**Controllers emit events for debugging.** Reasons are constants defined per
+controller; the canonical list is below (cross-check against
+`grep -n 'eventReason' internal/controller/*.go`).
+
+**Pipeline** (`internal/controller/pipeline_controller.go`):
+- Normal: `Created`, `Updated`, `Synced`, `Deleted`
+- Warning: `SyncFailed`, `ValidationFailed`, `RateLimited`, `Recreated`
+
+**Collector** (`internal/controller/collector_controller.go`):
+- Normal: `Synced`, `AttributesUpdated`, `Deleted`
+- Warning: `SyncFailed`, `RateLimited`, `NotRegistered`, `DeleteFailed`
+
+**CollectorDiscovery** (`internal/controller/collector_discovery_controller.go`):
+- Normal: `Discovered`, `Pruned`, `Synced`
+- Warning: `Conflict`, `Failed`, `TruncatedConflicts`
+
+**ExternalAttributeSync** (`internal/controller/external_sync_controller.go`):
+- Normal: `Synced`
+- Warning: `Stalled`, `SourceFailed`
+
+**RemoteAttributePolicy** (`internal/controller/policy_controller.go`):
+- Normal: `Synced`
+- Warning: `NoMatch`, `ListFailed`
 
 **View events:**
 ```bash
 kubectl describe pipeline <name>
 kubectl get events --field-selector involvedObject.kind=Pipeline
+kubectl get events --field-selector involvedObject.kind=Collector
+kubectl get events --field-selector involvedObject.kind=CollectorDiscovery
 ```
 
 ## Testing
@@ -241,13 +264,17 @@ kubectl get events --field-selector involvedObject.kind=Pipeline
 
 ## Configuration
 
-**Credentials stored in Secret:**
+**Credentials stored in Secret:** chart-managed; the chart names the Secret
+`<release>-credentials` (default release name `fleet-management-operator`,
+giving `fleet-management-operator-credentials`). Override via
+`fleetManagement.existingSecret.name`.
+
 ```yaml
 env:
   - name: FLEET_MANAGEMENT_BASE_URL
     valueFrom:
       secretKeyRef:
-        name: fleet-management-credentials
+        name: fleet-management-operator-credentials  # <release>-credentials
         key: base-url
   - name: FLEET_MANAGEMENT_USERNAME
     # Stack ID
@@ -299,8 +326,8 @@ The Collector controller computes the merged desired state on every reconcile an
 **External source plugin model** (`pkg/sources`):
 - `sources.Source` interface: `Fetch(ctx) ([]Record, error)`; `Kind() string`.
 - HTTP impl in `pkg/sources/http`: bearer/basic auth via Secret keys `bearer-token` / `username`+`password`. Records-path supports dotted nesting (`data.items`).
-- SQL impl in `pkg/sources/sql`: drivers `postgres` (lib/pq) and `mysql` (go-sql-driver). DSN via Secret key `dsn`. Tests use `DATA-DOG/go-sqlmock`.
-- The factory in `cmd/main.go` (`buildExternalSourceFactory`) dispatches by `spec.source.kind`. Add new sources by extending it.
+- SQL impl in `pkg/sources/sql`: drivers `postgres` (lib/pq) and `mysql` (go-sql-driver/mysql). DSN via Secret key `dsn`. Tests use `DATA-DOG/go-sqlmock`.
+- Both HTTP and SQL kinds are currently shipped and wired through the factory in `cmd/main.go` (`buildExternalSourceFactory`), which dispatches on `spec.source.kind`. Add new kinds by extending it.
 
 **Empty-result safety guard.** When `ExternalAttributeSync.Fetch` returns 0 records but the previous run had > 0 and `spec.allowEmptyResults` is false, the previous OwnedKeys claim is preserved and a `Stalled` condition is set. Set `allowEmptyResults: true` to opt out (e.g. when an empty result is legitimate).
 

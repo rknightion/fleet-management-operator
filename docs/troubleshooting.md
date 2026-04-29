@@ -93,8 +93,9 @@ the pod before warm-up completes, causing a crash loop.
 
 **Fix:**
 1. Ensure `healthProbe.liveness.initialDelaySeconds: 45` (the current default after HELM-08 fix).
-2. Check the `resources.limits.memory` — if the pod is OOMKilled during warm-up, raise to 1Gi
-   (the current default after HELM-01 fix). See the sizing guide in values.yaml.
+2. Check the `resources.limits.memory` — the chart default is 2Gi (raised by HELM-01).
+   If the pod is OOMKilled during warm-up at very large fleets (>30k Collectors), consider
+   raising further. See the sizing guide in values.yaml.
 
 ## Per-Controller Failure Modes
 

@@ -50,7 +50,7 @@ helm install fleet-management-operator fleet-management/fleet-management-operato
 kubectl apply -f https://github.com/YOUR_USERNAME/fleet-management-operator/releases/latest/download/install.yaml
 
 # Create credentials secret
-kubectl create secret generic fleet-management-credentials \
+kubectl create secret generic fleet-management-operator-credentials \
   -n fleet-management-system \
   --from-literal=base-url='https://fleet-management-<CLUSTER>.grafana.net/pipeline.v1.PipelineService/' \
   --from-literal=username='<STACK_ID>' \
@@ -234,7 +234,7 @@ spec:
 
 **Check controller logs:**
 ```bash
-kubectl logs -n fleet-management-system deployment/fleet-management-operator-controller-manager
+kubectl logs -n fleet-management-system -l app.kubernetes.io/name=fleet-management-operator
 ```
 
 **Check pipeline status:**

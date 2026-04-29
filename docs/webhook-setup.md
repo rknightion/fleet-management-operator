@@ -92,8 +92,8 @@ The certificate CN and SAN must match the webhook Service DNS name:
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes \
-  -subj "/CN=<release-name>-webhook-service.<namespace>.svc" \
-  -addext "subjectAltName=DNS:<release-name>-webhook-service,DNS:<release-name>-webhook-service.<namespace>.svc,DNS:<release-name>-webhook-service.<namespace>.svc.cluster.local"
+  -subj "/CN=<release-name>-webhook.<namespace>.svc" \
+  -addext "subjectAltName=DNS:<release-name>-webhook,DNS:<release-name>-webhook.<namespace>.svc,DNS:<release-name>-webhook.<namespace>.svc.cluster.local"
 ```
 
 ### 2. Create the Secret

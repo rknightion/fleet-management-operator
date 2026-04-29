@@ -24,7 +24,7 @@ kubectl get svc -n <namespace> | grep webhook
 kubectl describe validatingwebhookconfiguration | grep -E "Name:|Service:|Failure|caBundle"
 
 # Check endpoints (must be non-empty)
-kubectl get endpoints -n <namespace> <release-name>-webhook-service
+kubectl get endpoints -n <namespace> <release-name>-webhook
 
 # Check cert expiry
 kubectl get secret -n <namespace> | grep webhook
@@ -107,13 +107,13 @@ kubectl patch validatingwebhookconfiguration <release-name>-validating-webhook \
 Check that the webhook Service exists and endpoints are populated:
 
 ```bash
-kubectl get endpoints -n <namespace> <release-name>-webhook-service
+kubectl get endpoints -n <namespace> <release-name>-webhook
 ```
 
 If endpoints are empty:
 1. Verify the pod is running: `kubectl get pods -n <namespace> -l app.kubernetes.io/name=fleet-management-operator`
 2. Verify the Service selector matches the Deployment labels:
-   `kubectl get svc -n <namespace> <release-name>-webhook-service -o yaml | grep selector`
+   `kubectl get svc -n <namespace> <release-name>-webhook -o yaml | grep selector`
    `kubectl get pods -n <namespace> -l app.kubernetes.io/name=fleet-management-operator --show-labels`
 
 ## failurePolicy: Fail Implications
