@@ -54,9 +54,9 @@ Source: [internal/controller/external_sync_controller.go](../internal/controller
 
 | Reason | Type | Trigger |
 | --- | --- | --- |
+| `OwnedKeysExceeded` | Warning | %s; reduce selector or source cardinality below the cap |
 | `SourceFailed` | Warning | Invalid schedule %q: %v |
 | `Stalled` | Warning | Source returned 0 records; previous claim preserved (set spec.allowEmptyResults=true to override) |
-| `Truncated` | Warning | ownedKeys capped at %d; collectors beyond cap may retain attributes on CR deletion |
 | `Synced` | Normal | Synced %d records, %d applied across %d collector(s) |
 
 ## Pipeline
@@ -74,6 +74,19 @@ Source: [internal/controller/pipeline_controller.go](../internal/controller/pipe
 | `Deleted` | Normal | Pipeline already deleted from Fleet Management |
 | `Synced` | Normal | Pipeline successfully synced to Fleet Management |
 | `Updated` | Normal | Pipeline updated in Fleet Management (ID: %s) |
+
+## PipelineDiscovery
+
+Source: [internal/controller/pipeline_discovery_controller.go](../internal/controller/pipeline_discovery_controller.go)
+
+| Reason | Type | Trigger |
+| --- | --- | --- |
+| `PipelineConflict` | Warning | Could not claim Pipeline %s/%s for pipeline %q: %s |
+| `SyncFailed` | Warning | Invalid pollInterval %q: %v |
+| `TruncatedConflicts` | Warning | discovery has %d conflicts; only first %d kept in status |
+| `PipelineDiscovered` | Normal | Created Pipeline %s for Fleet pipeline %q |
+| `PipelinePruned` | Normal | Deleted Pipeline %s/%s (pipeline %q no longer in Fleet) |
+| `Synced` | Normal | Discovered %d pipeline(s); managing %d, %d stale, %d conflict(s) |
 
 ## RemoteAttributePolicy
 

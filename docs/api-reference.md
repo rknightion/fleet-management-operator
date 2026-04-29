@@ -13,6 +13,7 @@ Package v1alpha1 contains API Schema definitions for the fleetmanagement v1alpha
 - [CollectorDiscovery](#collectordiscovery)
 - [ExternalAttributeSync](#externalattributesync)
 - [Pipeline](#pipeline)
+- [PipelineDiscovery](#pipelinediscovery)
 - [RemoteAttributePolicy](#remoteattributepolicy)
 - [TenantPolicy](#tenantpolicy)
 
@@ -33,8 +34,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `collectorIDField` _string_ | CollectorIDField is the source field whose value identifies the<br />target collector. |  | MinLength: 1 <br /> |
-| `attributeFields` _object (keys:string, values:string)_ | AttributeFields maps an output attribute key to the source field<br />whose value becomes its value. Keys with the reserved "collector."<br />prefix are rejected by the API server (CEL) and the validating<br />webhook. |  | MaxProperties: 100 <br /> |
-| `requiredKeys` _string array_ | RequiredKeys is the set of source fields that must be present for a<br />record to be applied. A record missing any required key is skipped<br />(counted in RecordsSeen but not RecordsApplied). |  | Optional: \{\} <br /> |
+| `attributeFields` _object (keys:string, values:string)_ | AttributeFields maps an output attribute key to the source field<br />whose value becomes its value. Keys with the reserved "collector."<br />prefix are rejected by the API server (CEL) and the validating<br />webhook. |  | MaxProperties: 100 <br />MinProperties: 1 <br /> |
+| `requiredKeys` _string array_ | RequiredKeys is the set of source fields that must be present for a<br />record to be applied. A record missing any required key is skipped<br />(counted in RecordsSeen but not RecordsApplied). |  | items:MinLength: 1 <br />Optional: \{\} <br /> |
 
 
 #### AttributeOwnerKind
@@ -243,6 +244,7 @@ _Validation:_
 - Enum: [Alloy OpenTelemetryCollector]
 
 _Appears in:_
+- [PipelineDiscoverySelector](#pipelinediscoveryselector)
 - [PipelineSpec](#pipelinespec)
 
 | Field | Description |
@@ -514,6 +516,183 @@ Pipeline is the Schema for the pipelines API
 | `status` _[PipelineStatus](#pipelinestatus)_ | status defines the observed state of Pipeline |  | Optional: \{\} <br /> |
 
 
+#### PipelineDiscovery
+
+
+
+PipelineDiscovery configures a periodic import of Fleet Management pipelines
+into the cluster as Pipeline CRs.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `fleetmanagement.grafana.com/v1alpha1` | | |
+| `kind` _string_ | `PipelineDiscovery` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[PipelineDiscoverySpec](#pipelinediscoveryspec)_ | spec defines the desired state. |  | Required: \{\} <br /> |
+| `status` _[PipelineDiscoveryStatus](#pipelinediscoverystatus)_ | status defines the observed state. |  | Optional: \{\} <br /> |
+
+
+#### PipelineDiscoveryConflict
+
+
+
+PipelineDiscoveryConflict records a single conflict between the desired CR
+and an existing one with the same name.
+
+
+
+_Appears in:_
+- [PipelineDiscoveryStatus](#pipelinediscoverystatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `pipelineID` _string_ | PipelineID is the Fleet pipeline ID that could not be mirrored. List-map key. |  |  |
+| `crName` _string_ | CRName is the metadata.name the controller computed. |  |  |
+| `reason` _[PipelineDiscoveryConflictReason](#pipelinediscoveryconflictreason)_ | Reason classifies the conflict. |  | Enum: [NotOwnedByDiscovery OwnedByOtherDiscovery NameSanitizationFailed] <br /> |
+
+
+#### PipelineDiscoveryConflictReason
+
+_Underlying type:_ _string_
+
+PipelineDiscoveryConflictReason classifies why a Pipeline CR could not be
+created or claimed.
+
+_Validation:_
+- Enum: [NotOwnedByDiscovery OwnedByOtherDiscovery NameSanitizationFailed]
+
+_Appears in:_
+- [PipelineDiscoveryConflict](#pipelinediscoveryconflict)
+
+| Field | Description |
+| --- | --- |
+| `NotOwnedByDiscovery` | PipelineDiscoveryConflictNotOwned indicates a Pipeline CR with the desired<br />name exists but is not labeled as managed by any discovery — likely a<br />manually-created CR. Skipped.<br /> |
+| `OwnedByOtherDiscovery` | PipelineDiscoveryConflictOwnedByOther indicates a Pipeline CR with the<br />desired name exists and is labeled as managed by a different<br />PipelineDiscovery. First-write wins; the second discovery skips.<br /> |
+| `NameSanitizationFailed` | PipelineDiscoveryConflictSanitizeFailed indicates the pipeline ID could<br />not be sanitized to a valid DNS-1123 name even with the hash suffix<br />(e.g., empty ID after sanitization).<br /> |
+
+
+#### PipelineDiscoveryImportMode
+
+_Underlying type:_ _string_
+
+PipelineDiscoveryImportMode controls whether discovered Pipeline CRs are
+immediately reconciled to Fleet Management or held read-only.
+
+_Validation:_
+- Enum: [Adopt ReadOnly]
+
+_Appears in:_
+- [PipelineDiscoverySpec](#pipelinediscoveryspec)
+
+| Field | Description |
+| --- | --- |
+| `Adopt` | PipelineDiscoveryImportModeAdopt creates Pipeline CRs with spec.paused=false.<br />The Pipeline controller will reconcile them to Fleet Management immediately.<br /> |
+| `ReadOnly` | PipelineDiscoveryImportModeReadOnly creates Pipeline CRs with spec.paused=true.<br />The Pipeline controller skips reconciliation until the user opts in via<br />the fleetmanagement.grafana.com/import-mode=adopt annotation.<br /> |
+
+
+#### PipelineDiscoveryOnRemovedAction
+
+_Underlying type:_ _string_
+
+PipelineDiscoveryOnRemovedAction controls the response when a discovered
+pipeline no longer appears in ListPipelines.
+
+_Validation:_
+- Enum: [Keep Delete]
+
+_Appears in:_
+- [PipelineDiscoveryPolicy](#pipelinediscoverypolicy)
+
+| Field | Description |
+| --- | --- |
+| `Keep` | PipelineDiscoveryOnRemovedKeep leaves the Pipeline CR in place, marking<br />it with the stale annotation. Default.<br /> |
+| `Delete` | PipelineDiscoveryOnRemovedDelete removes the Pipeline CR. The Pipeline<br />finalizer issues a DeletePipeline call; 404 = success for vanished pipelines.<br /> |
+
+
+#### PipelineDiscoveryPolicy
+
+
+
+PipelineDiscoveryPolicy bundles lifecycle decisions.
+
+
+
+_Appears in:_
+- [PipelineDiscoverySpec](#pipelinediscoveryspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `onPipelineRemoved` _[PipelineDiscoveryOnRemovedAction](#pipelinediscoveryonremovedaction)_ | OnPipelineRemoved chooses the response when a previously-discovered<br />pipeline no longer appears in ListPipelines. | Keep | Enum: [Keep Delete] <br />Optional: \{\} <br /> |
+
+
+#### PipelineDiscoverySelector
+
+
+
+PipelineDiscoverySelector filters which Fleet pipelines are imported.
+
+
+
+_Appears in:_
+- [PipelineDiscoverySpec](#pipelinediscoveryspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `configType` _[ConfigType](#configtype)_ | ConfigType limits discovery to pipelines of this type. |  | Enum: [Alloy OpenTelemetryCollector] <br />Optional: \{\} <br /> |
+| `enabled` _boolean_ | Enabled limits discovery to enabled or disabled pipelines.<br />Omit to discover both. |  | Optional: \{\} <br /> |
+
+
+#### PipelineDiscoverySpec
+
+
+
+PipelineDiscoverySpec configures a periodic poll-and-import cycle against
+Fleet Management's ListPipelines. Each Fleet pipeline that matches the
+selector becomes a Pipeline CR in the target namespace.
+
+
+
+_Appears in:_
+- [PipelineDiscovery](#pipelinediscovery)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `pollInterval` _string_ | PollInterval is how often the controller calls ListPipelines.<br />Webhook-enforced minimum is 1 minute to protect the shared rate limiter. | 5m | Optional: \{\} <br /> |
+| `selector` _[PipelineDiscoverySelector](#pipelinediscoveryselector)_ | Selector filters which Fleet pipelines are imported.<br />An empty selector means "import every pipeline" (server-wide<br />ListPipelines call) — accepted but expensive on large fleets. |  | Optional: \{\} <br /> |
+| `targetNamespace` _string_ | TargetNamespace is the namespace where discovered Pipeline CRs are created.<br />Defaults to this PipelineDiscovery's own namespace. |  | Optional: \{\} <br /> |
+| `importMode` _[PipelineDiscoveryImportMode](#pipelinediscoveryimportmode)_ | ImportMode controls whether discovered Pipeline CRs are immediately<br />managed (Adopt) or held read-only (ReadOnly). Individual Pipeline CRs<br />can override this via the fleetmanagement.grafana.com/import-mode=adopt<br />annotation. | Adopt | Enum: [Adopt ReadOnly] <br />Optional: \{\} <br /> |
+| `policy` _[PipelineDiscoveryPolicy](#pipelinediscoverypolicy)_ | Policy controls lifecycle decisions. |  | Optional: \{\} <br /> |
+
+
+#### PipelineDiscoveryStatus
+
+
+
+PipelineDiscoveryStatus reports the most recent poll outcome.
+
+
+
+_Appears in:_
+- [PipelineDiscovery](#pipelinediscovery)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ | ObservedGeneration reflects the most recently observed spec generation. |  | Optional: \{\} <br /> |
+| `lastSyncTime` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | LastSyncTime is the timestamp of the most recent ListPipelines call. |  | Optional: \{\} <br /> |
+| `lastSuccessTime` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | LastSuccessTime is the timestamp of the most recent successful poll. |  | Optional: \{\} <br /> |
+| `pipelinesObserved` _integer_ | PipelinesObserved is the count returned by the last ListPipelines call. |  | Optional: \{\} <br /> |
+| `pipelinesManaged` _integer_ | PipelinesManaged is the count of Pipeline CRs labeled as managed by<br />this discovery. |  | Optional: \{\} <br /> |
+| `stalePipelines` _string array_ | StalePipelines lists pipeline IDs whose CR still exists but no longer<br />appears in ListPipelines. Only populated when policy.onPipelineRemoved=Keep. |  | Optional: \{\} <br /> |
+| `conflicts` _[PipelineDiscoveryConflict](#pipelinediscoveryconflict) array_ | Conflicts records cases (up to 100) where a CR could not be created<br />due to a name/ownership conflict. When the cap is hit, a TruncatedConflicts<br />condition is set; check events for the full list. |  | MaxItems: 100 <br />Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#condition-v1-meta) array_ | Conditions represent the current state of the PipelineDiscovery. |  | Optional: \{\} <br /> |
+
+
+
+
 #### PipelineSource
 
 
@@ -546,10 +725,11 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name of the pipeline (unique identifier in Fleet Management)<br />If not specified, uses metadata.name |  | Optional: \{\} <br /> |
 | `contents` _string_ | Contents of the pipeline configuration (Alloy or OpenTelemetry Collector config) |  | MinLength: 1 <br />Required: \{\} <br /> |
-| `matchers` _string array_ | Matchers to assign pipeline to collectors. Uses Prometheus Alertmanager<br />syntax: key=value, key!=value, key=~regex, key!~regex. A maximum of<br />100 matchers may be set per pipeline; the cap exists to bound<br />validation and matching cost across the fleet (Fleet Management<br />evaluates matchers on every collector poll). Each matcher is<br />independently capped at 200 characters by the API server (OpenAPI<br />maxLength) and double-checked by the validating webhook. |  | MaxItems: 100 <br />items:MaxLength: 200 <br />Optional: \{\} <br /> |
+| `matchers` _string array_ | Matchers to assign pipeline to collectors. Uses Prometheus Alertmanager<br />syntax: key=value, key!=value, key=~regex, key!~regex. A maximum of<br />100 matchers may be set per pipeline; the cap exists to bound<br />validation and matching cost across the fleet (Fleet Management<br />evaluates matchers on every collector poll). Each matcher is<br />independently capped at 200 characters by the API server (OpenAPI<br />maxLength) and double-checked by the validating webhook. |  | MaxItems: 100 <br />items:MaxLength: 200 <br />items:MinLength: 1 <br />Optional: \{\} <br /> |
 | `enabled` _boolean_ | Enabled indicates whether the pipeline is enabled for collectors | true | Optional: \{\} <br /> |
 | `configType` _[ConfigType](#configtype)_ | ConfigType specifies the type of configuration (Alloy or OpenTelemetryCollector) | Alloy | Enum: [Alloy OpenTelemetryCollector] <br />Optional: \{\} <br /> |
 | `source` _[PipelineSource](#pipelinesource)_ | Source specifies the origin of the pipeline (Git, Terraform, Kubernetes, etc.)<br />Used for tracking and grouping pipelines by their source |  | Optional: \{\} <br /> |
+| `paused` _boolean_ | Paused suspends reconciliation. When true, the Pipeline controller does not<br />sync this resource to Fleet Management. Set by PipelineDiscovery when<br />importMode=ReadOnly; users may set the import-mode annotation to "adopt" on<br />individual Pipeline CRs to resume management without clearing this field. | false | Optional: \{\} <br /> |
 
 
 #### PipelineStatus
@@ -593,8 +773,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `matchers` _string array_ | Matchers in Prometheus Alertmanager syntax (=, !=, =~, !~), evaluated<br />against the matched Collector's local attributes plus its ID under<br />the synthetic key "collector.id". A maximum of 100 matchers may be<br />set per selector; the cap exists to bound validation cost and keep<br />`kubectl describe` output readable. Each matcher is independently<br />capped at 200 characters by the API server (OpenAPI maxLength) and<br />double-checked by the validating webhook. |  | MaxItems: 100 <br />items:MaxLength: 200 <br />Optional: \{\} <br /> |
-| `collectorIDs` _string array_ | CollectorIDs is an explicit list of collector IDs this policy targets.<br />OR'd with Matchers — a Collector matches if its ID appears here, even<br />if the Matchers would otherwise reject it. |  | MaxItems: 1000 <br />Optional: \{\} <br /> |
+| `matchers` _string array_ | Matchers in Prometheus Alertmanager syntax (=, !=, =~, !~), evaluated<br />against the matched Collector's local attributes plus its ID under<br />the synthetic key "collector.id". A maximum of 100 matchers may be<br />set per selector; the cap exists to bound validation cost and keep<br />`kubectl describe` output readable. Each matcher is independently<br />capped at 200 characters by the API server (OpenAPI maxLength) and<br />double-checked by the validating webhook. |  | MaxItems: 100 <br />items:MaxLength: 200 <br />items:MinLength: 1 <br />Optional: \{\} <br /> |
+| `collectorIDs` _string array_ | CollectorIDs is an explicit list of collector IDs this policy targets.<br />OR'd with Matchers — a Collector matches if its ID appears here, even<br />if the Matchers would otherwise reject it. |  | MaxItems: 1000 <br />items:MinLength: 1 <br />Optional: \{\} <br /> |
 
 
 #### RemoteAttributePolicy
@@ -634,7 +814,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `selector` _[PolicySelector](#policyselector)_ |  |  |  |
-| `attributes` _object (keys:string, values:string)_ | Attributes applied to every matched collector. Reserved-prefix keys<br />("collector.") are rejected by the API server (CEL) and the<br />validating webhook. |  | MaxProperties: 100 <br /> |
+| `attributes` _object (keys:string, values:string)_ | Attributes applied to every matched collector. Reserved-prefix keys<br />("collector.") are rejected by the API server (CEL) and the<br />validating webhook. |  | MaxProperties: 100 <br />MinProperties: 1 <br /> |
 | `priority` _integer_ | Priority breaks ties when multiple policies match the same collector<br />and set the same key — higher Priority wins. Equal-priority ties are<br />broken alphabetically by namespaced name to keep behavior<br />deterministic across reconciliations. | 0 | Optional: \{\} <br /> |
 
 
@@ -673,7 +853,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `driver` _string_ | Driver names the database/sql driver. Phase 4 will register<br />"postgres" and "mysql". |  | Optional: \{\} <br /> |
-| `query` _string_ | Query is the SQL query to execute. Must SELECT at minimum the<br />CollectorIDField and every AttributeFields source column. |  | Optional: \{\} <br /> |
+| `query` _string_ | Query is the SQL query to execute. Must SELECT at minimum the<br />CollectorIDField and every AttributeFields source column. |  | MinLength: 1 <br />Optional: \{\} <br /> |
 
 
 #### SourceType

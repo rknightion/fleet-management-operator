@@ -58,12 +58,13 @@ charts/fleet-management-operator/
 
 **Credentials Secret:** When `fleetManagement.existingSecret` is set, the chart skips creating `secret.yaml` and references the named Secret directly. The `secretName` helper in `_helpers.tpl` handles this logic.
 
-**HA cert requirement:** With `replicaCount > 1`, controller-runtime's in-memory self-signed certs break because each pod generates its own cert. Use `webhook.certManager.enabled: true` for HA. The chart auto-injects soft pod anti-affinity when `replicaCount > 1` and `affinity` is empty.
+**Webhook cert requirement:** Fail-closed validating webhooks require a trusted CA. The default uses `webhook.certManager.enabled: true` and cert-manager CA injection. Manual TLS must set `webhook.certManager.enabled: false`, `webhook.certDir`, `webhook.certSecretName`, and `webhook.caBundle`. With `replicaCount > 1`, controller-runtime's in-memory self-signed certs break because each pod generates its own cert. The chart auto-injects soft pod anti-affinity when `replicaCount > 1` and `affinity` is empty.
 
 **PDB guard:** The PDB template renders only when `podDisruptionBudget.enabled: true` AND `replicaCount > 1`. A PDB with `minAvailable: 1` at `replicaCount: 1` blocks node drains — the template guard prevents this.
 
 **Mutual exclusions validated at render time:**
 - `webhook.certManager.enabled` and `webhook.certDir` are mutually exclusive — `deployment.yaml` calls `fail` if both are set.
+- Webhooks with `webhook.certManager.enabled=false` require `webhook.certDir`, `webhook.certSecretName`, and `webhook.caBundle`.
 - `image.digest` and `@` in `image.repository` are mutually exclusive — same pattern.
 
 ## Values Reference (Key Sections)
@@ -77,7 +78,7 @@ charts/fleet-management-operator/
 | `controllers.pipeline.enabled` | `true` | Core Pipeline reconciler |
 | `controllers.collector.enabled` | `true` | Required before enabling `collectorDiscovery` |
 | `controllers.collectorDiscovery.enabled` | `true` | Requires `collector.enabled: true` |
-| `webhook.certManager.enabled` | `false` | Required for HA (replicaCount > 1) |
+| `webhook.certManager.enabled` | `true` | Default CA injection path for fail-closed webhooks |
 | `replicaCount` | `1` | Set > 1 for HA; also enable `podDisruptionBudget` and `webhook.certManager` |
 | `resources.limits.memory` | `2Gi` | Sized for 30k Collectors; reduce to 512Mi for small fleets |
 | `image.digest` | `""` | Digest-pin for production supply-chain hardening |

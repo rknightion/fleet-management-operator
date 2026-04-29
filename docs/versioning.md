@@ -9,8 +9,9 @@ versions remain served.
 
 - All CRDs ship at **`v1alpha1`** and are the only served, stored version.
 - No conversion webhook is wired up yet.
-- Six CRDs in scope: `Pipeline`, `Collector`, `RemoteAttributePolicy`,
-  `ExternalAttributeSync`, `CollectorDiscovery`, `TenantPolicy`.
+- Seven CRDs in scope: `Pipeline`, `PipelineDiscovery`, `Collector`,
+  `RemoteAttributePolicy`, `ExternalAttributeSync`, `CollectorDiscovery`,
+  `TenantPolicy`.
 
 ## Graduation criteria — `v1alpha1` to `v1`
 
@@ -106,11 +107,12 @@ audit (2026-04-28) and `CLAUDE.md`.
 
 The scale subresource is **deferred to v1+** for every CRD in this
 group. `Pipeline`, `Collector`, `RemoteAttributePolicy`,
-`ExternalAttributeSync`, `CollectorDiscovery`, and `TenantPolicy` are
-not workload CRDs — `kubectl scale` semantics ("set replicas") do not
-map cleanly onto "make this Pipeline match more collectors" or "bind
-this Policy to more subjects". We have not identified a user workflow
-that needs it. Revisit only if a concrete request surfaces.
+`PipelineDiscovery`, `ExternalAttributeSync`, `CollectorDiscovery`, and
+`TenantPolicy` are not workload CRDs — `kubectl scale` semantics ("set
+replicas") do not map cleanly onto "make this Pipeline match more collectors",
+"import more Fleet pipelines", or "bind this Policy to more subjects". We have
+not identified a user workflow that needs it. Revisit only if a concrete
+request surfaces.
 
 ## Conversion webhook — out of scope today
 

@@ -15,6 +15,9 @@ a new condition type or reason must update this file in the same PR.
 | ------------------------- | --------- | ------------------------------------------------------------------------------------ |
 | `Pipeline`                | `Ready`   | Pipeline is fully synced to Fleet Management and serving the current spec.           |
 | `Pipeline`                | `Synced`  | The most recent reconciliation completed without error.                              |
+| `PipelineDiscovery`       | `Ready`              | Most recent `ListPipelines` succeeded and Pipeline CR mirroring is up to date. |
+| `PipelineDiscovery`       | `Synced`             | The most recent reconciliation completed without error.                       |
+| `PipelineDiscovery`       | `TruncatedConflicts` | `status.conflicts` is capped at 100; check events for the full list.         |
 | `Collector`               | `Ready`   | The merged remote-attribute set is reflected in Fleet for this collector.            |
 | `Collector`               | `Synced`  | The most recent reconciliation completed without error.                              |
 | `RemoteAttributePolicy`   | `Ready`     | The selector matched at least one collector and status is up to date.                |
@@ -73,8 +76,20 @@ additive-then-remove window.
 | `SourceFailed`       | Ready, Synced          | Source `Fetch` returned a non-nil error.                                                     |
 | `Stalled`            | Ready, Synced, Stalled | `Fetch` returned 0 records and `spec.allowEmptyResults=false`; claim preserved. Surfaced on all three condition types so generic alerts and the dedicated Stalled lane stay consistent. |
 | `InvalidSchedule`    | Ready, Synced          | `spec.schedule` failed both duration and cron parsers.                                       |
-| `OwnedKeysTruncated` | Truncated              | ownedKeys capped at 1000; collectors beyond cap may retain attributes on CR deletion.        |
+| `OwnedKeysExceeded`  | Ready, Synced, Truncated | ownedKeys exceeded the supported cap; the sync is not Ready because the claim would be partial. |
 | `NotTruncated`       | Truncated              | ownedKeys was not capped.                                                                    |
+
+### PipelineDiscovery (`internal/controller/pipeline_discovery_controller.go`)
+
+| Reason                  | Used on              | Meaning                                                                       |
+| ----------------------- | -------------------- | ----------------------------------------------------------------------------- |
+| `Synced`                | Ready, Synced        | ListPipelines succeeded; mirror CRs are up to date.                           |
+| `ListPipelinesFailed`   | Ready, Synced        | Fleet API ListPipelines call failed.                                          |
+| `UpsertFailed`          | Ready, Synced        | Creating or updating a mirrored Pipeline CR failed.                           |
+| `StaleProcessingFailed` | Ready, Synced        | Processing Pipeline CRs no longer present in Fleet failed.                    |
+| `InvalidConfig`         | Ready, Synced        | Spec failed validation post-admission, such as an invalid poll interval.      |
+| `ConflictListTruncated` | TruncatedConflicts   | status.conflicts truncated to 100; check events for the full conflict list.   |
+| `NoConflictsTruncated`  | TruncatedConflicts   | status.conflicts was not truncated.                                           |
 
 ### CollectorDiscovery (`internal/controller/collector_discovery_controller.go`)
 

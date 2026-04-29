@@ -21,6 +21,7 @@ For invalid-spec fixtures used by webhook tests, see
 - [ExternalAttributeSync: `cmdb-host-attributes`](#externalattributesync-cmdb-host-attributes) — ExternalAttributeSync that pulls host metadata from a CMDB HTTP endpoint every 5 minutes and assigns env / region attributes per collector.
 - [Pipeline: `alloy-pipeline-sample`](#pipeline-alloy-pipeline-sample) — Alloy Pipeline that scrapes Alloy's own self-metrics and remote-writes them to Grafana Cloud, scoped to Linux collectors in production.
 - [Pipeline: `otel-metrics-pipeline`](#pipeline-otel-metrics-pipeline) — OpenTelemetry Collector Pipeline that scrapes host metrics and exports OTLP to Grafana Cloud.
+- [PipelineDiscovery: `import-alloy-pipelines`](#pipelinediscovery-import-alloy-pipelines) — PipelineDiscovery that imports enabled Alloy pipelines from Fleet Management as read-only Pipeline CRs.
 - [RemoteAttributePolicy: `linux-prod-defaults`](#remoteattributepolicy-linux-prod-defaults) — RemoteAttributePolicy that assigns default region / team attributes to every Linux production collector. Per-Collector CRs override on key collisions.
 - [TenantPolicy: `team-billing`](#tenantpolicy-team-billing) — TenantPolicy that requires the billing team's Pipelines, Policies, and Syncs to carry a team=billing matcher (RBAC tenancy guard).
 
@@ -273,6 +274,28 @@ spec:
   source:
     type: Terraform
     namespace: production-workspace
+```
+
+## PipelineDiscovery: `import-alloy-pipelines`
+
+PipelineDiscovery that imports enabled Alloy pipelines from Fleet Management as read-only Pipeline CRs.
+
+Source: [config/samples/pipeline_discovery_sample.yaml](../config/samples/pipeline_discovery_sample.yaml)
+
+```yaml
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: PipelineDiscovery
+metadata:
+  name: import-alloy-pipelines
+  namespace: default
+spec:
+  pollInterval: 5m
+  importMode: ReadOnly
+  selector:
+    configType: Alloy
+    enabled: true
+  policy:
+    onPipelineRemoved: Keep
 ```
 
 ## RemoteAttributePolicy: `linux-prod-defaults`
