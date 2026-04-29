@@ -149,6 +149,17 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	log.Info("reconciling Pipeline", "namespace", req.Namespace, "name", req.Name)
 
+	// outcome is set at every return path; the deferred increment fires once
+	// per Reconcile call so PromQL rate(...) reflects every exit (including
+	// NotFound / NoOp short-circuits) instead of only the success / error
+	// status-update paths. See B5.
+	var outcome string
+	defer func() {
+		if outcome != "" {
+			fleetResourceSyncedTotal.WithLabelValues("Pipeline", outcome).Inc()
+		}
+	}()
+
 	// 1. Fetch the Pipeline resource
 	pipeline := &fleetmanagementv1alpha1.Pipeline{}
 	// Cache: This Get() reads from the informer cache (not direct API server call) because
@@ -160,15 +171,20 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if apierrors.IsNotFound(err) {
 			// Pipeline was deleted
 			log.Info("Pipeline not found, likely deleted", "namespace", req.Namespace, "name", req.Name)
+			outcome = outcomeNotFound
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "failed to get Pipeline", "namespace", req.Namespace, "name", req.Name)
+		outcome = reasonSyncFailed
 		return ctrl.Result{}, err
 	}
 
 	// 2. Handle deletion
 	if !pipeline.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, pipeline)
+		var deleteOutcome string
+		result, err := r.reconcileDelete(ctx, pipeline, &deleteOutcome)
+		outcome = deleteOutcome
+		return result, err
 	}
 
 	// 3. Add finalizer if not present
@@ -180,43 +196,58 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// immediately to let the watch re-trigger reconciliation with finalizer present.
 		if err := r.Update(ctx, pipeline); err != nil {
 			log.Error(err, "failed to add finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
+			outcome = reasonSyncFailed
 			return ctrl.Result{}, err
 		}
 		log.Info("added finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
+		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
 	// 4. Check if reconciliation is needed (observedGeneration pattern)
 	if pipeline.Status.ObservedGeneration == pipeline.Generation {
 		log.V(1).Info("pipeline already reconciled, skipping", "namespace", pipeline.Namespace, "name", pipeline.Name, "generation", pipeline.Generation)
+		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
-	// 5. Reconcile normal case
-	return r.reconcileNormal(ctx, pipeline)
+	// 5. Reconcile normal case. The inner helpers write to normalOutcome via
+	// pointer so the deferred counter sees the precise reason (Synced,
+	// Recreated, RateLimited, ValidationError, SyncFailed) regardless of
+	// which exit path was taken.
+	var normalOutcome string
+	result, err := r.reconcileNormal(ctx, pipeline, &normalOutcome)
+	outcome = normalOutcome
+	return result, err
 }
 
-// reconcileNormal handles normal reconciliation (create/update)
-func (r *PipelineReconciler) reconcileNormal(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline) (ctrl.Result, error) {
+// reconcileNormal handles normal reconciliation (create/update). outcome is
+// set to the metric reason for this reconcile; callers (Reconcile and the
+// 404-recreate recursion in handleAPIError) read it via pointer so the
+// deferred counter increment sees the exact terminal reason.
+func (r *PipelineReconciler) reconcileNormal(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, outcome *string) (ctrl.Result, error) {
 	// Build the upsert request
 	req := r.buildUpsertRequest(pipeline)
 
 	// Call Fleet Management API
 	apiPipeline, err := r.FleetClient.UpsertPipeline(ctx, req)
 	if err != nil {
-		return r.handleAPIError(ctx, pipeline, err)
+		return r.handleAPIError(ctx, pipeline, err, outcome)
 	}
 
 	// Update status with successful sync
-	return r.updateStatusSuccess(ctx, pipeline, apiPipeline)
+	return r.updateStatusSuccess(ctx, pipeline, apiPipeline, outcome)
 }
 
-// reconcileDelete handles pipeline deletion
-func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline) (ctrl.Result, error) {
+// reconcileDelete handles pipeline deletion. outcome is set to the metric
+// reason ("Deleted" on success, "DeleteFailed" / "SyncFailed" / status reason
+// on failure paths) so the Reconcile deferred counter records every outcome.
+func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	if !controllerutil.ContainsFinalizer(pipeline, pipelineFinalizer) {
 		// Finalizer already removed, nothing to do
+		*outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
@@ -234,7 +265,7 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 				log.Error(err, "failed to delete pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
 				r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonDeleteFailed,
 					"Failed to delete pipeline from Fleet Management: %v", err)
-				return r.updateStatusError(ctx, pipeline, reasonDeleteFailed, err)
+				return r.updateStatusError(ctx, pipeline, reasonDeleteFailed, err, outcome)
 			}
 		} else {
 			log.Info("successfully deleted pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
@@ -250,10 +281,11 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 	// server garbage-collects the resource. No subsequent Get is needed.
 	if err := r.Update(ctx, pipeline); err != nil {
 		log.Error(err, "failed to remove finalizer", "namespace", pipeline.Namespace, "name", pipeline.Name)
+		*outcome = reasonSyncFailed
 		return ctrl.Result{}, err
 	}
 
-	fleetResourceSyncedTotal.WithLabelValues("Pipeline", "Deleted").Inc()
+	*outcome = outcomeDeleted
 	log.Info("removed finalizer, pipeline will be deleted", "namespace", pipeline.Namespace, "name", pipeline.Name)
 	return ctrl.Result{}, nil
 }
@@ -300,7 +332,9 @@ func (r *PipelineReconciler) buildUpsertRequest(pipeline *fleetmanagementv1alpha
 
 // handleAPIError handles errors from Fleet Management API
 // CRITICAL: Single-retry guard for 404 prevents infinite recursion by checking if ID is already empty
-func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, err error) (ctrl.Result, error) {
+// outcome is set so the deferred Reconcile counter records the precise reason
+// (RateLimited / Recreated / ValidationError / SyncFailed).
+func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, err error, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Check if it's a Fleet API error
@@ -312,7 +346,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 			log.Info("validation error from Fleet Management API", "namespace", pipeline.Namespace, "name", pipeline.Name, "message", apiErr.Message)
 			r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonValidationFail,
 				"Fleet Management API validation failed: %s", apiErr.Message)
-			return r.updateStatusError(ctx, pipeline, reasonValidationError, err)
+			return r.updateStatusError(ctx, pipeline, reasonValidationError, err, outcome)
 
 		case http.StatusNotFound:
 			// Pipeline was deleted externally
@@ -323,7 +357,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 				r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
 					"Failed to recreate pipeline after external deletion")
 				return r.updateStatusError(ctx, pipeline, reasonSyncFailed,
-					fmt.Errorf("pipeline not found and recreation failed: %w", err))
+					fmt.Errorf("pipeline not found and recreation failed: %w", err), outcome)
 			}
 
 			// First detection - try to recreate inline (no recursion)
@@ -340,17 +374,25 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 			apiPipeline, err := r.FleetClient.UpsertPipeline(ctx, req)
 			if err != nil {
 				// Let handleAPIError classify the new error
-				return r.handleAPIError(ctx, pipeline, err)
+				return r.handleAPIError(ctx, pipeline, err, outcome)
 			}
 
 			// Successfully recreated
-			return r.updateStatusSuccess(ctx, pipeline, apiPipeline)
+			result, statusErr := r.updateStatusSuccess(ctx, pipeline, apiPipeline, outcome)
+			// On a successful recreation we want the metric outcome to be
+			// "Recreated" rather than the generic "Synced" so dashboards can
+			// distinguish the external-deletion recovery path.
+			if statusErr == nil {
+				*outcome = outcomeRecreated
+			}
+			return result, statusErr
 
 		case http.StatusTooManyRequests:
 			// Rate limit - requeue with delay
 			log.Info("rate limited by Fleet Management API, requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonRateLimited,
 				"Rate limited by Fleet Management API, will retry in 10 seconds")
+			*outcome = outcomeRateLimited
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 
 		default:
@@ -364,7 +406,7 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 				"message", apiErr.Message)
 			r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
 				"Fleet Management API error (HTTP %d): %s", apiErr.StatusCode, apiErr.Message)
-			return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err)
+			return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err, outcome)
 		}
 	}
 
@@ -372,11 +414,14 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 	log.Error(err, "failed to sync with Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
 	r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonSyncFailed,
 		"Failed to sync with Fleet Management: %v", err)
-	return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err)
+	return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err, outcome)
 }
 
-// updateStatusSuccess updates the status after successful sync
-func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, apiPipeline *fleetclient.Pipeline) (ctrl.Result, error) {
+// updateStatusSuccess updates the status after successful sync. outcome is
+// set to reasonSynced (or "NoOp" / "SyncFailed" on retryable conflict /
+// non-conflict status update failure paths) so the deferred Reconcile
+// counter records the precise reason.
+func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, apiPipeline *fleetclient.Pipeline, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// OBS-03: record sync age using the previous UpdatedAt before overwriting it
@@ -446,9 +491,11 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 		if apierrors.IsConflict(err) {
 			// Resource was modified, requeue to get fresh copy
 			log.V(1).Info("status update conflict, requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name)
+			*outcome = outcomeNoOp
 			return ctrl.Result{Requeue: true}, nil
 		}
 		log.Error(err, "failed to update status", "namespace", pipeline.Namespace, "name", pipeline.Name)
+		*outcome = reasonSyncFailed
 		return ctrl.Result{}, err
 	}
 
@@ -464,7 +511,7 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 	r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonSynced,
 		"Pipeline successfully synced to Fleet Management")
 
-	fleetResourceSyncedTotal.WithLabelValues("Pipeline", reasonSynced).Inc()
+	*outcome = reasonSynced
 	log.Info("successfully synced pipeline", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", apiPipeline.ID, "generation", pipeline.Generation)
 	return ctrl.Result{}, nil
 }
@@ -494,8 +541,9 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 //
 // The combination of these four patterns correctly handles all error scenarios with appropriate
 // retry strategies. The workqueue's ItemExponentialFailureRateLimiter handles pattern #1.
-func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, reason string, originalErr error) (ctrl.Result, error) {
+func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, reason string, originalErr error, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+	*outcome = reason
 
 	// Update observedGeneration to indicate we tried
 	pipeline.Status.ObservedGeneration = pipeline.Generation
@@ -543,6 +591,7 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 		if apierrors.IsConflict(updateErr) {
 			// Cache is stale, requeue to get fresh copy
 			log.V(1).Info("status update conflict during error handling, requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name)
+			*outcome = outcomeNoOp
 			return ctrl.Result{Requeue: true}, nil
 		}
 		// Log status update failure but continue to return original error
@@ -556,13 +605,13 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	// CRITICAL: Validation errors are permanent - user must fix spec before retry
 	if !shouldRetry(originalErr, reason) {
 		log.Info("validation error, not requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name, "error", originalErr.Error())
-		fleetResourceSyncedTotal.WithLabelValues("Pipeline", reason).Inc()
+		// Outcome counter (set above) is incremented by the deferred handler in Reconcile().
 		return ctrl.Result{}, nil
 	}
 
 	// CRITICAL: Return original error to preserve exponential backoff
 	// Controller-runtime needs the original error for proper exponential backoff calculation
-	fleetResourceSyncedTotal.WithLabelValues("Pipeline", reason).Inc()
+	// Outcome counter (set above) is incremented by the deferred handler in Reconcile().
 	return ctrl.Result{}, originalErr
 }
 

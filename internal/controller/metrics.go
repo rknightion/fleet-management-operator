@@ -21,6 +21,28 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
+// Reconcile outcome label values for fleetResourceSyncedTotal. Shared across
+// controllers so dashboards / alerts can rely on a stable vocabulary.
+const (
+	outcomeNotFound        = "NotFound"
+	outcomeNoOp            = "NoOp"
+	outcomeSynced          = "Synced"
+	outcomeSyncFailed      = "SyncFailed"
+	outcomeValidationError = "ValidationError"
+	outcomeRateLimited     = "RateLimited"
+	outcomeDeleted         = "Deleted"
+	outcomeDeleteFailed    = "DeleteFailed"
+	outcomeRecreated       = "Recreated"
+	outcomeStalled         = "Stalled"
+	outcomeScheduleSkipped = "ScheduleSkipped"
+	outcomeTruncated       = "Truncated"
+	outcomeNoMatch         = "NoMatch"
+	outcomeMatched         = "Matched"
+	outcomeListFailed      = "ListFailed"
+	outcomeSourceFailed    = "SourceFailed"
+	outcomeInvalidSchedule = "InvalidSchedule"
+)
+
 var (
 	// fleetResourceSyncedTotal counts reconciliation outcomes per resource kind
 	// and reason. Uses kind+reason labels only — no namespace/name to avoid

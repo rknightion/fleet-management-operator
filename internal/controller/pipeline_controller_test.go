@@ -70,13 +70,43 @@ func newMockFleetClient() *mockFleetClient {
 
 // reset returns the mock to a clean default state. Tests call this in
 // BeforeEach so prior runs don't leak through. Must only be called from a
-// serial context (BeforeEach) — not from goroutines. The full-struct
-// zero-assignment clears the embedded mutex, so we must not hold the lock
-// across the zeroing (which would cause unlock-of-unlocked-mutex).
+// serial context (BeforeEach) — not from goroutines. We hold the lock and
+// reset every field individually rather than struct-zeroing because the
+// reconcile goroutine may still be holding the mutex briefly during BeforeEach
+// teardown; struct-zero would clobber the mutex and produce
+// unlock-of-unlocked-mutex panics under -race.
 func (m *mockFleetClient) reset() {
-	// Zero-value reset covers all fields -- safer than listing them individually.
-	*m = mockFleetClient{}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.pipelines = make(map[string]*fleetclient.Pipeline)
+	m.upsertError = nil
+	m.deleteError = nil
+	m.callCount = 0
+	m.lastUpsertRequest = nil
+	m.shouldReturn404 = false
+	m.shouldReturn400 = false
+	m.shouldReturn429 = false
+	m.shouldReturn404OnFirst = false
+	m.shouldReturn404OnDelete = false
+	// Do NOT reset m.mu itself.
+}
+
+// CallCount returns the number of UpsertPipeline calls observed by the mock.
+// Acquires the mutex so callers (test goroutines) do not race the controller
+// goroutine that updates callCount.
+func (m *mockFleetClient) CallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callCount
+}
+
+// Has returns true if the given pipeline ID is present in the mock's
+// in-memory store. Acquires the mutex for the same reason as CallCount.
+func (m *mockFleetClient) Has(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.pipelines[id]
+	return ok
 }
 
 func (m *mockFleetClient) UpsertPipeline(ctx context.Context, req *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error) {
@@ -485,7 +515,7 @@ var _ = Describe("Pipeline Controller", func() {
 
 			_, err := mock.UpsertPipeline(ctx, req)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(mock.callCount).To(Equal(1))
+			Expect(mock.CallCount()).To(Equal(1))
 		})
 
 		It("should store pipelines", func() {
@@ -520,9 +550,9 @@ var _ = Describe("Pipeline Controller", func() {
 			err := mock.DeletePipeline(ctx, result.ID)
 			Expect(err).ToNot(HaveOccurred())
 
-			// Verify pipeline was removed from mock's internal storage
-			_, exists := mock.pipelines[result.ID]
-			Expect(exists).To(BeFalse())
+			// Verify pipeline was removed from mock's internal storage.
+			// Use the locked accessor so this read is safe under -race.
+			Expect(mock.Has(result.ID)).To(BeFalse())
 		})
 	})
 
@@ -563,11 +593,13 @@ var _ = Describe("Pipeline Controller", func() {
 
 			By("Calling updateStatusError with original error")
 			originalErr := errors.New("API connection failed")
-			result, err := reconciler.updateStatusError(ctx, pipeline, reasonSyncFailed, originalErr)
+			var outcome string
+			result, err := reconciler.updateStatusError(ctx, pipeline, reasonSyncFailed, originalErr, &outcome)
 
 			By("Verifying original error is returned")
 			Expect(err).To(Equal(originalErr))
 			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(outcome).To(Equal(reasonSyncFailed))
 
 			By("Verifying status fields were updated in-memory")
 			Expect(pipeline.Status.ObservedGeneration).To(Equal(pipeline.Generation))
@@ -625,11 +657,15 @@ var _ = Describe("Pipeline Controller", func() {
 
 			By("Calling updateStatusError with status conflict")
 			originalErr := errors.New("API error")
-			result, err := reconciler.updateStatusError(ctx, pipeline, reasonSyncFailed, originalErr)
+			var outcome string
+			result, err := reconciler.updateStatusError(ctx, pipeline, reasonSyncFailed, originalErr, &outcome)
 
 			By("Verifying requeue is triggered and error is nil")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.Requeue).To(BeTrue()) //nolint:staticcheck // testing deprecated field intentionally
+			// Conflict path overwrites outcome to "NoOp" so the deferred
+			// counter records the cache-lag retry, not a duplicate failure.
+			Expect(outcome).To(Equal("NoOp"))
 		})
 
 		It("should not retry validation errors", func() {
@@ -663,11 +699,13 @@ var _ = Describe("Pipeline Controller", func() {
 				Operation:  "UpsertPipeline",
 				Message:    "validation failed",
 			}
-			result, err := reconciler.updateStatusError(ctx, pipeline, reasonValidationError, validationErr)
+			var outcome string
+			result, err := reconciler.updateStatusError(ctx, pipeline, reasonValidationError, validationErr, &outcome)
 
 			By("Verifying no retry is triggered")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(outcome).To(Equal(reasonValidationError))
 		})
 
 		It("should recreate pipeline inline when 404 with existing ID", func() {
@@ -703,10 +741,11 @@ var _ = Describe("Pipeline Controller", func() {
 			}
 
 			By("Calling reconcileNormal which will trigger 404 handling")
-			result, err := reconciler.reconcileNormal(ctx, pipeline)
+			var outcome string
+			result, err := reconciler.reconcileNormal(ctx, pipeline, &outcome)
 
 			By("Verifying recreation was attempted")
-			Expect(mock.callCount).To(Equal(2), "UpsertPipeline should be called twice (initial 404 then recreation)")
+			Expect(mock.CallCount()).To(Equal(2), "UpsertPipeline should be called twice (initial 404 then recreation)")
 
 			By("Verifying success after recreation")
 			// After successful recreation, should return success result
@@ -749,7 +788,8 @@ var _ = Describe("Pipeline Controller", func() {
 				Operation:  "UpsertPipeline",
 				Message:    "pipeline not found",
 			}
-			result, err := reconciler.handleAPIError(ctx, pipeline, notFoundErr)
+			var outcome string
+			result, err := reconciler.handleAPIError(ctx, pipeline, notFoundErr, &outcome)
 
 			By("Verifying recreation attempt is not made and status is updated")
 			// When ID is empty, handleAPIError recognizes recreation already failed
@@ -812,7 +852,8 @@ var _ = Describe("Pipeline Controller", func() {
 			}
 
 			By("Calling reconcileDelete directly")
-			result, err := reconciler.reconcileDelete(context.Background(), pipeline)
+			var outcome string
+			result, err := reconciler.reconcileDelete(context.Background(), pipeline, &outcome)
 
 			By("Verifying the call succeeded despite the 404")
 			Expect(err).ToNot(HaveOccurred())

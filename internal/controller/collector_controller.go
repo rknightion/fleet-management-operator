@@ -116,27 +116,46 @@ func (r *CollectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	log := logf.FromContext(ctx)
 	log.Info("reconciling Collector", "namespace", req.Namespace, "name", req.Name)
 
+	// B5: outcome is set at every return path; the deferred increment fires
+	// once per Reconcile call so PromQL rate(...) reflects every exit path
+	// (NotFound, NoOp short-circuit, NotRegistered, Synced, SyncFailed,
+	// ValidationError, RateLimited, Deleted) instead of only the success /
+	// error status-update paths.
+	var outcome string
+	defer func() {
+		if outcome != "" {
+			fleetResourceSyncedTotal.WithLabelValues("Collector", outcome).Inc()
+		}
+	}()
+
 	collector := &fleetmanagementv1alpha1.Collector{}
 	if err := r.Get(ctx, req.NamespacedName, collector); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Info("Collector not found, likely deleted", "namespace", req.Namespace, "name", req.Name)
+			outcome = outcomeNotFound
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "failed to get Collector", "namespace", req.Namespace, "name", req.Name)
+		outcome = collectorReasonSyncFailed
 		return ctrl.Result{}, err
 	}
 
 	if !collector.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, collector)
+		var deleteOutcome string
+		result, err := r.reconcileDelete(ctx, collector, &deleteOutcome)
+		outcome = deleteOutcome
+		return result, err
 	}
 
 	if !controllerutil.ContainsFinalizer(collector, collectorFinalizer) {
 		controllerutil.AddFinalizer(collector, collectorFinalizer)
 		if err := r.Update(ctx, collector); err != nil {
 			log.Error(err, "failed to add finalizer", "namespace", collector.Namespace, "name", collector.Name)
+			outcome = collectorReasonSyncFailed
 			return ctrl.Result{}, err
 		}
 		log.Info("added finalizer", "namespace", collector.Namespace, "name", collector.Name)
+		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
@@ -147,11 +166,16 @@ func (r *CollectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// silently drop those updates. Idempotency is maintained inside
 	// updateStatusSuccess, which suppresses the status write when nothing
 	// actually changed.
-	return r.reconcileNormal(ctx, collector)
+	var normalOutcome string
+	result, err := r.reconcileNormal(ctx, collector, &normalOutcome)
+	outcome = normalOutcome
+	return result, err
 }
 
-// reconcileNormal handles create/update reconciliation.
-func (r *CollectorReconciler) reconcileNormal(ctx context.Context, collector *fleetmanagementv1alpha1.Collector) (ctrl.Result, error) {
+// reconcileNormal handles create/update reconciliation. outcome is set to
+// the metric reason for this reconcile so the deferred Reconcile counter
+// records the precise terminal state.
+func (r *CollectorReconciler) reconcileNormal(ctx context.Context, collector *fleetmanagementv1alpha1.Collector, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	live, err := r.FleetClient.GetCollector(ctx, collector.Spec.ID)
@@ -164,24 +188,26 @@ func (r *CollectorReconciler) reconcileNormal(ctx context.Context, collector *fl
 				"Collector %q has not yet registered with Fleet Management; will retry", collector.Spec.ID)
 			result, statusErr := r.updateStatusNotRegistered(ctx, collector)
 			if statusErr != nil {
+				*outcome = collectorReasonSyncFailed
 				return ctrl.Result{}, statusErr
 			}
+			*outcome = collectorReasonNotRegistered
 			return result, nil
 		}
-		return r.handleAPIError(ctx, collector, err)
+		return r.handleAPIError(ctx, collector, err, outcome)
 	}
 
 	externalLayer, err := r.externalSyncLayerForCollector(ctx, collector)
 	if err != nil {
 		log.Error(err, "failed to gather matching ExternalAttributeSyncs",
 			"namespace", collector.Namespace, "name", collector.Name)
-		return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err)
+		return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err, outcome)
 	}
 	policyLayer, err := r.policyLayerForCollector(ctx, collector, live.LocalAttributes)
 	if err != nil {
 		log.Error(err, "failed to gather matching RemoteAttributePolicies",
 			"namespace", collector.Namespace, "name", collector.Name)
-		return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err)
+		return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err, outcome)
 	}
 	collectorLayer := attributes.Layer{
 		Kind:  string(fleetmanagementv1alpha1.AttributeOwnerCollector),
@@ -200,13 +226,13 @@ func (r *CollectorReconciler) reconcileNormal(ctx context.Context, collector *fl
 	ops := attributes.Diff(desired, observed, previouslyOwned)
 	if len(ops) > 0 {
 		if err := r.FleetClient.BulkUpdateCollectors(ctx, []string{collector.Spec.ID}, ops); err != nil {
-			return r.handleAPIError(ctx, collector, err)
+			return r.handleAPIError(ctx, collector, err, outcome)
 		}
 		r.emitEventf(collector, corev1.EventTypeNormal, collectorEventReasonAttributesUpdated,
 			"Applied %d attribute operation(s) to collector %q", len(ops), collector.Spec.ID)
 	}
 
-	return r.updateStatusSuccess(ctx, collector, live, desired, owners)
+	return r.updateStatusSuccess(ctx, collector, live, desired, owners, outcome)
 }
 
 // externalSyncLayerForCollector lists every ExternalAttributeSync in the
@@ -341,11 +367,14 @@ func (r *CollectorReconciler) policyLayerForCollector(
 // reconcileDelete removes every attribute this Collector CR caused to be
 // written to Fleet Management — across all owner kinds, since the Collector
 // reconciler is the sole writer to Fleet for the collectors it manages — and
-// then drops the finalizer so garbage collection can complete.
-func (r *CollectorReconciler) reconcileDelete(ctx context.Context, collector *fleetmanagementv1alpha1.Collector) (ctrl.Result, error) {
+// then drops the finalizer so garbage collection can complete. outcome is set
+// to the metric reason ("Deleted" on success, an error reason on failure)
+// for the deferred Reconcile counter.
+func (r *CollectorReconciler) reconcileDelete(ctx context.Context, collector *fleetmanagementv1alpha1.Collector, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	if !controllerutil.ContainsFinalizer(collector, collectorFinalizer) {
+		*outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
@@ -371,7 +400,7 @@ func (r *CollectorReconciler) reconcileDelete(ctx context.Context, collector *fl
 					"namespace", collector.Namespace, "name", collector.Name)
 				r.emitEventf(collector, corev1.EventTypeWarning, collectorEventReasonDeleteFailed,
 					"Failed to remove owned attributes from collector %q: %v", collector.Spec.ID, err)
-				return r.updateStatusError(ctx, collector, collectorReasonDeleteFailed, err)
+				return r.updateStatusError(ctx, collector, collectorReasonDeleteFailed, err, outcome)
 			}
 		} else {
 			log.Info("removed owned attributes from Fleet Management on delete",
@@ -383,10 +412,11 @@ func (r *CollectorReconciler) reconcileDelete(ctx context.Context, collector *fl
 	if err := r.Update(ctx, collector); err != nil {
 		log.Error(err, "failed to remove finalizer",
 			"namespace", collector.Namespace, "name", collector.Name)
+		*outcome = collectorReasonSyncFailed
 		return ctrl.Result{}, err
 	}
 
-	fleetResourceSyncedTotal.WithLabelValues("Collector", "Deleted").Inc()
+	*outcome = outcomeDeleted
 	log.Info("removed finalizer, collector resource will be garbage-collected",
 		"namespace", collector.Namespace, "name", collector.Name)
 	return ctrl.Result{}, nil
@@ -394,8 +424,10 @@ func (r *CollectorReconciler) reconcileDelete(ctx context.Context, collector *fl
 
 // handleAPIError mirrors the Pipeline controller's error classification: 4xx
 // (except 408/429) is permanent; 429 requeues with a fixed delay; 5xx and
-// other errors return for exponential backoff.
-func (r *CollectorReconciler) handleAPIError(ctx context.Context, collector *fleetmanagementv1alpha1.Collector, err error) (ctrl.Result, error) {
+// other errors return for exponential backoff. outcome is set so the
+// deferred Reconcile counter records the precise reason (RateLimited /
+// ValidationError / SyncFailed).
+func (r *CollectorReconciler) handleAPIError(ctx context.Context, collector *fleetmanagementv1alpha1.Collector, err error, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	var apiErr *fleetclient.FleetAPIError
@@ -406,13 +438,14 @@ func (r *CollectorReconciler) handleAPIError(ctx context.Context, collector *fle
 				"namespace", collector.Namespace, "name", collector.Name, "message", apiErr.Message)
 			r.emitEventf(collector, corev1.EventTypeWarning, collectorEventReasonSyncFailed,
 				"Fleet Management API validation failed: %s", apiErr.Message)
-			return r.updateStatusError(ctx, collector, collectorReasonValidationError, err)
+			return r.updateStatusError(ctx, collector, collectorReasonValidationError, err, outcome)
 
 		case http.StatusTooManyRequests:
 			log.Info("rate limited by Fleet Management API, requeueing",
 				"namespace", collector.Namespace, "name", collector.Name)
 			r.emitEvent(collector, corev1.EventTypeWarning, collectorEventReasonRateLimited,
 				"Rate limited by Fleet Management API, will retry in 10 seconds")
+			*outcome = outcomeRateLimited
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 
 		default:
@@ -422,7 +455,7 @@ func (r *CollectorReconciler) handleAPIError(ctx context.Context, collector *fle
 				"message", apiErr.Message)
 			r.emitEventf(collector, corev1.EventTypeWarning, collectorEventReasonSyncFailed,
 				"Fleet Management API error (HTTP %d): %s", apiErr.StatusCode, apiErr.Message)
-			return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err)
+			return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err, outcome)
 		}
 	}
 
@@ -430,19 +463,21 @@ func (r *CollectorReconciler) handleAPIError(ctx context.Context, collector *fle
 		"namespace", collector.Namespace, "name", collector.Name)
 	r.emitEventf(collector, corev1.EventTypeWarning, collectorEventReasonSyncFailed,
 		"Failed to sync with Fleet Management: %v", err)
-	return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err)
+	return r.updateStatusError(ctx, collector, collectorReasonSyncFailed, err, outcome)
 }
 
 // updateStatusSuccess mirrors observed Fleet state and records the keys this
 // reconcile claims ownership of. The status write is suppressed when every
 // observable field is already up-to-date so the cross-layer watches don't
-// produce a feedback loop of no-op reconciles.
+// produce a feedback loop of no-op reconciles. outcome is set to the metric
+// reason for the deferred Reconcile counter.
 func (r *CollectorReconciler) updateStatusSuccess(
 	ctx context.Context,
 	collector *fleetmanagementv1alpha1.Collector,
 	live *fleetclient.Collector,
 	desired map[string]string,
 	owners []attributes.KeyOwnership,
+	outcome *string,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -469,6 +504,10 @@ func (r *CollectorReconciler) updateStatusSuccess(
 	if noopStatus {
 		log.V(1).Info("collector status unchanged, skipping write",
 			"namespace", collector.Namespace, "name", collector.Name)
+		// B5: cross-layer watches drive frequent no-op reconciles for
+		// collectors at steady state. Recording them under the NoOp
+		// outcome keeps PromQL rate(...) representative of activity.
+		*outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
@@ -511,17 +550,19 @@ func (r *CollectorReconciler) updateStatusSuccess(
 		if apierrors.IsConflict(err) {
 			log.V(1).Info("status update conflict, requeueing",
 				"namespace", collector.Namespace, "name", collector.Name)
+			*outcome = outcomeNoOp
 			return ctrl.Result{Requeue: true}, nil
 		}
 		log.Error(err, "failed to update status",
 			"namespace", collector.Namespace, "name", collector.Name)
+		*outcome = collectorReasonSyncFailed
 		return ctrl.Result{}, err
 	}
 
 	r.emitEvent(collector, corev1.EventTypeNormal, collectorEventReasonSynced,
 		"Collector successfully synced to Fleet Management")
 
-	fleetResourceSyncedTotal.WithLabelValues("Collector", collectorReasonSynced).Inc()
+	*outcome = collectorReasonSynced
 	log.Info("successfully reconciled collector",
 		"namespace", collector.Namespace, "name", collector.Name,
 		"id", collector.Spec.ID, "generation", collector.Generation)
@@ -564,9 +605,11 @@ func (r *CollectorReconciler) updateStatusNotRegistered(ctx context.Context, col
 
 // updateStatusError records reconciliation failure with a user-friendly
 // condition message, preserving the original error so controller-runtime can
-// drive exponential backoff.
-func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *fleetmanagementv1alpha1.Collector, reason string, originalErr error) (ctrl.Result, error) {
+// drive exponential backoff. outcome is set to the reason so the deferred
+// Reconcile counter records the precise failure mode.
+func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *fleetmanagementv1alpha1.Collector, reason string, originalErr error, outcome *string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+	*outcome = reason
 
 	collector.Status.ObservedGeneration = collector.Generation
 	formatted := formatConditionMessage(reason, originalErr)
@@ -590,6 +633,7 @@ func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *
 		if apierrors.IsConflict(updateErr) {
 			log.V(1).Info("status update conflict during error handling, requeueing",
 				"namespace", collector.Namespace, "name", collector.Name)
+			*outcome = outcomeNoOp
 			return ctrl.Result{Requeue: true}, nil
 		}
 		log.Error(updateErr, "failed to update status after reconciliation error",
@@ -600,11 +644,11 @@ func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *
 	if !shouldRetry(originalErr, reason) {
 		log.Info("validation error, not requeueing",
 			"namespace", collector.Namespace, "name", collector.Name, "error", originalErr.Error())
-		fleetResourceSyncedTotal.WithLabelValues("Collector", reason).Inc()
+		// Outcome counter (set above) is incremented by the deferred handler in Reconcile().
 		return ctrl.Result{}, nil
 	}
 
-	fleetResourceSyncedTotal.WithLabelValues("Collector", reason).Inc()
+	// Outcome counter (set above) is incremented by the deferred handler in Reconcile().
 	return ctrl.Result{}, originalErr
 }
 

@@ -121,6 +121,17 @@ func (r *RemoteAttributePolicyReconciler) Reconcile(ctx context.Context, req ctr
 	log := logf.FromContext(ctx)
 	log.Info("reconciling RemoteAttributePolicy", "namespace", req.Namespace, "name", req.Name)
 
+	// B5: outcome is set at every return path; the deferred increment fires
+	// once per Reconcile call so PromQL rate(...) reflects every exit path
+	// (NotFound, NoOp, ListFailed, Matched, NoMatch, Truncated, etc.) instead
+	// of only the success / error status-update paths.
+	var outcome string
+	defer func() {
+		if outcome != "" {
+			fleetResourceSyncedTotal.WithLabelValues("RemoteAttributePolicy", outcome).Inc()
+		}
+	}()
+
 	policy := &fleetmanagementv1alpha1.RemoteAttributePolicy{}
 	if err := r.Get(ctx, req.NamespacedName, policy); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -130,10 +141,12 @@ func (r *RemoteAttributePolicyReconciler) Reconcile(ctx context.Context, req ctr
 			// reconcile because they read live Policy state each time.
 			log.Info("RemoteAttributePolicy not found, likely deleted",
 				"namespace", req.Namespace, "name", req.Name)
+			outcome = outcomeNotFound
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "failed to get RemoteAttributePolicy",
 			"namespace", req.Namespace, "name", req.Name)
+		outcome = policyReasonListFailed
 		return ctrl.Result{}, err
 	}
 
@@ -156,6 +169,7 @@ func (r *RemoteAttributePolicyReconciler) Reconcile(ctx context.Context, req ctr
 			"namespace", policy.Namespace, "name", policy.Name)
 		r.emitEventf(policy, corev1.EventTypeWarning, policyEventReasonListFailed,
 			"Failed to list Collectors in namespace %q: %v", policy.Namespace, err)
+		outcome = policyReasonListFailed
 		return r.updateStatusError(ctx, policy, policyReasonListFailed, err)
 	}
 
@@ -165,21 +179,65 @@ func (r *RemoteAttributePolicyReconciler) Reconcile(ctx context.Context, req ctr
 	// unchanged. MatchedCount is the full count; MatchedCollectorIDs stores
 	// the capped sample, so compare by count first (cheap), then by IDs
 	// only when the counts match to detect reordering within the cap.
-	cappedLen := len(matchedIDs)
-	if cappedLen > maxMatchedIDs {
-		cappedLen = maxMatchedIDs
-	}
+	//
+	// B4: also verify that the Truncated condition reflects the current
+	// matched-set size. Without this check, a transition from above-cap to
+	// below-cap whose capped slice happens to equal the prior capped slice
+	// would leave Truncated=True forever.
+	cappedLen := min(len(matchedIDs), maxMatchedIDs)
+	wantTruncated := len(matchedIDs) > maxMatchedIDs
 	if policy.Status.ObservedGeneration == policy.Generation &&
 		policy.Status.MatchedCount == int32(len(matchedIDs)) &&
 		len(policy.Status.MatchedCollectorIDs) == cappedLen &&
-		stringSlicesEqual(policy.Status.MatchedCollectorIDs, matchedIDs[:cappedLen]) {
+		stringSlicesEqual(policy.Status.MatchedCollectorIDs, matchedIDs[:cappedLen]) &&
+		policyTruncatedConditionMatches(policy, wantTruncated) {
 		log.V(1).Info("policy already reconciled, skipping",
 			"namespace", policy.Namespace, "name", policy.Name,
 			"generation", policy.Generation, "matched", len(matchedIDs))
+		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
-	return r.updateStatusMatched(ctx, policy, matchedIDs)
+	result, err := r.updateStatusMatched(ctx, policy, matchedIDs)
+	outcome = policyMatchedOutcome(len(matchedIDs), wantTruncated, result, err)
+	return result, err
+}
+
+// policyMatchedOutcome derives the metric outcome label for a happy-path
+// reconcile, distinguishing matched / no-match / truncated outcomes so
+// PromQL rate() reflects the real distribution. A status-update conflict
+// returns ctrl.Result{Requeue: true} with err==nil; we record that as
+// "NoOp" because the next reconcile will try again with a fresh cache.
+func policyMatchedOutcome(matchedCount int, truncated bool, result ctrl.Result, err error) string {
+	if err != nil {
+		return policyReasonListFailed
+	}
+	if result.Requeue {
+		return "NoOp"
+	}
+	if truncated {
+		return policyConditionReasonTruncated
+	}
+	if matchedCount > 0 {
+		return policyReasonMatched
+	}
+	return policyReasonNoMatch
+}
+
+// policyTruncatedConditionMatches returns true when the policy's existing
+// Truncated condition is already in the desired state (True iff want is true,
+// False otherwise — including the case where the condition is missing and
+// want is false). Used by the no-op short-circuit to ensure a transition out
+// of the truncated state is never silently skipped.
+func policyTruncatedConditionMatches(policy *fleetmanagementv1alpha1.RemoteAttributePolicy, want bool) bool {
+	cond := meta.FindStatusCondition(policy.Status.Conditions, policyConditionTypeTruncated)
+	if cond == nil {
+		return !want
+	}
+	if want {
+		return cond.Status == metav1.ConditionTrue
+	}
+	return cond.Status == metav1.ConditionFalse
 }
 
 // evaluatePolicySelector returns the sorted, deduplicated list of Collector
@@ -311,13 +369,12 @@ func (r *RemoteAttributePolicyReconciler) updateStatusMatched(
 	if len(matchedIDs) > 0 {
 		r.emitEventf(policy, corev1.EventTypeNormal, policyEventReasonSynced,
 			"Policy matched %d collector(s)", len(matchedIDs))
-		fleetResourceSyncedTotal.WithLabelValues("RemoteAttributePolicy", policyReasonMatched).Inc()
 	} else {
 		r.emitEvent(policy, corev1.EventTypeWarning, policyEventReasonNoMatch,
 			"Policy selector did not match any Collector in this namespace")
-		fleetResourceSyncedTotal.WithLabelValues("RemoteAttributePolicy", policyReasonNoMatch).Inc()
 	}
 
+	// B5: outcome counter is incremented by the deferred handler in Reconcile.
 	// Event coverage: Synced, NoMatch, ListFailed, Truncated.
 	// Created/Deleted events are intentionally absent: RemoteAttributePolicy has no Fleet-side resource.
 
@@ -367,7 +424,7 @@ func (r *RemoteAttributePolicyReconciler) updateStatusError(
 			"originalError", originalErr.Error(), "reason", reason)
 	}
 
-	fleetResourceSyncedTotal.WithLabelValues("RemoteAttributePolicy", reason).Inc()
+	// B5: outcome counter is incremented by the deferred handler in Reconcile.
 	return ctrl.Result{}, originalErr
 }
 
@@ -385,7 +442,15 @@ func (r *RemoteAttributePolicyReconciler) SetupWithManager(ctx context.Context, 
 		policyMatcherKeyIndex,
 		func(o client.Object) []string {
 			p := o.(*fleetmanagementv1alpha1.RemoteAttributePolicy)
-			return attributes.MatcherKeys(p.Spec.Selector.Matchers)
+			keys := attributes.MatcherKeys(p.Spec.Selector.Matchers)
+			// B2: when a policy selects purely by collectorIDs (no matchers),
+			// it produces zero matcher keys. Without a synthetic sentinel it
+			// would be indexed under nothing and would never wake on
+			// Collector add. The watch handler always queries this bucket.
+			if len(p.Spec.Selector.Matchers) == 0 && len(p.Spec.Selector.CollectorIDs) > 0 {
+				keys = append(keys, attributes.SyntheticCollectorIDsOnlyKey)
+			}
+			return keys
 		},
 	); err != nil {
 		return fmt.Errorf("indexing RemoteAttributePolicy matcher keys: %w", err)
@@ -425,10 +490,18 @@ func stringSlicesEqual(a, b []string) bool {
 // in the changed Collector's attributes. This avoids the O(collectors *
 // policies) fan-out from the naive "enqueue every policy" approach.
 //
-// When the Collector has no spec.remoteAttributes (e.g. a freshly-created CR)
-// we fall back to the broad namespace-wide enqueue so that new Collectors are
-// still evaluated by all Policies, including those that match via
-// CollectorIDs or the synthetic collector.id key.
+// To preserve correctness for negation-only and collectorIDs-only policies
+// (which would otherwise be invisible to a key-keyed index), the handler
+// also unconditionally queries two synthetic sentinel buckets that the
+// IndexField extractor populates for those policy shapes:
+//
+//   - attributes.SyntheticHasNegationKey — set when MatcherKeys sees a
+//     `!=` or `!~` operator. A negation matcher matches Collectors LACKING
+//     the referenced key, so a key-keyed index would otherwise miss it.
+//   - attributes.SyntheticCollectorIDsOnlyKey — set by the IndexField
+//     wrapper when a policy has only spec.selector.collectorIDs and no
+//     matchers. Such a policy produces zero matcher keys and would
+//     otherwise be indexed under nothing.
 func (r *RemoteAttributePolicyReconciler) mapCollectorToAffectedPolicies(
 	ctx context.Context, obj client.Object,
 ) []reconcile.Request {
@@ -455,12 +528,11 @@ func (r *RemoteAttributePolicyReconciler) mapCollectorToAffectedPolicies(
 	// Always include the synthetic collector.id key so Policies using it are
 	// found via the index.
 	collectorKeys["collector.id"] = struct{}{}
-
-	// No attributes at all: fall back to broad enqueue. This covers brand-new
-	// Collectors before any attributes have been populated.
-	if len(collectorKeys) == 0 {
-		return r.allPoliciesInNamespace(ctx, collector.Namespace)
-	}
+	// Always include both synthetic sentinels so that negation-only and
+	// collectorIDs-only policies are enqueued on every Collector event.
+	// See doc comment above for the rationale.
+	collectorKeys[attributes.SyntheticHasNegationKey] = struct{}{}
+	collectorKeys[attributes.SyntheticCollectorIDsOnlyKey] = struct{}{}
 
 	seen := map[types.NamespacedName]struct{}{}
 	var reqs []reconcile.Request
@@ -484,30 +556,6 @@ func (r *RemoteAttributePolicyReconciler) mapCollectorToAffectedPolicies(
 				reqs = append(reqs, reconcile.Request{NamespacedName: nn})
 			}
 		}
-	}
-	return reqs
-}
-
-// allPoliciesInNamespace returns reconcile requests for every
-// RemoteAttributePolicy in the given namespace. Used as a fallback when a
-// Collector has no attributes to key on.
-func (r *RemoteAttributePolicyReconciler) allPoliciesInNamespace(
-	ctx context.Context, ns string,
-) []reconcile.Request {
-	log := logf.FromContext(ctx)
-
-	var list fleetmanagementv1alpha1.RemoteAttributePolicyList
-	if err := r.List(ctx, &list, client.InNamespace(ns)); err != nil {
-		log.Error(err, "failed to list RemoteAttributePolicies for Collector watch fan-out (fallback)",
-			"namespace", ns)
-		return nil
-	}
-	reqs := make([]reconcile.Request, len(list.Items))
-	for i := range list.Items {
-		reqs[i] = reconcile.Request{NamespacedName: types.NamespacedName{
-			Namespace: list.Items[i].Namespace,
-			Name:      list.Items[i].Name,
-		}}
 	}
 	return reqs
 }

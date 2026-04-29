@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,8 +29,14 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 	"github.com/grafana/fleet-management-operator/pkg/sources"
@@ -457,5 +464,360 @@ var _ = Describe("ExternalAttributeSync Controller", func() {
 		Expect(s.Status.OwnedKeys).To(HaveLen(1))
 		Expect(s.Status.OwnedKeys[0].Attributes["env"]).To(Equal("prod"),
 			"OwnedKeys must be updated to the new record after recovery")
+	})
+})
+
+// findExternalSyncCondition looks up a condition by Type. Returns nil if absent.
+func findExternalSyncCondition(s *fleetmanagementv1alpha1.ExternalAttributeSync, condType string) *metav1.Condition {
+	return meta.FindStatusCondition(s.Status.Conditions, condType)
+}
+
+// buildMatchedCollectorList returns n Collector CRs all matching `tier=edge`,
+// each with a unique ID `id-NNNNN`. Used to drive the matched-collector
+// filtering step inside the ExternalAttributeSync reconciler.
+func buildMatchedCollectorList(ns string, n int) []*fleetmanagementv1alpha1.Collector {
+	out := make([]*fleetmanagementv1alpha1.Collector, 0, n)
+	for i := range n {
+		out = append(out, &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("collector-%05d", i),
+				Namespace: ns,
+			},
+			Spec: fleetmanagementv1alpha1.CollectorSpec{
+				ID:               fmt.Sprintf("id-%05d", i),
+				RemoteAttributes: map[string]string{},
+			},
+			Status: fleetmanagementv1alpha1.CollectorStatus{
+				LocalAttributes: map[string]string{"tier": "edge"},
+			},
+		})
+	}
+	return out
+}
+
+// buildRecordsForCollectors returns a fakeSource record per collector ID,
+// mapping `hostname` to the collector ID and an `env` attribute the sync's
+// AttributeMapping expects.
+func buildRecordsForCollectors(n int) []sources.Record {
+	out := make([]sources.Record, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, sources.Record{
+			"hostname": fmt.Sprintf("id-%05d", i),
+			"env":      "prod",
+		})
+	}
+	return out
+}
+
+// drainExternalSyncTruncatedEvents pulls events off the recorder's channel
+// without blocking and returns the count whose message contains "Truncated".
+func drainExternalSyncTruncatedEvents(rec *record.FakeRecorder) int {
+	count := 0
+	for {
+		select {
+		case ev := <-rec.Events:
+			if strings.Contains(ev, "Truncated") {
+				count++
+			}
+		default:
+			return count
+		}
+	}
+}
+
+// E4: Truncation tests for ExternalAttributeSync.
+//
+// These tests use a fake K8s client to fan out 1000+ Collector CRs and
+// drive the reconciler with a matching number of source records. They
+// cover:
+//   - Truncated condition set when ownedKeys exceeds maxOwnedKeys
+//   - Truncated condition CLEARED on transition back below the cap
+//   - Warning event emitted on truncation
+//   - No-op short-circuit doesn't preserve a stale Stalled=True after
+//     same-data recovery (B3) or a stale Truncated=True after the
+//     matched-set drops (B4-equivalent for owned keys)
+var _ = Describe("ExternalAttributeSync Truncation", func() {
+	const truncNS = "extsync-trunc"
+
+	type tc struct {
+		name           string
+		n              int
+		wantTruncated  bool
+		wantOwnedLen   int
+		wantEvent      bool
+		wantEventCount int
+	}
+
+	cases := []tc{
+		{name: "below cap (999)", n: 999, wantTruncated: false, wantOwnedLen: 999, wantEvent: false},
+		{name: "at cap (1000)", n: 1000, wantTruncated: false, wantOwnedLen: 1000, wantEvent: false},
+		{name: "just over cap (1001)", n: 1001, wantTruncated: true, wantOwnedLen: maxOwnedKeys, wantEvent: true, wantEventCount: 1},
+		{name: "well over cap (5000)", n: 5000, wantTruncated: true, wantOwnedLen: maxOwnedKeys, wantEvent: true, wantEventCount: 1},
+	}
+
+	for _, tt := range cases {
+		It("table case: "+tt.name, func() {
+			ctx := context.Background()
+
+			sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "trunc-sync",
+					Namespace:  truncNS,
+					Generation: 1,
+				},
+				Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+					Source: fleetmanagementv1alpha1.ExternalSource{
+						Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+						HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
+					},
+					Schedule: "5m",
+					Selector: fleetmanagementv1alpha1.PolicySelector{
+						Matchers: []string{`tier="edge"`},
+					},
+					Mapping: fleetmanagementv1alpha1.AttributeMapping{
+						CollectorIDField: "hostname",
+						AttributeFields:  map[string]string{"env": "env"},
+					},
+				},
+			}
+
+			objs := []client.Object{sync}
+			for _, c := range buildMatchedCollectorList(truncNS, tt.n) {
+				objs = append(objs, c)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
+				WithObjects(objs...).
+				Build()
+			fakeRecorder := record.NewFakeRecorder(64)
+			testSrc := &fakeSource{}
+			testSrc.setRecords(buildRecordsForCollectors(tt.n))
+
+			r := &ExternalAttributeSyncReconciler{
+				Client:   fakeClient,
+				Scheme:   scheme.Scheme,
+				Recorder: fakeRecorder,
+				Factory: func(_ fleetmanagementv1alpha1.ExternalSource, _ *corev1.Secret) (sources.Source, error) {
+					return testSrc, nil
+				},
+			}
+
+			_, err := r.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Namespace: truncNS, Name: "trunc-sync"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			got := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "trunc-sync"}, got)).To(Succeed())
+
+			Expect(got.Status.OwnedKeys).To(HaveLen(tt.wantOwnedLen),
+				"OwnedKeys length must equal min(matched, maxOwnedKeys)")
+			truncCond := findExternalSyncCondition(got, externalSyncConditionTruncated)
+			Expect(truncCond).NotTo(BeNil())
+			if tt.wantTruncated {
+				Expect(truncCond.Status).To(Equal(metav1.ConditionTrue))
+				Expect(truncCond.Reason).To(Equal(externalSyncReasonTruncated))
+			} else {
+				Expect(truncCond.Status).To(Equal(metav1.ConditionFalse))
+				Expect(truncCond.Reason).To(Equal(externalSyncReasonNotTruncated))
+			}
+
+			truncEvents := drainExternalSyncTruncatedEvents(fakeRecorder)
+			if tt.wantEvent {
+				Expect(truncEvents).To(BeNumerically(">=", tt.wantEventCount))
+			} else {
+				Expect(truncEvents).To(Equal(0))
+			}
+		})
+	}
+
+	It("clears Truncated condition when ownedKeys drops below the cap", func() {
+		// Step 1: 1500 records -> truncated.
+		// Step 2: 800 records -> Truncated must flip to False.
+		ctx := context.Background()
+
+		sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "trunc-clear-sync",
+				Namespace:  truncNS,
+				Generation: 1,
+			},
+			Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+				Source: fleetmanagementv1alpha1.ExternalSource{
+					Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+					HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
+				},
+				Schedule: "5m",
+				Selector: fleetmanagementv1alpha1.PolicySelector{
+					Matchers: []string{`tier="edge"`},
+				},
+				Mapping: fleetmanagementv1alpha1.AttributeMapping{
+					CollectorIDField: "hostname",
+					AttributeFields:  map[string]string{"env": "env"},
+				},
+			},
+		}
+
+		objs := []client.Object{sync}
+		for _, c := range buildMatchedCollectorList(truncNS, 1500) {
+			objs = append(objs, c)
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithStatusSubresource(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
+			WithObjects(objs...).
+			Build()
+		fakeRecorder := record.NewFakeRecorder(64)
+		testSrc := &fakeSource{}
+		testSrc.setRecords(buildRecordsForCollectors(1500))
+
+		r := &ExternalAttributeSyncReconciler{
+			Client:   fakeClient,
+			Scheme:   scheme.Scheme,
+			Recorder: fakeRecorder,
+			Factory: func(_ fleetmanagementv1alpha1.ExternalSource, _ *corev1.Secret) (sources.Source, error) {
+				return testSrc, nil
+			},
+		}
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: truncNS, Name: "trunc-clear-sync"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "trunc-clear-sync"}, got)).To(Succeed())
+		Expect(got.Status.OwnedKeys).To(HaveLen(maxOwnedKeys))
+		Expect(findExternalSyncCondition(got, externalSyncConditionTruncated).Status).To(Equal(metav1.ConditionTrue))
+
+		// Step 2: drop the records to 800. Generation unchanged.
+		testSrc.setRecords(buildRecordsForCollectors(800))
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: truncNS, Name: "trunc-clear-sync"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got2 := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "trunc-clear-sync"}, got2)).To(Succeed())
+		Expect(got2.Status.OwnedKeys).To(HaveLen(800))
+		truncCond2 := findExternalSyncCondition(got2, externalSyncConditionTruncated)
+		Expect(truncCond2).NotTo(BeNil())
+		Expect(truncCond2.Status).To(Equal(metav1.ConditionFalse),
+			"Truncated condition must clear when ownedKeys drops below cap")
+	})
+
+	It("clears Stalled when source recovers with the SAME records as last successful run (B3)", func() {
+		// Lock-in for B3: previous no-op compared only counts and owned-keys
+		// content. After a Stalled run, if the source returns the SAME records
+		// as the last successful run, none of those fields change — but the
+		// Stalled condition must still flip from True to False.
+		ctx := context.Background()
+
+		// Step 1: first reconcile, populate OwnedKeys with 1 record.
+		sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "stalled-recovery",
+				Namespace:  truncNS,
+				Generation: 1,
+			},
+			Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+				Source: fleetmanagementv1alpha1.ExternalSource{
+					Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+					HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
+				},
+				Schedule: "5m",
+				Selector: fleetmanagementv1alpha1.PolicySelector{
+					CollectorIDs: []string{"id-00000"},
+				},
+				Mapping: fleetmanagementv1alpha1.AttributeMapping{
+					CollectorIDField: "hostname",
+					AttributeFields:  map[string]string{"env": "env"},
+				},
+				// AllowEmptyResults defaults to false.
+			},
+		}
+		collector := &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: truncNS},
+			Spec: fleetmanagementv1alpha1.CollectorSpec{
+				ID: "id-00000", RemoteAttributes: map[string]string{},
+			},
+			Status: fleetmanagementv1alpha1.CollectorStatus{
+				LocalAttributes: map[string]string{"tier": "edge"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithStatusSubresource(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
+			WithObjects(sync, collector).
+			Build()
+		fakeRecorder := record.NewFakeRecorder(64)
+		testSrc := &fakeSource{}
+		testSrc.setRecords([]sources.Record{
+			{"hostname": "id-00000", "env": "prod"},
+		})
+
+		r := &ExternalAttributeSyncReconciler{
+			Client:   fakeClient,
+			Scheme:   scheme.Scheme,
+			Recorder: fakeRecorder,
+			Factory: func(_ fleetmanagementv1alpha1.ExternalSource, _ *corev1.Secret) (sources.Source, error) {
+				return testSrc, nil
+			},
+		}
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: truncNS, Name: "stalled-recovery"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "stalled-recovery"}, got)).To(Succeed())
+		Expect(got.Status.OwnedKeys).To(HaveLen(1))
+		Expect(got.Status.RecordsApplied).To(BeEquivalentTo(1))
+
+		// Step 2: source returns 0 records — empty-result guard triggers
+		// Stalled. Generation unchanged so the no-op short-circuit logic
+		// has the chance to misbehave.
+		testSrc.setRecords(nil)
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: truncNS, Name: "stalled-recovery"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got2 := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "stalled-recovery"}, got2)).To(Succeed())
+		stalled := findExternalSyncCondition(got2, externalSyncConditionStalled)
+		Expect(stalled).NotTo(BeNil())
+		Expect(stalled.Status).To(Equal(metav1.ConditionTrue),
+			"Stalled must be True after empty-result guard activates")
+		Expect(got2.Status.OwnedKeys).To(HaveLen(1),
+			"OwnedKeys preserved by empty-result guard")
+
+		// Step 3: source recovers with the SAME record. RecordsSeen,
+		// RecordsApplied, OwnedKeys, ObservedGeneration are all unchanged
+		// from step 1. The B3 fix ensures the no-op check catches the
+		// Stalled=True transition and writes status to clear it.
+		testSrc.setRecords([]sources.Record{
+			{"hostname": "id-00000", "env": "prod"},
+		})
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: truncNS, Name: "stalled-recovery"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got3 := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "stalled-recovery"}, got3)).To(Succeed())
+		stalled3 := findExternalSyncCondition(got3, externalSyncConditionStalled)
+		Expect(stalled3).NotTo(BeNil())
+		Expect(stalled3.Status).To(Equal(metav1.ConditionFalse),
+			"Stalled must be cleared after source recovers, even with identical records (B3)")
+		ready := findExternalSyncCondition(got3, conditionTypeReady)
+		Expect(ready).NotTo(BeNil())
+		Expect(ready.Status).To(Equal(metav1.ConditionTrue),
+			"Ready must be True after recovery")
 	})
 })

@@ -157,12 +157,29 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	log := logf.FromContext(ctx)
 	log.Info("reconciling CollectorDiscovery", "namespace", req.Namespace, "name", req.Name)
 
+	// B5: outcome is set at every return path; the deferred increment fires
+	// once per Reconcile call so PromQL rate(...) reflects every exit path
+	// (NotFound, Deleted-spec, ScheduleSkipped, Synced, NoOp, ListFailed,
+	// UpsertFailed, InvalidConfig) instead of only the success / error
+	// status-update paths.
+	var outcome string
+	defer func() {
+		if outcome != "" {
+			fleetResourceSyncedTotal.WithLabelValues("CollectorDiscovery", outcome).Inc()
+		}
+	}()
+
 	cd := &fleetmanagementv1alpha1.CollectorDiscovery{}
 	if err := r.Get(ctx, req.NamespacedName, cd); err != nil {
 		if apierrors.IsNotFound(err) {
 			// No finalizer; orphan-on-delete is the design. Nothing to do.
+			// D5: drop the per-CR gauge series so deleted CRs do not leave
+			// stale labels behind in /metrics output.
+			fleetDiscoveryListSize.DeleteLabelValues(req.Namespace, req.Name)
+			outcome = outcomeNotFound
 			return ctrl.Result{}, nil
 		}
+		outcome = discoveryReasonListCollectorsFailed
 		return ctrl.Result{}, err
 	}
 
@@ -171,6 +188,7 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// orphaned (annotations/labels remain, but no controller acts on
 	// them).
 	if !cd.DeletionTimestamp.IsZero() {
+		outcome = outcomeDeleted
 		return ctrl.Result{}, nil
 	}
 
@@ -179,7 +197,10 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 		log.Error(err, "invalid pollInterval", "namespace", cd.Namespace, "name", cd.Name)
 		r.emitEventf(cd, corev1.EventTypeWarning, discoveryEventReasonFailed,
 			"Invalid pollInterval %q: %v", cd.Spec.PollInterval, err)
-		return r.updateStatusError(ctx, cd, discoveryReasonInvalidConfig, err)
+		var innerOutcome string
+		result, err := r.updateStatusError(ctx, cd, discoveryReasonInvalidConfig, err, &innerOutcome)
+		outcome = innerOutcome
+		return result, err
 	}
 
 	now := r.now()
@@ -190,6 +211,7 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if cd.Status.LastSyncTime != nil && cd.Status.ObservedGeneration == cd.Generation {
 		nextDue := cd.Status.LastSyncTime.Add(pollInterval)
 		if now.Before(nextDue) {
+			outcome = outcomeScheduleSkipped
 			return ctrl.Result{RequeueAfter: nextDue.Sub(now)}, nil
 		}
 	}
@@ -205,9 +227,12 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 			"namespace", cd.Namespace, "name", cd.Name)
 		r.emitEventf(cd, corev1.EventTypeWarning, discoveryEventReasonFailed,
 			"ListCollectors failed: %v", err)
-		if _, statusErr := r.updateStatusError(ctx, cd, discoveryReasonListCollectorsFailed, err); statusErr != nil {
+		var innerOutcome string
+		if _, statusErr := r.updateStatusError(ctx, cd, discoveryReasonListCollectorsFailed, err, &innerOutcome); statusErr != nil {
+			outcome = innerOutcome
 			return ctrl.Result{}, statusErr
 		}
+		outcome = innerOutcome
 		return ctrl.Result{RequeueAfter: defaultDiscoveryRequeueOnError}, nil
 	}
 
@@ -221,9 +246,12 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 		log.Error(err, "upsert phase failed", "namespace", cd.Namespace, "name", cd.Name)
 		r.emitEventf(cd, corev1.EventTypeWarning, discoveryEventReasonFailed,
 			"Upsert phase failed: %v", err)
-		if _, statusErr := r.updateStatusError(ctx, cd, discoveryReasonUpsertFailed, err); statusErr != nil {
+		var innerOutcome string
+		if _, statusErr := r.updateStatusError(ctx, cd, discoveryReasonUpsertFailed, err, &innerOutcome); statusErr != nil {
+			outcome = innerOutcome
 			return ctrl.Result{}, statusErr
 		}
+		outcome = innerOutcome
 		return ctrl.Result{RequeueAfter: defaultDiscoveryRequeueOnError}, nil
 	}
 
@@ -232,9 +260,12 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 		log.Error(err, "stale phase failed", "namespace", cd.Namespace, "name", cd.Name)
 		r.emitEventf(cd, corev1.EventTypeWarning, discoveryEventReasonFailed,
 			"Stale phase failed: %v", err)
-		if _, statusErr := r.updateStatusError(ctx, cd, discoveryReasonUpsertFailed, err); statusErr != nil {
+		var innerOutcome string
+		if _, statusErr := r.updateStatusError(ctx, cd, discoveryReasonUpsertFailed, err, &innerOutcome); statusErr != nil {
+			outcome = innerOutcome
 			return ctrl.Result{}, statusErr
 		}
+		outcome = innerOutcome
 		return ctrl.Result{RequeueAfter: defaultDiscoveryRequeueOnError}, nil
 	}
 
@@ -244,14 +275,20 @@ func (r *CollectorDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 			targetNS, conflict.CRName, conflict.CollectorID, conflict.Reason)
 	}
 
-	if updated, err := r.updateStatusSuccess(ctx, cd, len(surviving), managed, stale, conflicts, now); err != nil {
+	updated, err := r.updateStatusSuccess(ctx, cd, len(surviving), managed, stale, conflicts, now)
+	if err != nil {
+		outcome = discoveryReasonUpsertFailed
 		return ctrl.Result{}, err
-	} else if updated {
+	}
+	if updated {
 		r.emitEventf(cd, corev1.EventTypeNormal, discoveryEventReasonSynced,
 			"Discovered %d collector(s); managing %d, %d stale, %d conflict(s)",
 			len(surviving), managed, len(stale), len(conflicts))
-		fleetResourceSyncedTotal.WithLabelValues("CollectorDiscovery", discoveryReasonSynced).Inc()
 	}
+	// B5: increment Synced for every successful poll, not only when
+	// updated==true. A steady-state CR whose status didn't change is still
+	// a successful reconcile and PromQL rate alarms should reflect it.
+	outcome = discoveryReasonSynced
 
 	return ctrl.Result{RequeueAfter: pollInterval}, nil
 }
@@ -549,6 +586,11 @@ func (r *CollectorDiscoveryReconciler) updateStatusSuccess(
 	cappedConflicts := conflicts
 	if len(conflicts) > maxDiscoveryConflicts {
 		cappedConflicts = conflicts[:maxDiscoveryConflicts]
+		// E16: emit a Warning event so the truncation message's promise to
+		// "check events for the full list" is actually backed by an event
+		// (the per-conflict events emitted upstream cover the full list).
+		r.emitEventf(cd, corev1.EventTypeWarning, "TruncatedConflicts",
+			"discovery has %d conflicts; only first %d kept in status", len(conflicts), maxDiscoveryConflicts)
 		meta.SetStatusCondition(&cd.Status.Conditions, metav1.Condition{
 			Type:               discoveryConditionTruncatedConflicts,
 			Status:             metav1.ConditionTrue,
@@ -581,13 +623,18 @@ func (r *CollectorDiscoveryReconciler) updateStatusSuccess(
 }
 
 // updateStatusError writes a failure condition and returns the
-// original error so controller-runtime backs off appropriately.
+// original error so controller-runtime backs off appropriately. outcome is
+// set to the reason so the deferred Reconcile counter records the precise
+// failure mode.
 func (r *CollectorDiscoveryReconciler) updateStatusError(
 	ctx context.Context,
 	cd *fleetmanagementv1alpha1.CollectorDiscovery,
 	reason string,
 	originalErr error,
+	outcome *string,
 ) (ctrl.Result, error) {
+	*outcome = reason
+
 	now := r.now()
 	nowMeta := metav1.NewTime(now)
 	cd.Status.LastSyncTime = &nowMeta
@@ -598,12 +645,13 @@ func (r *CollectorDiscoveryReconciler) updateStatusError(
 
 	if updateErr := r.Status().Update(ctx, cd); updateErr != nil {
 		if apierrors.IsConflict(updateErr) {
+			*outcome = outcomeNoOp
 			return ctrl.Result{Requeue: true}, nil
 		}
 		logf.FromContext(ctx).Error(updateErr, "failed to update status after error",
 			"namespace", cd.Namespace, "name", cd.Name, "reason", reason)
 	}
-	fleetResourceSyncedTotal.WithLabelValues("CollectorDiscovery", reason).Inc()
+	// Outcome counter (set above) is incremented by the deferred handler in Reconcile().
 	return ctrl.Result{}, originalErr
 }
 

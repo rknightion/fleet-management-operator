@@ -19,15 +19,21 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 	"github.com/grafana/fleet-management-operator/pkg/fleetclient"
@@ -253,7 +259,6 @@ var _ = Describe("RemoteAttributePolicy Controller", func() {
 			NamespacedName: types.NamespacedName{Namespace: policyNS, Name: policyName},
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.Requeue).To(BeFalse())
 		Expect(result.RequeueAfter).To(BeZero())
 
 		got2 := &fleetmanagementv1alpha1.RemoteAttributePolicy{}
@@ -313,4 +318,234 @@ func registerMockCollector(id string, localAttrs map[string]string) {
 		CreatedAt:        &now,
 		UpdatedAt:        &now,
 	})
+}
+
+// findCondition looks up a condition by Type. Returns nil if not present.
+func findPolicyCondition(p *fleetmanagementv1alpha1.RemoteAttributePolicy, condType string) *metav1.Condition {
+	return meta.FindStatusCondition(p.Status.Conditions, condType)
+}
+
+// buildMatchingCollectorList returns n Collector objects all carrying
+// `tier=edge` so they all match a policy with that matcher. Each
+// Collector ID is suffixed with its index so the matched-set is
+// non-degenerate (1000+ distinct IDs).
+func buildMatchingCollectorList(ns string, n int) []*fleetmanagementv1alpha1.Collector {
+	out := make([]*fleetmanagementv1alpha1.Collector, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("collector-%05d", i),
+				Namespace: ns,
+			},
+			Spec: fleetmanagementv1alpha1.CollectorSpec{
+				ID:               fmt.Sprintf("id-%05d", i),
+				RemoteAttributes: map[string]string{},
+			},
+			Status: fleetmanagementv1alpha1.CollectorStatus{
+				LocalAttributes: map[string]string{"tier": "edge"},
+			},
+		})
+	}
+	return out
+}
+
+// E4: Truncation tests for RemoteAttributePolicy.
+//
+// These tests use a fake K8s client (not envtest) so we can quickly fan
+// out 1000+ Collector CRs without paying the apiserver round-trip cost
+// per object. Each test reconciles the Policy directly and inspects the
+// resulting status.
+//
+// Coverage:
+//   - Truncated condition set when matched-set exceeds maxMatchedIDs
+//   - Truncated condition CLEARED on transition back below the cap
+//   - MatchedCount always reflects the FULL count, not the capped slice
+//   - Warning event emitted on truncation
+//   - No-op short-circuit doesn't preserve a stale Truncated=True (B4)
+var _ = Describe("RemoteAttributePolicy Truncation", func() {
+	const policyNS = "policy-trunc"
+
+	type tc struct {
+		name           string
+		matchedCount   int
+		wantTruncated  bool
+		wantStatusLen  int
+		wantEvent      bool
+		wantEventCount int
+	}
+
+	cases := []tc{
+		{name: "below cap (999)", matchedCount: 999, wantTruncated: false, wantStatusLen: 999, wantEvent: false},
+		{name: "at cap (1000)", matchedCount: 1000, wantTruncated: false, wantStatusLen: 1000, wantEvent: false},
+		{name: "just over cap (1001)", matchedCount: 1001, wantTruncated: true, wantStatusLen: maxMatchedIDs, wantEvent: true, wantEventCount: 1},
+		{name: "well over cap (5000)", matchedCount: 5000, wantTruncated: true, wantStatusLen: maxMatchedIDs, wantEvent: true, wantEventCount: 1},
+	}
+
+	for _, tt := range cases {
+		It("table case: "+tt.name, func() {
+			ctx := context.Background()
+
+			policy := &fleetmanagementv1alpha1.RemoteAttributePolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "trunc-policy",
+					Namespace:  policyNS,
+					Generation: 1,
+				},
+				Spec: fleetmanagementv1alpha1.RemoteAttributePolicySpec{
+					Selector: fleetmanagementv1alpha1.PolicySelector{
+						Matchers: []string{`tier="edge"`},
+					},
+					Attributes: map[string]string{"team": "platform"},
+				},
+			}
+
+			objs := []client.Object{policy}
+			for _, c := range buildMatchingCollectorList(policyNS, tt.matchedCount) {
+				objs = append(objs, c)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.RemoteAttributePolicy{}).
+				WithObjects(objs...).
+				Build()
+
+			fakeRecorder := record.NewFakeRecorder(64)
+			r := &RemoteAttributePolicyReconciler{
+				Client:   fakeClient,
+				Scheme:   scheme.Scheme,
+				Recorder: fakeRecorder,
+			}
+
+			_, err := r.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Namespace: policyNS, Name: "trunc-policy"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			got := &fleetmanagementv1alpha1.RemoteAttributePolicy{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: policyNS, Name: "trunc-policy"}, got)).To(Succeed())
+
+			// MatchedCount must always reflect the FULL count, not the cap.
+			Expect(got.Status.MatchedCount).To(BeEquivalentTo(tt.matchedCount))
+			Expect(got.Status.MatchedCollectorIDs).To(HaveLen(tt.wantStatusLen))
+
+			truncCond := findPolicyCondition(got, policyConditionTypeTruncated)
+			Expect(truncCond).NotTo(BeNil())
+			if tt.wantTruncated {
+				Expect(truncCond.Status).To(Equal(metav1.ConditionTrue))
+				Expect(truncCond.Reason).To(Equal(policyConditionReasonTruncated))
+			} else {
+				Expect(truncCond.Status).To(Equal(metav1.ConditionFalse))
+				Expect(truncCond.Reason).To(Equal(policyConditionReasonNotTruncated))
+			}
+
+			// Drain events. A Truncated reason should appear iff truncated.
+			truncEvents := drainTruncatedEvents(fakeRecorder)
+			if tt.wantEvent {
+				Expect(truncEvents).To(BeNumerically(">=", tt.wantEventCount),
+					"expected at least %d Truncated event(s), got %d", tt.wantEventCount, truncEvents)
+			} else {
+				Expect(truncEvents).To(Equal(0), "did not expect a Truncated event")
+			}
+		})
+	}
+
+	It("clears Truncated condition when matched-set drops below the cap", func() {
+		// Step 1: 1500 matching collectors -> Truncated=True.
+		// Step 2: drop to 800 collectors and re-reconcile -> Truncated=False.
+		// This is the B4 lock-in: previous no-op compared only the capped
+		// slice, so a transition where the new (untruncated) IDs happened
+		// to equal the old capped slice would leave Truncated=True.
+		ctx := context.Background()
+
+		policy := &fleetmanagementv1alpha1.RemoteAttributePolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "trunc-clear",
+				Namespace:  policyNS,
+				Generation: 1,
+			},
+			Spec: fleetmanagementv1alpha1.RemoteAttributePolicySpec{
+				Selector: fleetmanagementv1alpha1.PolicySelector{
+					Matchers: []string{`tier="edge"`},
+				},
+				Attributes: map[string]string{"team": "platform"},
+			},
+		}
+
+		// Initial fan-out: 1500 collectors > maxMatchedIDs.
+		initial := buildMatchingCollectorList(policyNS, 1500)
+		objs := []client.Object{policy}
+		for _, c := range initial {
+			objs = append(objs, c)
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithStatusSubresource(&fleetmanagementv1alpha1.RemoteAttributePolicy{}).
+			WithObjects(objs...).
+			Build()
+		fakeRecorder := record.NewFakeRecorder(64)
+		r := &RemoteAttributePolicyReconciler{
+			Client:   fakeClient,
+			Scheme:   scheme.Scheme,
+			Recorder: fakeRecorder,
+		}
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: policyNS, Name: "trunc-clear"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got := &fleetmanagementv1alpha1.RemoteAttributePolicy{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: policyNS, Name: "trunc-clear"}, got)).To(Succeed())
+		Expect(got.Status.MatchedCount).To(BeEquivalentTo(1500))
+		Expect(got.Status.MatchedCollectorIDs).To(HaveLen(maxMatchedIDs))
+		truncCond := findPolicyCondition(got, policyConditionTypeTruncated)
+		Expect(truncCond).NotTo(BeNil())
+		Expect(truncCond.Status).To(Equal(metav1.ConditionTrue))
+
+		// Step 2: delete collectors above index 800 so MatchedCount=800,
+		// well below the cap. Re-reconcile (Generation unchanged — B4
+		// scenario: spec didn't change but matched-set did).
+		for i := 800; i < 1500; i++ {
+			c := initial[i]
+			Expect(fakeClient.Delete(ctx, c)).To(Succeed())
+		}
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: policyNS, Name: "trunc-clear"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got2 := &fleetmanagementv1alpha1.RemoteAttributePolicy{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: policyNS, Name: "trunc-clear"}, got2)).To(Succeed())
+		Expect(got2.Status.MatchedCount).To(BeEquivalentTo(800))
+		Expect(got2.Status.MatchedCollectorIDs).To(HaveLen(800))
+		truncCond2 := findPolicyCondition(got2, policyConditionTypeTruncated)
+		Expect(truncCond2).NotTo(BeNil())
+		Expect(truncCond2.Status).To(Equal(metav1.ConditionFalse),
+			"Truncated condition must be cleared when matched-set drops below cap (B4)")
+		Expect(truncCond2.Reason).To(Equal(policyConditionReasonNotTruncated))
+	})
+})
+
+// drainTruncatedEvents pulls events off a fake recorder's Events channel
+// without blocking and returns the count of Warning events whose message
+// contains "Truncated".
+func drainTruncatedEvents(rec *record.FakeRecorder) int {
+	count := 0
+	for {
+		select {
+		case ev := <-rec.Events:
+			if containsTruncated(ev) {
+				count++
+			}
+		default:
+			return count
+		}
+	}
+}
+
+// containsTruncated reports whether the (FakeRecorder format) event string
+// contains the substring "Truncated".
+func containsTruncated(s string) bool {
+	return strings.Contains(s, "Truncated")
 }

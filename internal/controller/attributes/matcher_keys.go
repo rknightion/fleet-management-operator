@@ -16,17 +16,49 @@ limitations under the License.
 
 package attributes
 
+const (
+	// SyntheticHasNegationKey is a sentinel index entry emitted by MatcherKeys
+	// for any matcher set containing a `!=` or `!~` operator. A negation
+	// matcher (e.g. `team!=foo`) is intended to match Collectors that LACK
+	// the referenced key — so the index, which is normally queried by the
+	// Collector's existing attribute keys, would never enqueue the policy
+	// for a Collector without that key. The selective Collector watch
+	// handler must always query this bucket in addition to the Collector's
+	// attribute keys to make negation-only policies reconcile correctly.
+	SyntheticHasNegationKey = "__has_negation__"
+
+	// SyntheticCollectorIDsOnlyKey is a sentinel index entry emitted by the
+	// IndexField extractor wrapper (NOT by MatcherKeys directly, which only
+	// sees matchers) when a policy/sync has a non-empty
+	// `selector.collectorIDs` list and an empty `selector.matchers` set.
+	// Such selectors return zero matcher keys; without this sentinel they
+	// would be indexed under nothing and would never wake on Collector add.
+	// The selective Collector watch handler must always query this bucket.
+	SyntheticCollectorIDsOnlyKey = "__collector_ids_only__"
+)
+
 // MatcherKeys parses a slice of Prometheus-style matcher strings and returns
-// the deduplicated set of label key names they reference.
+// the deduplicated set of label key names they reference. When any matcher
+// uses a negation operator (`!=` or `!~`) it additionally emits the
+// SyntheticHasNegationKey sentinel so the selective Collector watch handler
+// can enqueue policies whose negation matchers should match Collectors that
+// LACK the referenced key.
 // Used to build an IndexField enabling selective Collector watch handlers.
 func MatcherKeys(matchers []string) []string {
 	seen := map[string]struct{}{}
+	hasNegation := false
 	for _, m := range matchers {
 		parts := matcherPattern.FindStringSubmatch(m)
 		if parts == nil {
 			continue
 		}
 		seen[parts[1]] = struct{}{}
+		if parts[2] == "!=" || parts[2] == "!~" {
+			hasNegation = true
+		}
+	}
+	if hasNegation {
+		seen[SyntheticHasNegationKey] = struct{}{}
 	}
 	keys := make([]string, 0, len(seen))
 	for k := range seen {

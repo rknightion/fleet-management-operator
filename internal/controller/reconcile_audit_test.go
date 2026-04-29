@@ -209,7 +209,10 @@ func TestObservedGenerationGuard(t *testing.T) {
 
 	finalizerIndex := strings.Index(reconcileBody, "ContainsFinalizer(pipeline, pipelineFinalizer)")
 	observedGenIndex := strings.Index(reconcileBody, observedGenCheck)
-	reconcileNormalIndex := strings.Index(reconcileBody, "reconcileNormal(ctx, pipeline)")
+	// B5 added a *string outcome out-parameter to reconcileNormal so the
+	// deferred metric counter can record the precise terminal reason. Match
+	// the open-paren prefix to stay tolerant of trailing arguments.
+	reconcileNormalIndex := strings.Index(reconcileBody, "reconcileNormal(ctx, pipeline")
 
 	assert.Greater(t, observedGenIndex, finalizerIndex,
 		"RECON-03 violation: ObservedGeneration check must come AFTER finalizer addition. "+

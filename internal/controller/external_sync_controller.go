@@ -161,6 +161,17 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 	log := logf.FromContext(ctx)
 	log.Info("reconciling ExternalAttributeSync", "namespace", req.Namespace, "name", req.Name)
 
+	// B5: outcome is set at every return path; the deferred increment fires
+	// once per Reconcile call so PromQL rate(...) reflects every exit path
+	// (NotFound, NoOp, Stalled, Synced, etc.) instead of only the success /
+	// error status-update paths.
+	var outcome string
+	defer func() {
+		if outcome != "" {
+			fleetResourceSyncedTotal.WithLabelValues("ExternalAttributeSync", outcome).Inc()
+		}
+	}()
+
 	sync := &fleetmanagementv1alpha1.ExternalAttributeSync{}
 	if err := r.Get(ctx, req.NamespacedName, sync); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -168,8 +179,14 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 			// inherited keys from this sync will lose them on their
 			// next Collector reconcile because they read live
 			// ExternalAttributeSync state.
+			//
+			// D5: drop the owned-keys gauge series for this CR so deleted
+			// CRs don't leave ghost time series in Prometheus forever.
+			fleetExternalSyncOwnedKeys.DeleteLabelValues(req.Namespace, req.Name)
+			outcome = outcomeNotFound
 			return ctrl.Result{}, nil
 		}
+		outcome = externalSyncReasonSourceFailed
 		return ctrl.Result{}, err
 	}
 
@@ -179,6 +196,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 			"namespace", sync.Namespace, "name", sync.Name, "schedule", sync.Spec.Schedule)
 		r.emitEventf(sync, corev1.EventTypeWarning, externalSyncEventReasonSourceFailed,
 			"Invalid schedule %q: %v", sync.Spec.Schedule, scheduleErr)
+		outcome = externalSyncReasonScheduleErr
 		return r.updateStatusError(ctx, sync, externalSyncReasonScheduleErr, scheduleErr)
 	}
 
@@ -189,6 +207,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		r.emitEventf(sync, corev1.EventTypeWarning, externalSyncEventReasonSourceFailed,
 			"Failed to resolve source secret: %v", err)
 		_, statusErr := r.updateStatusError(ctx, sync, externalSyncReasonSourceFailed, err)
+		outcome = externalSyncReasonSourceFailed
 		if statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -197,6 +216,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 
 	if r.Factory == nil {
 		err := fmt.Errorf("no SourceFactory registered for ExternalAttributeSync controller")
+		outcome = externalSyncReasonSourceFailed
 		return r.updateStatusError(ctx, sync, externalSyncReasonSourceFailed, err)
 	}
 
@@ -207,6 +227,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		r.emitEventf(sync, corev1.EventTypeWarning, externalSyncEventReasonSourceFailed,
 			"Failed to construct %s source: %v", sync.Spec.Source.Kind, err)
 		_, statusErr := r.updateStatusError(ctx, sync, externalSyncReasonSourceFailed, err)
+		outcome = externalSyncReasonSourceFailed
 		if statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -220,6 +241,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		r.emitEventf(sync, corev1.EventTypeWarning, externalSyncEventReasonSourceFailed,
 			"Source Fetch failed: %v", err)
 		_, statusErr := r.updateStatusError(ctx, sync, externalSyncReasonSourceFailed, err)
+		outcome = externalSyncReasonSourceFailed
 		if statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -231,11 +253,13 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 
 	matchedCollectors, err := r.matchedCollectors(ctx, sync)
 	if err != nil {
+		outcome = externalSyncReasonSourceFailed
 		return ctrl.Result{}, err
 	}
 
 	owned, recordsApplied, projectionErr := r.projectRecords(records, sync, matchedCollectors)
 	if projectionErr != nil {
+		outcome = externalSyncReasonSourceFailed
 		return r.updateStatusError(ctx, sync, externalSyncReasonSourceFailed, projectionErr)
 	}
 
@@ -262,14 +286,23 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 
 		if err := r.Status().Update(ctx, sync); err != nil {
 			if apierrors.IsConflict(err) {
+				outcome = outcomeNoOp
 				return ctrl.Result{Requeue: true}, nil
 			}
+			outcome = externalSyncReasonSourceFailed
 			return ctrl.Result{}, err
 		}
+		outcome = externalSyncReasonStalled
 		return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
 	}
 
 	ownedStatus, truncated := ownedKeysToStatus(owned)
+
+	// D8: record owned-key count for this CR up-front, BEFORE the no-op
+	// short-circuit. This ensures the gauge reflects current intent on
+	// operator restart even when the status itself is steady-state and the
+	// reconcile takes the no-op path.
+	fleetExternalSyncOwnedKeys.WithLabelValues(sync.Namespace, sync.Name).Set(float64(len(ownedStatus)))
 
 	// OBS-03: record sync age using the previous LastSuccessTime before overwriting it
 	if sync.Status.LastSuccessTime != nil && !sync.Status.LastSuccessTime.IsZero() {
@@ -277,15 +310,16 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 			Observe(time.Since(sync.Status.LastSuccessTime.Time).Seconds())
 	}
 
-	// No-op check: if spec generation, counts, and owned-keys content are
-	// all unchanged, skip the status write. This avoids multi-KB writes to
-	// etcd on every schedule tick when the external source has not changed.
-	if sync.Status.ObservedGeneration == sync.Generation &&
-		sync.Status.RecordsSeen == int32(len(records)) &&
-		sync.Status.RecordsApplied == int32(recordsApplied) &&
-		ownedKeyEntriesEqual(sync.Status.OwnedKeys, ownedStatus) {
-		log.V(1).Info("no-op sync: source and owned-keys unchanged, skipping status write",
+	// No-op check: skip the status write only when EVERY observable field
+	// of the desired status already equals the current status. The previous
+	// implementation compared only generation, counts and owned-keys —
+	// missing the Stalled / Truncated condition transitions (B3, B4).
+	// Without this check, a stalled source that recovers with the same
+	// records as the last successful run would leave Stalled=True forever.
+	if externalSyncStatusUnchanged(sync, len(records), recordsApplied, ownedStatus, truncated) {
+		log.V(1).Info("no-op sync: source, owned-keys, and conditions unchanged, skipping status write",
 			"namespace", sync.Namespace, "name", sync.Name)
+		outcome = outcomeNoOp
 		return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
 	}
 
@@ -316,9 +350,6 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		})
 	}
 
-	// OBS-04: record owned-key count for this CR
-	fleetExternalSyncOwnedKeys.WithLabelValues(sync.Namespace, sync.Name).Set(float64(len(sync.Status.OwnedKeys)))
-
 	setStalledCondition(&sync.Status.Conditions, sync.Generation, false, "")
 	setReadyCondition(&sync.Status.Conditions, sync.Generation, true, externalSyncReasonSynced,
 		fmt.Sprintf("Fetched %d records, applied %d to %d collector(s)", len(records), recordsApplied, len(owned)))
@@ -327,16 +358,102 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 
 	if err := r.Status().Update(ctx, sync); err != nil {
 		if apierrors.IsConflict(err) {
+			outcome = outcomeNoOp
 			return ctrl.Result{Requeue: true}, nil
 		}
+		outcome = externalSyncReasonSourceFailed
 		return ctrl.Result{}, err
 	}
 
 	r.emitEventf(sync, corev1.EventTypeNormal, externalSyncEventReasonSynced,
 		"Synced %d records, %d applied across %d collector(s)", len(records), recordsApplied, len(owned))
 
-	fleetResourceSyncedTotal.WithLabelValues("ExternalAttributeSync", externalSyncReasonSynced).Inc()
+	if truncated {
+		outcome = externalSyncReasonTruncated
+	} else {
+		outcome = externalSyncReasonSynced
+	}
 	return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
+}
+
+// externalSyncStatusUnchanged reports whether the desired status implied by
+// (recordsSeen, recordsApplied, ownedStatus, truncated) is already reflected
+// in sync.Status, including the Stalled and Truncated condition states.
+//
+// B3/B4: comparing only generation + counts + owned-keys is insufficient;
+// it lets a Stalled→same-data-recovery transition keep Stalled=True forever
+// because none of those fields change but the desired Stalled value flips.
+func externalSyncStatusUnchanged(
+	sync *fleetmanagementv1alpha1.ExternalAttributeSync,
+	recordsSeen int,
+	recordsApplied int,
+	ownedStatus []fleetmanagementv1alpha1.OwnedKeyEntry,
+	truncated bool,
+) bool {
+	if sync.Status.ObservedGeneration != sync.Generation {
+		return false
+	}
+	if sync.Status.RecordsSeen != int32(recordsSeen) {
+		return false
+	}
+	if sync.Status.RecordsApplied != int32(recordsApplied) {
+		return false
+	}
+	if !ownedKeyEntriesEqual(sync.Status.OwnedKeys, ownedStatus) {
+		return false
+	}
+	if !externalSyncTruncatedConditionMatches(sync, truncated) {
+		return false
+	}
+	// On the success path, Stalled is always False. If currently True, this
+	// is a recovery and we MUST write status to clear the condition.
+	if !externalSyncStalledIsFalse(sync) {
+		return false
+	}
+	// Likewise Ready=True/Synced=True on the success path. If either is
+	// not currently True, this is a recovery and we must write status.
+	if !externalSyncReadyAndSyncedAreTrue(sync) {
+		return false
+	}
+	return true
+}
+
+// externalSyncTruncatedConditionMatches returns true when the existing
+// Truncated condition is already in the desired state (True iff want is
+// true; missing condition counts as False).
+func externalSyncTruncatedConditionMatches(sync *fleetmanagementv1alpha1.ExternalAttributeSync, want bool) bool {
+	cond := meta.FindStatusCondition(sync.Status.Conditions, externalSyncConditionTruncated)
+	if cond == nil {
+		return !want
+	}
+	if want {
+		return cond.Status == metav1.ConditionTrue
+	}
+	return cond.Status == metav1.ConditionFalse
+}
+
+// externalSyncStalledIsFalse returns true when the Stalled condition is
+// either absent or set to False. The success path always wants Stalled=False.
+func externalSyncStalledIsFalse(sync *fleetmanagementv1alpha1.ExternalAttributeSync) bool {
+	cond := meta.FindStatusCondition(sync.Status.Conditions, externalSyncConditionStalled)
+	if cond == nil {
+		return true
+	}
+	return cond.Status == metav1.ConditionFalse
+}
+
+// externalSyncReadyAndSyncedAreTrue returns true when both Ready and Synced
+// conditions are currently True. The success path always wants both True.
+func externalSyncReadyAndSyncedAreTrue(sync *fleetmanagementv1alpha1.ExternalAttributeSync) bool {
+	ready := meta.FindStatusCondition(sync.Status.Conditions, conditionTypeReady)
+	if ready == nil || ready.Status != metav1.ConditionTrue {
+		return false
+	}
+	synced := meta.FindStatusCondition(sync.Status.Conditions, conditionTypeSynced)
+	if synced == nil || synced.Status != metav1.ConditionTrue {
+		return false
+	}
+	return true
 }
 
 // scheduleNext computes the next requeue time for the given schedule. Tries
@@ -488,7 +605,7 @@ func (r *ExternalAttributeSyncReconciler) updateStatusError(
 			"namespace", sync.Namespace, "name", sync.Name, "reason", reason)
 	}
 
-	fleetResourceSyncedTotal.WithLabelValues("ExternalAttributeSync", reason).Inc()
+	// B5: outcome counter is incremented by the deferred handler in Reconcile.
 	return ctrl.Result{}, originalErr
 }
 
@@ -507,7 +624,15 @@ func (r *ExternalAttributeSyncReconciler) SetupWithManager(ctx context.Context, 
 		externalSyncMatcherKeyIndex,
 		func(o client.Object) []string {
 			s := o.(*fleetmanagementv1alpha1.ExternalAttributeSync)
-			return attributes.MatcherKeys(s.Spec.Selector.Matchers)
+			keys := attributes.MatcherKeys(s.Spec.Selector.Matchers)
+			// B2: when a sync selects purely by collectorIDs (no matchers),
+			// it produces zero matcher keys. Without a synthetic sentinel it
+			// would be indexed under nothing and would never wake on
+			// Collector add. The watch handler always queries this bucket.
+			if len(s.Spec.Selector.Matchers) == 0 && len(s.Spec.Selector.CollectorIDs) > 0 {
+				keys = append(keys, attributes.SyntheticCollectorIDsOnlyKey)
+			}
+			return keys
 		},
 	); err != nil {
 		return fmt.Errorf("indexing ExternalAttributeSync matcher keys: %w", err)
@@ -538,9 +663,18 @@ func (r *ExternalAttributeSyncReconciler) SetupWithManager(ctx context.Context, 
 // the changed Collector's attributes. This avoids the O(collectors * syncs)
 // fan-out from the naive "enqueue every sync" approach.
 //
-// When the Collector has no attributes, we fall back to the broad
-// namespace-wide enqueue so that new Collectors are still picked up by all
-// syncs, including those matching via CollectorIDs.
+// To preserve correctness for negation-only and collectorIDs-only syncs
+// (which would otherwise be invisible to a key-keyed index), the handler
+// also unconditionally queries two synthetic sentinel buckets that the
+// IndexField extractor populates for those sync shapes:
+//
+//   - attributes.SyntheticHasNegationKey — set when MatcherKeys sees a
+//     `!=` or `!~` operator. A negation matcher matches Collectors LACKING
+//     the referenced key, so a key-keyed index would otherwise miss it.
+//   - attributes.SyntheticCollectorIDsOnlyKey — set by the IndexField
+//     wrapper when a sync has only spec.selector.collectorIDs and no
+//     matchers. Such a sync produces zero matcher keys and would
+//     otherwise be indexed under nothing.
 func (r *ExternalAttributeSyncReconciler) mapCollectorToAffectedSyncs(ctx context.Context, obj client.Object) []reconcile.Request {
 	log := logf.FromContext(ctx)
 
@@ -559,10 +693,11 @@ func (r *ExternalAttributeSyncReconciler) mapCollectorToAffectedSyncs(ctx contex
 	}
 	// Always include the synthetic collector.id key.
 	collectorKeys["collector.id"] = struct{}{}
-
-	if len(collectorKeys) == 0 {
-		return r.allSyncsInNamespace(ctx, collector.Namespace)
-	}
+	// Always include both synthetic sentinels so that negation-only and
+	// collectorIDs-only syncs are enqueued on every Collector event.
+	// See doc comment above for the rationale.
+	collectorKeys[attributes.SyntheticHasNegationKey] = struct{}{}
+	collectorKeys[attributes.SyntheticCollectorIDsOnlyKey] = struct{}{}
 
 	seen := map[types.NamespacedName]struct{}{}
 	var reqs []reconcile.Request
@@ -586,28 +721,6 @@ func (r *ExternalAttributeSyncReconciler) mapCollectorToAffectedSyncs(ctx contex
 				reqs = append(reqs, reconcile.Request{NamespacedName: nn})
 			}
 		}
-	}
-	return reqs
-}
-
-// allSyncsInNamespace returns reconcile requests for every
-// ExternalAttributeSync in the given namespace. Used as a fallback when a
-// Collector has no attributes to key on.
-func (r *ExternalAttributeSyncReconciler) allSyncsInNamespace(ctx context.Context, ns string) []reconcile.Request {
-	log := logf.FromContext(ctx)
-
-	var list fleetmanagementv1alpha1.ExternalAttributeSyncList
-	if err := r.List(ctx, &list, client.InNamespace(ns)); err != nil {
-		log.Error(err, "failed to list ExternalAttributeSyncs for Collector watch fan-out (fallback)",
-			"namespace", ns)
-		return nil
-	}
-	reqs := make([]reconcile.Request, len(list.Items))
-	for i := range list.Items {
-		reqs[i] = reconcile.Request{NamespacedName: types.NamespacedName{
-			Namespace: list.Items[i].Namespace,
-			Name:      list.Items[i].Name,
-		}}
 	}
 	return reqs
 }
