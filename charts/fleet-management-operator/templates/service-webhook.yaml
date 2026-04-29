@@ -1,3 +1,4 @@
+{{- if or .Values.controllers.pipeline.enabled .Values.controllers.collector.enabled .Values.controllers.collectorDiscovery.enabled .Values.controllers.externalAttributeSync.enabled .Values.controllers.remoteAttributePolicy.enabled .Values.controllers.tenantPolicy.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -12,3 +13,4 @@ spec:
     protocol: TCP
   selector:
     {{- include "fleet-management-operator.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -135,7 +135,7 @@ is gated by the flag.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| affinity | object | `{}` |  |
+| affinity | object | `{}` | Pod affinity / anti-affinity rules. Empty default plus `replicaCount > 1` triggers an auto-injected soft hostname anti-affinity. Set non-empty to opt out of the auto-injected default. |
 | alerts.enabled | bool | `false` |  |
 | alerts.labels | object | `{}` |  |
 | controllers.collector.enabled | bool | `false` | Enable the Collector reconciler and its admission webhook. Manages remote attributes on a registered collector. |
@@ -149,6 +149,7 @@ is gated by the flag.
 | controllers.remoteAttributePolicy.enabled | bool | `false` | Enable the RemoteAttributePolicy reconciler and its admission webhook. Bulk attribute assignment by selector across many Collectors. |
 | controllers.remoteAttributePolicy.maxConcurrent | int | `4` | Max concurrent reconciles for RemoteAttributePolicy. Safe to increase: reconciles are pure K8s cache reads with no Fleet API calls. Pipeline and Collector always run at 1 because they share the Fleet API rate budget. |
 | controllers.tenantPolicy.enabled | bool | `false` | Enable TenantPolicy enforcement. When set, validating webhooks for Pipeline / RemoteAttributePolicy / ExternalAttributeSync require K8s subjects matched by a TenantPolicy CR to include at least one of the policy's required matchers. Default-allow when no policy matches; the CRD is always installed so policies can be authored ahead of enforcement. |
+| enableHTTP2 | bool | `false` | Enable HTTP/2 on the metrics and webhook servers. Default `false` mitigates the HTTP/2 Stream Cancellation (CVE GHSA-qppj-fm5r-hxr3) and Rapid Reset (CVE GHSA-4374-p667-p6c8) DoS classes — the K8s API server webhook client and standard Prometheus scrapers both speak HTTP/1.1, so disabling HTTP/2 has no practical impact for in-cluster traffic. Flip to `true` only if your scrape path or webhook caller mandates HTTP/2 (rare). |
 | fleetManagement.apiRateBurst | int | `50` | Token bucket size for the Fleet API rate limiter. Absorbs startup / post-restart spikes without changing the sustained RPS ceiling. burst=1 causes livelock at scale (request queue backs up to the 30s HTTP timeout). |
 | fleetManagement.apiRatePerSecond | int | `3` | Sustained Fleet Management API rate limit in requests per second. Match this to your stack's server-side `api:` rate setting. Standard stacks: 3. |
 | fleetManagement.baseUrl | string | `""` | Fleet Management API base URL. Required unless `existingSecret` is set. Example: `https://fleet-management-prod-us-central-0.grafana.net/pipeline.v1.PipelineService/` |
@@ -189,15 +190,15 @@ is gated by the flag.
 | nameOverride | string | `""` | Override the chart name (defaults to "fleet-management-operator"). |
 | nodeSelector | object | `{}` |  |
 | podAnnotations | object | `{}` |  |
-| podDisruptionBudget.enabled | bool | `false` |  |
-| podDisruptionBudget.minAvailable | int | `1` |  |
+| podDisruptionBudget.enabled | bool | `false` | Enable the PodDisruptionBudget. Only takes effect when `replicaCount > 1`. |
+| podDisruptionBudget.minAvailable | int | `1` | Minimum available replicas during voluntary disruption. For HA (replicaCount > 1), prefer `maxUnavailable: 1` over `minAvailable` for graceful rolling updates. |
 | podLabels | object | `{}` |  |
 | podSecurityContext.fsGroup | int | `65532` |  |
 | podSecurityContext.runAsNonRoot | bool | `true` |  |
 | podSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | priorityClassName | string | `""` |  |
 | rbac.create | bool | `true` |  |
-| replicaCount | int | `1` | Number of operator replicas. Only one is active at a time via leader election. Set > 1 for HA — also see `podDisruptionBudget` and `affinity.podAntiAffinity`. |
+| replicaCount | int | `1` | Number of operator replicas. Only one is active at a time via leader election. Set > 1 for HA — also see `podDisruptionBudget` and `affinity.podAntiAffinity`. At replicaCount > 1 with empty `affinity`, the chart auto-injects a soft pod anti-affinity (hostname topology) so replicas spread across nodes. |
 | resources | object | `{"limits":{"cpu":"500m","memory":"2Gi"},"requests":{"cpu":"10m","memory":"512Mi"}}` | Pod CPU/memory resource requests and limits. Defaults are tuned for the 30k-Collector tier; see the inline sizing comment above for smaller fleets. |
 | securityContext.allowPrivilegeEscalation | bool | `false` |  |
 | securityContext.capabilities.drop[0] | string | `"ALL"` |  |
@@ -210,9 +211,15 @@ is gated by the flag.
 | serviceAccount.name | string | `""` |  |
 | terminationGracePeriodSeconds | int | `30` |  |
 | tolerations | list | `[]` |  |
-| webhook.certDir | string | `""` | Directory containing webhook TLS cert files (tls.crt, tls.key). When set, passed as `--webhook-cert-path` to the manager. Leave empty to use controller-runtime's auto-generated self-signed certs (dev/test only). Mutually exclusive with `webhook.certManager.enabled`. |
+| updateStrategy.rollingUpdate.maxSurge | int | `1` | Max pods over `replicas` allowed during a rollout. 1 lets the new ReplicaSet bring up one pod before the old one is removed. |
+| updateStrategy.rollingUpdate.maxUnavailable | int | `0` | Max pods unavailable during a rollout. 0 keeps at least one Ready replica throughout the rollout — required for HA admission availability. |
+| updateStrategy.type | string | `"RollingUpdate"` | Deployment strategy type. RollingUpdate (default) or Recreate. |
+| webhook.certDir | string | `""` | Directory containing webhook TLS cert files (tls.crt, tls.key). When set, passed as `--webhook-cert-path` to the manager AND requires `webhook.certSecretName` so the chart can mount that Secret read-only at this path. Leave empty to use controller-runtime's auto-generated self-signed certs (dev/test only). Mutually exclusive with `webhook.certManager.enabled` — the chart fails to render if both are set. |
+| webhook.certKey | string | `"tls.key"` | Filename of the webhook TLS private key inside `webhook.certDir` or the cert-manager-mounted Secret. Override only when the issuer or external Secret writes a non-default key name. Default `tls.key` matches cert-manager and standard Secret-as-volume conventions. |
 | webhook.certManager.enabled | bool | `false` | Use cert-manager to issue and rotate webhook TLS certs. Recommended for HA (replicas > 1) — controller-runtime's in-memory self-signed fallback regenerates per pod, breaking webhook calls under HA. Requires cert-manager to be installed in the cluster. |
 | webhook.certManager.issuerRef | object | `{"kind":"ClusterIssuer","name":"selfsigned-issuer"}` | Reference to an existing cert-manager `Issuer` or `ClusterIssuer`. Create the issuer before enabling. |
+| webhook.certName | string | `"tls.crt"` | Filename of the webhook TLS certificate inside `webhook.certDir` or the cert-manager-mounted Secret. Override only when the issuer or external Secret writes a non-default key name. Default `tls.crt` matches cert-manager and standard Secret-as-volume conventions. |
+| webhook.certSecretName | string | `""` | Name of a pre-existing Secret containing `tls.crt` and `tls.key` to mount at `webhook.certDir`. Required when `webhook.certDir` is non-empty and `webhook.certManager.enabled` is false. The Secret must already exist in the release namespace; the chart does not create it. |
 | webhook.port | int | `9443` | Port the webhook server listens on inside the pod. Wired into both the `--webhook-port` flag and the Service `targetPort`. |
 
 ## Upgrading

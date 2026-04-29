@@ -45,7 +45,24 @@ fullnameOverride: ""
 
 # -- Number of operator replicas. Only one is active at a time via leader election.
 # Set > 1 for HA — also see `podDisruptionBudget` and `affinity.podAntiAffinity`.
+# At replicaCount > 1 with empty `affinity`, the chart auto-injects a soft pod
+# anti-affinity (hostname topology) so replicas spread across nodes.
 replicaCount: 1
+
+# Deployment update strategy. Default RollingUpdate with maxUnavailable=0 and
+# maxSurge=1 keeps at least one pod Ready throughout a rollout. With
+# `webhook.failurePolicy=Fail` (chart default), this avoids an admission outage
+# window where every old pod has terminated before the new one becomes Ready.
+updateStrategy:
+  # -- Deployment strategy type. RollingUpdate (default) or Recreate.
+  type: RollingUpdate
+  rollingUpdate:
+    # -- Max pods unavailable during a rollout. 0 keeps at least one Ready
+    # replica throughout the rollout — required for HA admission availability.
+    maxUnavailable: 0
+    # -- Max pods over `replicas` allowed during a rollout. 1 lets the new
+    # ReplicaSet bring up one pod before the old one is removed.
+    maxSurge: 1
 
 # Fleet Management API credentials
 # These can be provided via values or existingSecret
@@ -214,9 +231,16 @@ nodeSelector: {}
 # Tolerations
 tolerations: []
 
-# Affinity rules
+# Affinity rules.
+# When `replicaCount > 1` AND this is empty, the chart auto-injects a soft
+# podAntiAffinity by `kubernetes.io/hostname` so replicas spread across nodes.
+# Set explicitly here to override (e.g. for required hard anti-affinity, or to
+# pin to specific zones / node groups).
+# -- Pod affinity / anti-affinity rules. Empty default plus `replicaCount > 1`
+# triggers an auto-injected soft hostname anti-affinity. Set non-empty to opt
+# out of the auto-injected default.
 affinity: {}
-# Example anti-affinity to spread replicas across nodes (for replicaCount > 1):
+# Example explicit anti-affinity to spread replicas across nodes (for replicaCount > 1):
 # affinity:
 #   podAntiAffinity:
 #     preferredDuringSchedulingIgnoredDuringExecution:
@@ -230,11 +254,18 @@ affinity: {}
 # Priority class name
 priorityClassName: ""
 
-# Pod disruption budget
+# Pod disruption budget.
+# The chart only renders the PDB when `enabled: true` AND `replicaCount > 1`.
+# At replicaCount=1, a PDB with minAvailable=1 (or maxUnavailable=0) blocks
+# node drains because there is no second pod to satisfy the budget. This guard
+# is in the template (see poddisruptionbudget.yaml); flipping `enabled: true`
+# at replicaCount=1 silently does nothing.
 podDisruptionBudget:
+  # -- Enable the PodDisruptionBudget. Only takes effect when `replicaCount > 1`.
   enabled: false
-  # WARNING: Do NOT enable with minAvailable: 1 when replicaCount: 1 — it will block node drains.
-  # When enabling PDB for HA (replicaCount > 1), prefer maxUnavailable: 1 over minAvailable.
+  # -- Minimum available replicas during voluntary disruption. For HA
+  # (replicaCount > 1), prefer `maxUnavailable: 1` over `minAvailable` for
+  # graceful rolling updates.
   minAvailable: 1
   # maxUnavailable: 1  # Recommended over minAvailable for graceful rolling updates
 
@@ -263,10 +294,35 @@ webhook:
       name: selfsigned-issuer
       kind: ClusterIssuer
   # -- Directory containing webhook TLS cert files (tls.crt, tls.key). When
-  # set, passed as `--webhook-cert-path` to the manager. Leave empty to use
-  # controller-runtime's auto-generated self-signed certs (dev/test only).
-  # Mutually exclusive with `webhook.certManager.enabled`.
+  # set, passed as `--webhook-cert-path` to the manager AND requires
+  # `webhook.certSecretName` so the chart can mount that Secret read-only at
+  # this path. Leave empty to use controller-runtime's auto-generated
+  # self-signed certs (dev/test only). Mutually exclusive with
+  # `webhook.certManager.enabled` — the chart fails to render if both are set.
   certDir: ""
+  # -- Name of a pre-existing Secret containing `tls.crt` and `tls.key` to
+  # mount at `webhook.certDir`. Required when `webhook.certDir` is non-empty
+  # and `webhook.certManager.enabled` is false. The Secret must already exist
+  # in the release namespace; the chart does not create it.
+  certSecretName: ""
+  # -- Filename of the webhook TLS certificate inside `webhook.certDir` or
+  # the cert-manager-mounted Secret. Override only when the issuer or
+  # external Secret writes a non-default key name. Default `tls.crt`
+  # matches cert-manager and standard Secret-as-volume conventions.
+  certName: tls.crt
+  # -- Filename of the webhook TLS private key inside `webhook.certDir` or
+  # the cert-manager-mounted Secret. Override only when the issuer or
+  # external Secret writes a non-default key name. Default `tls.key`
+  # matches cert-manager and standard Secret-as-volume conventions.
+  certKey: tls.key
+
+# -- Enable HTTP/2 on the metrics and webhook servers. Default `false`
+# mitigates the HTTP/2 Stream Cancellation (CVE GHSA-qppj-fm5r-hxr3) and
+# Rapid Reset (CVE GHSA-4374-p667-p6c8) DoS classes — the K8s API server
+# webhook client and standard Prometheus scrapers both speak HTTP/1.1, so
+# disabling HTTP/2 has no practical impact for in-cluster traffic. Flip to
+# `true` only if your scrape path or webhook caller mandates HTTP/2 (rare).
+enableHTTP2: false
 
 # Controllers and webhooks are individually opt-in. New controllers default to
 # disabled so existing chart installs see no behavior change. Flip the

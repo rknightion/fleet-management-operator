@@ -1,3 +1,4 @@
+{{- if or .Values.controllers.pipeline.enabled .Values.controllers.collector.enabled .Values.controllers.collectorDiscovery.enabled .Values.controllers.externalAttributeSync.enabled .Values.controllers.remoteAttributePolicy.enabled .Values.controllers.tenantPolicy.enabled }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -146,4 +147,5 @@ webhooks:
     resources:
     - tenantpolicies
   sideEffects: None
+{{- end }}
 {{- end }}

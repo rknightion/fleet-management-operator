@@ -1,4 +1,11 @@
-{{- if .Values.podDisruptionBudget.enabled }}
+{{/*
+PDB only renders when replicaCount > 1. At replicaCount=1, a PDB with
+minAvailable=1 (or maxUnavailable=0) blocks node drains: there is no
+second pod to satisfy the budget, so eviction is denied indefinitely.
+HA installs (replicaCount >= 2) get the PDB; single-replica installs
+do not, regardless of podDisruptionBudget.enabled.
+*/}}
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

@@ -1,3 +1,19 @@
+{{/*
+Mutually-exclusive cert configuration guard. Setting both modes is a
+silent misconfiguration today (cert-manager mounts win, certDir is
+ignored), so fail-fast on render to surface the conflict.
+*/}}
+{{- if and .Values.webhook.certManager.enabled .Values.webhook.certDir }}
+{{- fail "webhook.certManager.enabled and webhook.certDir are mutually exclusive — set exactly one" }}
+{{- end }}
+{{/*
+certDir mode requires a pre-existing Secret to source tls.crt and tls.key
+from. Without it the manager would CrashLoopBackOff trying to read TLS
+material from an unmounted path.
+*/}}
+{{- if and .Values.webhook.certDir (not .Values.webhook.certSecretName) }}
+{{- fail "webhook.certDir is set but webhook.certSecretName is empty — set webhook.certSecretName to the name of a Secret containing tls.crt and tls.key, or use webhook.certManager.enabled instead" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,6 +22,13 @@ metadata:
     {{- include "fleet-management-operator.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: {{ .Values.updateStrategy.type | default "RollingUpdate" }}
+    {{- if eq (.Values.updateStrategy.type | default "RollingUpdate") "RollingUpdate" }}
+    rollingUpdate:
+      maxUnavailable: {{ .Values.updateStrategy.rollingUpdate.maxUnavailable | default 0 }}
+      maxSurge: {{ .Values.updateStrategy.rollingUpdate.maxSurge | default 1 }}
+    {{- end }}
   selector:
     matchLabels:
       {{- include "fleet-management-operator.selectorLabels" . | nindent 6 }}
@@ -13,6 +36,9 @@ spec:
     metadata:
       annotations:
         kubectl.kubernetes.io/default-container: manager
+        {{- if not .Values.fleetManagement.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -82,10 +108,15 @@ spec:
         - --metrics-bind-address=0
         {{- end }}
         - --metrics-secure={{ .Values.metrics.secure }}
+        - --enable-http2={{ .Values.enableHTTP2 }}
         {{- if .Values.webhook.certManager.enabled }}
         - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
-        {{- else if and .Values.webhook .Values.webhook.certDir }}
+        {{- else if .Values.webhook.certDir }}
         - --webhook-cert-path={{ .Values.webhook.certDir }}
+        {{- end }}
+        {{- if or .Values.webhook.certManager.enabled .Values.webhook.certDir }}
+        - --webhook-cert-name={{ .Values.webhook.certName }}
+        - --webhook-cert-key={{ .Values.webhook.certKey }}
         {{- end }}
         env:
         - name: FLEET_MANAGEMENT_BASE_URL
@@ -114,6 +145,10 @@ spec:
         - name: webhook-certs
           mountPath: /tmp/k8s-webhook-server/serving-certs
           readOnly: true
+        {{- else if .Values.webhook.certDir }}
+        - name: webhook-certs
+          mountPath: {{ .Values.webhook.certDir }}
+          readOnly: true
         {{- end }}
         livenessProbe:
           httpGet:
@@ -139,9 +174,26 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if gt (int .Values.replicaCount) 1 }}
+      {{/*
+      Auto-injected soft pod anti-affinity for HA installs (replicaCount > 1).
+      Spreads replicas across nodes by hostname so a single node failure does
+      not take down both leader and standby. Soft (preferred) so single-node
+      clusters and capacity-constrained schedulers can still place pods.
+      Override by setting `affinity` explicitly in values.yaml.
+      */}}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  {{- include "fleet-management-operator.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
@@ -155,5 +207,10 @@ spec:
       - name: webhook-certs
         secret:
           secretName: {{ include "fleet-management-operator.fullname" . }}-webhook-certs
+          defaultMode: 0444
+      {{- else if .Values.webhook.certDir }}
+      - name: webhook-certs
+        secret:
+          secretName: {{ .Values.webhook.certSecretName }}
           defaultMode: 0444
       {{- end }}

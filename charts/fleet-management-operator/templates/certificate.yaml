@@ -1,4 +1,4 @@
-{{- if .Values.webhook.certManager.enabled }}
+{{- if and .Values.webhook.certManager.enabled (or .Values.controllers.pipeline.enabled .Values.controllers.collector.enabled .Values.controllers.collectorDiscovery.enabled .Values.controllers.externalAttributeSync.enabled .Values.controllers.remoteAttributePolicy.enabled .Values.controllers.tenantPolicy.enabled) }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
