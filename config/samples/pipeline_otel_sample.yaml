@@ -1,3 +1,4 @@
+# Description: OpenTelemetry Collector Pipeline that scrapes host metrics and exports OTLP to Grafana Cloud.
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: Pipeline
 metadata:

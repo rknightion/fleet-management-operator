@@ -1,3 +1,4 @@
+# Description: Alloy Pipeline that scrapes Alloy's own self-metrics and remote-writes them to Grafana Cloud, scoped to Linux collectors in production.
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: Pipeline
 metadata:

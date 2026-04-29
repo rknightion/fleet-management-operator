@@ -1,3 +1,4 @@
+# Description: TenantPolicy that requires the billing team's Pipelines, Policies, and Syncs to carry a team=billing matcher (RBAC tenancy guard).
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: TenantPolicy
 metadata:

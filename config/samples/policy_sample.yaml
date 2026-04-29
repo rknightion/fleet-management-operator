@@ -1,3 +1,4 @@
+# Description: RemoteAttributePolicy that assigns default region / team attributes to every Linux production collector. Per-Collector CRs override on key collisions.
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: RemoteAttributePolicy
 metadata:

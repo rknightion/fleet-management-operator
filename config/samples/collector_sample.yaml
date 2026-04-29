@@ -1,3 +1,4 @@
+# Description: Manually-managed Collector CR that overrides remote attributes for one specific collector by ID.
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: Collector
 metadata:

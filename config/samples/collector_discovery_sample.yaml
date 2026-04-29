@@ -1,3 +1,4 @@
+# Description: CollectorDiscovery that polls Fleet Management every 5 minutes and creates a Collector CR for every Linux production collector.
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: CollectorDiscovery
 metadata:

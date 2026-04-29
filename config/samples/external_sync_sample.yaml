@@ -1,3 +1,4 @@
+# Description: ExternalAttributeSync that pulls host metadata from a CMDB HTTP endpoint every 5 minutes and assigns env / region attributes per collector.
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: ExternalAttributeSync
 metadata:
