@@ -12,6 +12,27 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || (echo "go.mod/go.sum are not tidy. Run 'go mod tidy' and commit the result." && exit 1)
+
+      - name: Run lint
+        run: make lint
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -61,6 +82,26 @@ jobs:
         run: |
           git diff --exit-code || (echo "Uncommitted changes detected. Run 'make manifests generate' and commit." && exit 1)
 
+  verify-installer:
+    name: Verify Installer Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate install.yaml
+        run: make build-installer IMG=ghcr.io/example/fleet-management-operator:ci
+
+      - name: Verify install.yaml is committed
+        run: |
+          git diff --exit-code -- dist/install.yaml || (echo "dist/install.yaml is out of date. Run 'make build-installer' and commit the result." && exit 1)
+
   verify-docs:
     name: Verify Documentation
     runs-on: ubuntu-latest
@@ -103,6 +144,25 @@ jobs:
             --set fleetManagement.username=test \
             --set fleetManagement.password=test \
             > /dev/null
+
+      - name: Verify NetworkPolicy render gate
+        run: |
+          helm template test charts/fleet-management-operator \
+            --set fleetManagement.baseUrl=https://test \
+            --set fleetManagement.username=test \
+            --set fleetManagement.password=test \
+            > /tmp/chart-default.yaml
+          if grep -q "kind: NetworkPolicy" /tmp/chart-default.yaml; then
+            echo "NetworkPolicy should be disabled by default"
+            exit 1
+          fi
+          helm template test charts/fleet-management-operator \
+            --set fleetManagement.baseUrl=https://test \
+            --set fleetManagement.username=test \
+            --set fleetManagement.password=test \
+            --set networkPolicy.enabled=true \
+            > /tmp/chart-networkpolicy.yaml
+          grep -q "kind: NetworkPolicy" /tmp/chart-networkpolicy.yaml
 
       - name: Verify chart README is regenerated from values.yaml
         run: make chart-docs-check

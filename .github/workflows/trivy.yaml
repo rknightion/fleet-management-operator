@@ -26,6 +26,9 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: '1'
           format: sarif
           output: trivy-fs-results.sarif
 
@@ -45,6 +48,9 @@ jobs:
         uses: aquasecurity/trivy-action@0.30.0
         with:
           image-ref: ghcr.io/rknightion/fleet-management-operator:dev
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: '1'
           format: sarif
           output: trivy-image-results.sarif
 
