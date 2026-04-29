@@ -73,7 +73,6 @@ func init() {
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
-	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var webhookPort int
 	var enableLeaderElection bool
@@ -108,10 +107,11 @@ func main() {
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
 	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
 	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
-	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
-		"The directory that contains the metrics server certificate.")
-	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
-	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+	// NOTE: metrics-cert-{path,name,key} flags were intentionally dropped — the
+	// chart does not ship TLS material to the metrics endpoint, and
+	// controller-runtime auto-generates a self-signed cert when --metrics-secure
+	// is on (sufficient for in-cluster Prometheus scraping). Re-introduce these
+	// flags if/when the chart starts mounting customer-managed metrics certs.
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&enablePipelineController, "enable-pipeline-controller", true,
@@ -228,22 +228,13 @@ func main() {
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
 
-	// If the certificate is not specified, controller-runtime will automatically
-	// generate self-signed certificates for the metrics server. While convenient for development and testing,
-	// this setup is not recommended for production.
-	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
-	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
-	// managed by cert-manager for the metrics server.
-	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
-	if len(metricsCertPath) > 0 {
-		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
-
-		metricsServerOptions.CertDir = metricsCertPath
-		metricsServerOptions.CertName = metricsCertName
-		metricsServerOptions.KeyName = metricsCertKey
-	}
+	// Metrics endpoint TLS material is intentionally NOT wired through the
+	// chart today. When --metrics-secure is on, controller-runtime
+	// auto-generates a per-pod self-signed cert; that is sufficient for
+	// in-cluster Prometheus scraping with the default
+	// FilterProvider=WithAuthenticationAndAuthorization (RBAC-gated). If
+	// customer-managed metrics certs are required in the future, reintroduce
+	// --metrics-cert-{path,name,key} together with a chart-level cert mount.
 
 	// Watch: (WATCH-01) Resync period configuration
 	//
@@ -318,13 +309,25 @@ func main() {
 		if otelErr != nil {
 			setupLog.Error(otelErr, "failed to create OTEL exporter; tracing disabled")
 		} else {
-			res, _ := sdkresource.New(context.Background(),
+			// sdkresource.New may return a partial resource AND a non-nil
+			// error when one of the detectors fails (e.g. cannot read a
+			// container env var). Log the error but continue: tracing is
+			// opt-in and a resource-detection failure should never crash
+			// the manager. Pass whatever resource we got — `res` is the
+			// merged successful detectors when err != nil; `nil` is a
+			// valid argument to WithResource and falls back to the SDK
+			// default resource.
+			res, resErr := sdkresource.New(context.Background(),
 				sdkresource.WithAttributes(
 					// "service.name" is the canonical OTEL resource attribute key
 					// (go.opentelemetry.io/otel/semconv/v1.27.0.ServiceNameKey).
 					attribute.String("service.name", "fleet-management-operator"),
 				),
 			)
+			if resErr != nil {
+				setupLog.Error(resErr, "OTEL resource detection partially failed; "+
+					"tracing continues with whatever attributes were collected")
+			}
 			tp := sdktrace.NewTracerProvider(
 				sdktrace.WithBatcher(exp),
 				sdktrace.WithResource(res),
@@ -410,20 +413,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The TenantPolicy admission webhook validates the CR shape itself —
+	// matcher syntax, namespace selector parse, empty-selector warnings —
+	// and does NOT depend on the enforcement checker (the validator type in
+	// api/v1alpha1 has no checker dependency; only the OTHER CRs' webhooks
+	// consult `tenantChecker`). Register it unconditionally so that an
+	// install that has the TenantPolicy CRD installed (chart key
+	// `controllers.tenantPolicy.enabled: true`) but enforcement turned off
+	// still gets API-server-side validation when users `kubectl apply`
+	// TenantPolicy resources.
+	if err := fleetmanagementv1alpha1.SetupTenantPolicyWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "TenantPolicy")
+		os.Exit(1)
+	}
+
 	// Tenant policy enforcement is opt-in and default-off. When disabled,
-	// tenantChecker stays nil and the consuming webhooks behave identically
-	// to a build without this feature. When enabled, the checker reads
+	// tenantChecker stays nil and the consuming webhooks (Pipeline /
+	// RemoteAttributePolicy / ExternalAttributeSync) behave identically to
+	// a build without this feature. When enabled, the checker reads
 	// TenantPolicy resources via the manager's cached client at admission
-	// time.
+	// time. This gate is independent of the TenantPolicy webhook
+	// registration above: users may install the CRD and author policies
+	// (with shape validation) before flipping enforcement on.
 	var tenantChecker fleetmanagementv1alpha1.MatcherChecker
 	if enableTenantPolicyEnforcement {
 		setupLog.Info("tenant policy enforcement enabled; webhooks will consult TenantPolicy resources")
 		tenantChecker = tenant.NewChecker(mgr.GetClient())
-
-		if err := fleetmanagementv1alpha1.SetupTenantPolicyWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "TenantPolicy")
-			os.Exit(1)
-		}
 	}
 
 	// fleetClient.Close() is best-effort. controller-runtime cancels every
@@ -580,8 +595,9 @@ func main() {
 }
 
 // buildExternalSourceFactory dispatches by source kind and constructs a
-// Source instance. Phase 3 only ships HTTP; SQL returns an error until
-// Phase 4 wires it in.
+// Source instance. HTTP and SQL (postgres/mysql via lib/pq + go-sql-driver)
+// are both wired; new source kinds are added by extending the switch and
+// registering the matching driver / package.
 func buildExternalSourceFactory() controller.SourceFactory {
 	return func(spec fleetmanagementv1alpha1.ExternalSource, secret *corev1.Secret) (sources.Source, error) {
 		switch spec.Kind {
