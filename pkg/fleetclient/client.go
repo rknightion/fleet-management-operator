@@ -123,10 +123,23 @@ func NewClient(baseURL, username, password string, opts ...ClientOption) *Client
 
 	limiter := rate.NewLimiter(rate.Limit(cfg.rps), cfg.burst)
 
+	// Interceptor order matters. Each interceptor wraps the next, so the
+	// outermost (first listed) sees the broadest view of the call:
+	//   tracing  — must be first so the span encompasses rate-limit wait
+	//              time; otherwise spans show only post-wait API latency
+	//              and operators cannot see when wait time is the
+	//              bottleneck.
+	//   rateLimit — blocks before basic auth or the network round-trip;
+	//              this is the rps gate we report on as a separate
+	//              histogram (fleetAPIRateLimiterWait).
+	//   basicAuth — sets the Authorization header on the outgoing request.
+	//   metrics   — innermost; records duration of the actual API call
+	//              (post-wait, post-auth) so request-duration metrics
+	//              reflect Fleet API performance, not local queuing.
 	interceptors := connect.WithInterceptors(
+		tracingInterceptor(tracer, rootURL),
 		rateLimitInterceptor(limiter),
 		basicAuthInterceptor(username, password),
-		tracingInterceptor(tracer),
 		metricsInterceptor(),
 	)
 

@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -39,7 +40,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	corev1 "k8s.io/api/core/v1"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -47,6 +47,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
+	corev1 "k8s.io/api/core/v1"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 	"github.com/grafana/fleet-management-operator/internal/controller"
@@ -252,10 +253,10 @@ func main() {
 	// Production recommendation: Keep SyncPeriod unset (nil) for watch-driven controllers with
 	// no external drift concerns.
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
+		Scheme:                        scheme,
+		Metrics:                       metricsServerOptions,
+		WebhookServer:                 webhookServer,
+		HealthProbeBindAddress:        probeAddr,
 		LeaderElection:                enableLeaderElection,
 		LeaderElectionID:              "0fcf8538.grafana.com",
 		LeaderElectionReleaseOnCancel: true,
@@ -293,10 +294,12 @@ func main() {
 	var tracer oteltrace.Tracer = noop.NewTracerProvider().Tracer("fleet-management-operator")
 
 	if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); endpoint != "" {
-		exp, otelErr := otlptracegrpc.New(context.Background(),
-			otlptracegrpc.WithEndpoint(endpoint),
-			otlptracegrpc.WithInsecure(),
-		)
+		// Construct the exporter without explicit options so the SDK can read
+		// the standard OTEL_EXPORTER_OTLP_* environment variables itself
+		// (ENDPOINT, TRACES_ENDPOINT, INSECURE, HEADERS, CERTIFICATE, etc.).
+		// Forcing WithInsecure / WithEndpoint here would override valid TLS or
+		// header configuration from the environment.
+		exp, otelErr := otlptracegrpc.New(context.Background())
 		if otelErr != nil {
 			setupLog.Error(otelErr, "failed to create OTEL exporter; tracing disabled")
 		} else {
@@ -315,7 +318,16 @@ func main() {
 			tracer = tp.Tracer("fleet-management-operator")
 			if addErr := mgr.Add(ctrlmanager.RunnableFunc(func(ctx context.Context) error {
 				<-ctx.Done()
-				return tp.Shutdown(context.Background())
+				// Bound the shutdown so a stuck OTLP collector cannot
+				// indefinitely delay process exit. 5s is generous for the
+				// batcher to flush its queue while still letting K8s
+				// gracefully terminate within the default 30s grace period.
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := tp.Shutdown(shutdownCtx); err != nil {
+					setupLog.Error(err, "tracer provider shutdown failed")
+				}
+				return nil
 			})); addErr != nil {
 				setupLog.Error(addErr, "unable to register OTEL shutdown hook")
 			}
@@ -368,6 +380,21 @@ func main() {
 	// are unaffected by Tier 2; their throughput is bounded only by the workqueue
 	// and by --controller-{policy,sync,discovery}-max-concurrent.
 
+	// TenantPolicy status reconciler runs unconditionally. The TenantPolicy
+	// CRD is always installed by the chart, so users can apply
+	// TenantPolicy CRs whether or not enforcement is on; the reconciler
+	// gives them in-cluster Ready/Valid feedback in either case. It is
+	// local-only — no Fleet API calls, no finalizer — so the cost is
+	// negligible.
+	if err := (&controller.TenantPolicyReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("tenantpolicy-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantPolicy")
+		os.Exit(1)
+	}
+
 	// Tenant policy enforcement is opt-in and default-off. When disabled,
 	// tenantChecker stays nil and the consuming webhooks behave identically
 	// to a build without this feature. When enabled, the checker reads
@@ -382,21 +409,18 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "TenantPolicy")
 			os.Exit(1)
 		}
-
-		// Status reconciler is paired with enforcement: when policies are
-		// being consulted at admission, operators want in-cluster signal
-		// for whether each policy is well-formed. Lightweight — no Fleet
-		// API calls, no finalizer.
-		if err := (&controller.TenantPolicyReconciler{
-			Client:   mgr.GetClient(),
-			Scheme:   mgr.GetScheme(),
-			Recorder: mgr.GetEventRecorderFor("tenantpolicy-controller"),
-		}).SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create controller", "controller", "TenantPolicy")
-			os.Exit(1)
-		}
 	}
 
+	// fleetClient.Close() is best-effort. controller-runtime cancels every
+	// Runnable's context simultaneously on shutdown, so this hook races
+	// with in-flight reconcilers that may still hold the client. Close()
+	// only releases idle HTTP connections; in-flight Fleet API calls are
+	// not cancelled here — they complete on their own, bounded by the
+	// 30s HTTP client timeout. We deliberately do NOT add a WaitGroup or
+	// graceful drain: the marginal benefit (slightly faster idle conn
+	// release at process exit) does not justify the added coordination
+	// surface, and Kubernetes' default 30s pod terminationGracePeriod
+	// already accommodates any in-flight call hitting the timeout.
 	if err := mgr.Add(ctrlmanager.RunnableFunc(func(ctx context.Context) error {
 		<-ctx.Done()
 		fleetClient.Close()
@@ -507,11 +531,28 @@ func main() {
 	}
 
 	if webhookCertPath != "" {
+		// Stat the directory and both expected files, not just the
+		// directory: an empty cert directory passes os.Stat but the
+		// webhook server would fail later when controller-runtime tries
+		// to read tls.crt / tls.key. Failing fast here gives a clear
+		// error pointing at the missing file rather than a generic
+		// startup failure deeper in the manager.
 		if _, statErr := os.Stat(webhookCertPath); statErr != nil {
 			setupLog.Error(statErr, "webhook cert path not accessible", "path", webhookCertPath)
 			os.Exit(1)
 		}
-		setupLog.Info("webhook TLS cert path verified", "path", webhookCertPath)
+		certFile := filepath.Join(webhookCertPath, webhookCertName)
+		if _, statErr := os.Stat(certFile); statErr != nil {
+			setupLog.Error(statErr, "webhook TLS cert file not accessible", "file", certFile)
+			os.Exit(1)
+		}
+		keyFile := filepath.Join(webhookCertPath, webhookCertKey)
+		if _, statErr := os.Stat(keyFile); statErr != nil {
+			setupLog.Error(statErr, "webhook TLS key file not accessible", "file", keyFile)
+			os.Exit(1)
+		}
+		setupLog.Info("webhook TLS cert path verified",
+			"path", webhookCertPath, "cert", webhookCertName, "key", webhookCertKey)
 	}
 
 	setupLog.Info("starting manager")

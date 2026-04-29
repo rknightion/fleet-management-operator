@@ -27,11 +27,15 @@ import (
 )
 
 var (
+	// Buckets are tuned for a 30s HTTP client timeout: prometheus.DefBuckets
+	// tops out at 10s, so any 10-30s call would land in the +Inf bucket and
+	// be invisible. The 20s and 30s buckets surface near-timeout behaviour
+	// that is the most actionable signal for capacity / rate-limit issues.
 	fleetAPIRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "fleet_api_request_duration_seconds",
 			Help:    "Duration of Fleet Management API requests in seconds.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 20, 30},
 		},
 		[]string{"operation", "status"},
 	)
@@ -49,11 +53,15 @@ var (
 		},
 		[]string{"operation", "status"},
 	)
+	// See fleetAPIRequestDuration above: matched buckets so the two
+	// histograms can be compared directly. A wait that approaches 30s
+	// indicates the rate limiter is starving requests right up to the
+	// HTTP timeout, which presents identically to a Fleet API outage.
 	fleetAPIRateLimiterWait = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Name:    "fleet_api_rate_limiter_wait_duration_seconds",
 			Help:    "Time spent waiting for the Fleet Management API rate limiter.",
-			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
+			Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 20, 30},
 		},
 	)
 )
