@@ -6,8 +6,8 @@ cliVersion: 4.11.0
 domain: grafana.com
 layout:
 - go.kubebuilder.io/v4
-projectName: fm-crd
-repo: github.com/grafana/fm-crd
+projectName: fleet-management-operator
+repo: github.com/grafana/fleet-management-operator
 resources:
 - api:
     crdVersion: v1
@@ -15,7 +15,82 @@ resources:
   controller: true
   domain: grafana.com
   group: fleetmanagement
-  kind: Pipeline
-  path: github.com/grafana/fm-crd/api/v1alpha1
+  kind: Collector
+  path: github.com/grafana/fleet-management-operator/api/v1alpha1
   version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: grafana.com
+  group: fleetmanagement
+  kind: CollectorDiscovery
+  path: github.com/grafana/fleet-management-operator/api/v1alpha1
+  version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: grafana.com
+  group: fleetmanagement
+  kind: ExternalAttributeSync
+  path: github.com/grafana/fleet-management-operator/api/v1alpha1
+  version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: grafana.com
+  group: fleetmanagement
+  kind: Pipeline
+  path: github.com/grafana/fleet-management-operator/api/v1alpha1
+  version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: grafana.com
+  group: fleetmanagement
+  kind: PipelineDiscovery
+  path: github.com/grafana/fleet-management-operator/api/v1alpha1
+  version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: grafana.com
+  group: fleetmanagement
+  kind: RemoteAttributePolicy
+  path: github.com/grafana/fleet-management-operator/api/v1alpha1
+  version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: true
+  domain: grafana.com
+  group: fleetmanagement
+  kind: TenantPolicy
+  path: github.com/grafana/fleet-management-operator/api/v1alpha1
+  version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
 version: "3"
