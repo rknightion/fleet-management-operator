@@ -21,4 +21,4 @@ patches:
 - path: manager_image_pull_patch.yaml
   target:
     kind: Deployment
-    name: fm-crd-controller-manager
+    name: fleet-management-operator

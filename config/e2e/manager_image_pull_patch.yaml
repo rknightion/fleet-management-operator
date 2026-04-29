@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: fm-crd-controller-manager
+  name: fleet-management-operator
 spec:
   template:
     spec:

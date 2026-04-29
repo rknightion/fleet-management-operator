@@ -107,9 +107,8 @@ fleetManagement:
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
-  # automount: false — operator uses in-cluster kubeconfig via controller-runtime;
-  # mounting the SA token unnecessarily expands the blast radius of a container compromise.
-  automount: false
+  # controller-runtime in-cluster config reads from the mounted SA token; must be true.
+  automount: true
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.

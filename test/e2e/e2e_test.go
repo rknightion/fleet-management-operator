@@ -34,10 +34,10 @@ import (
 )
 
 // serviceAccountName created for the project
-const serviceAccountName = "fm-crd-controller-manager"
+const serviceAccountName = "fleet-management-operator"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "fm-crd-controller-manager-metrics-service"
+const metricsServiceName = "fleet-management-operator-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "fm-crd-metrics-binding"
@@ -97,7 +97,7 @@ var _ = Describe("Manager", Ordered, func() {
 			verifyControllerUp := func(g Gomega) {
 				// Get the name of the controller-manager pod
 				cmd := exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
+					"pods", "-l", "control-plane=operator",
 					"-o", "go-template={{ range .items }}"+
 						"{{ if not .metadata.deletionTimestamp }}"+
 						"{{ .metadata.name }}"+
@@ -110,7 +110,7 @@ var _ = Describe("Manager", Ordered, func() {
 				podNames := utils.GetNonEmptyLines(podOutput)
 				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
 				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+				g.Expect(controllerPodName).To(ContainSubstring("fleet-management-operator"))
 
 				// Validate the pod's status
 				cmd = exec.Command("kubectl", "get",

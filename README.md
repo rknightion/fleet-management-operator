@@ -17,6 +17,21 @@ This operator enables declarative management of Fleet Management configuration p
 - **Status Tracking**: Pipeline status reflects Fleet Management state with conditions
 - **High Availability**: Leader election support for multiple replicas
 
+## Custom Resources
+
+This operator manages the following CRD types:
+
+| CRD | Purpose |
+|-----|---------|
+| [Pipeline](docs/samples.md#pipeline-alloy-pipeline-sample) | Deploy Alloy or OpenTelemetry Collector config fragments to matching collectors |
+| [Collector](docs/samples.md#collector-edge-host-42) | Manage remote attributes for a specific collector by ID |
+| [CollectorDiscovery](docs/samples.md#collectordiscovery-prod-linux) | Auto-discover Fleet Management collectors and create Collector CRs |
+| [RemoteAttributePolicy](docs/samples.md#remoteattributepolicy-linux-prod-defaults) | Assign default attributes to collectors matching a selector |
+| [ExternalAttributeSync](docs/samples.md#externalattributesync-cmdb-host-attributes) | Sync collector attributes from an external HTTP or SQL source |
+| [TenantPolicy](docs/samples.md#tenantpolicy-team-billing) | Enforce RBAC tenancy by requiring specific matchers on CRs |
+
+See [Sample CRs](docs/samples.md) for runnable examples of every type.
+
 ## Installation
 
 ### Prerequisites
@@ -61,85 +76,10 @@ kubectl create secret generic fleet-management-operator-credentials \
 
 ### Create a Pipeline
 
-Create a Pipeline resource to define your Alloy or OpenTelemetry Collector configuration:
+Create a Pipeline resource to define your Alloy or OpenTelemetry Collector configuration.
+See [Sample CRs](docs/samples.md) for full working examples of both Alloy and OpenTelemetry Collector pipelines.
 
-**Grafana Alloy Example:**
-
-```yaml
-apiVersion: fleetmanagement.grafana.com/v1alpha1
-kind: Pipeline
-metadata:
-  name: prometheus-metrics
-  namespace: default
-spec:
-  contents: |
-    prometheus.exporter.self "alloy" { }
-
-    prometheus.scrape "alloy" {
-      targets    = prometheus.exporter.self.alloy.targets
-      forward_to = [prometheus.remote_write.grafanacloud.receiver]
-      scrape_interval = "60s"
-    }
-
-    prometheus.remote_write "grafanacloud" {
-      external_labels = {"collector_id" = constants.hostname}
-      endpoint {
-        url = env("PROMETHEUS_URL")
-        basic_auth {
-          username      = env("PROMETHEUS_USER")
-          password_file = "/etc/secrets/prometheus-password"
-        }
-      }
-    }
-
-  matchers:
-    - collector.os=linux
-    - environment=production
-
-  enabled: true
-  configType: Alloy
-```
-
-**OpenTelemetry Collector Example:**
-
-```yaml
-apiVersion: fleetmanagement.grafana.com/v1alpha1
-kind: Pipeline
-metadata:
-  name: otel-metrics
-  namespace: default
-spec:
-  contents: |
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-
-    processors:
-      batch:
-        timeout: 10s
-
-    exporters:
-      prometheusremotewrite:
-        endpoint: ${env:PROMETHEUS_URL}
-
-    service:
-      pipelines:
-        metrics:
-          receivers: [otlp]
-          processors: [batch]
-          exporters: [prometheusremotewrite]
-
-  matchers:
-    - collector.type=otel
-    - environment=production
-
-  enabled: true
-  configType: OpenTelemetryCollector
-```
-
-Apply the pipeline:
+Apply a pipeline:
 
 ```bash
 kubectl apply -f pipeline.yaml

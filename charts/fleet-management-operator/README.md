@@ -4,17 +4,17 @@
 
 A Kubernetes operator for managing Grafana Cloud Fleet Management Pipelines
 
-**Homepage:** <https://github.com/grafana/fleet-management-operator>
+**Homepage:** <https://github.com/rknightion/fleet-management-operator>
 
 ## Maintainers
 
 | Name | Email | Url |
 | ---- | ------ | --- |
-| Grafana Labs | <platform-observability@grafana.com> |  |
+| Rob Knight | <rob.knight@grafana.com> |  |
 
 ## Source Code
 
-* <https://github.com/grafana/fleet-management-operator>
+* <https://github.com/rknightion/fleet-management-operator>
 
 ## Requirements
 
@@ -169,8 +169,8 @@ is gated by the flag.
 | healthProbe.readiness.periodSeconds | int | `10` |  |
 | healthProbe.readiness.timeoutSeconds | int | `1` |  |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy. |
-| image.repository | string | `"fleet-management-operator"` | Container image repository. |
-| image.tag | string | `"dev-v1.0.0"` | Image tag. Ignored when `image.digest` is set. |
+| image.repository | string | `"ghcr.io/rknightion/fleet-management-operator"` | Container image repository. |
+| image.tag | string | `"dev"` | Image tag. Ignored when `image.digest` is set. |
 | imagePullSecrets | list | `[]` | Image pull secrets for private / air-gapped registries. |
 | leaderElection.enabled | bool | `true` |  |
 | leaderElection.leaseDuration | string | `"15s"` |  |
@@ -206,7 +206,7 @@ is gated by the flag.
 | securityContext.runAsGroup | int | `65532` |  |
 | securityContext.runAsUser | int | `65532` |  |
 | serviceAccount.annotations | object | `{}` |  |
-| serviceAccount.automount | bool | `false` |  |
+| serviceAccount.automount | bool | `true` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | terminationGracePeriodSeconds | int | `30` |  |

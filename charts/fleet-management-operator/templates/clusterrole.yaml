@@ -181,13 +181,8 @@ rules:
   - update
   - watch
 {{- end }}
-{{- if .Values.controllers.tenantPolicy.enabled }}
-# TenantPolicy is consulted by the validating webhooks at admission time
-# and reconciled to maintain status (Ready / Valid conditions, observed
-# generation, bound subject count). The manager needs read access on the
-# CR itself plus update on /status; standard K8s RBAC on the CRD governs
-# who can create/edit policies (cluster admins by default). Namespace
-# read access is needed to evaluate spec.namespaceSelector.
+# TenantPolicyReconciler is always registered (unconditional in main.go) so
+# these read verbs are always needed regardless of tenantPolicy.enabled.
 - apiGroups:
   - fleetmanagement.grafana.com
   resources:
@@ -204,6 +199,9 @@ rules:
   - get
   - patch
   - update
+{{- if .Values.controllers.tenantPolicy.enabled }}
+# Namespace read access is only needed when enforcement is on to evaluate
+# spec.namespaceSelector on TenantPolicy resources.
 - apiGroups:
   - ""
   resources:

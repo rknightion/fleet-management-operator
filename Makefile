@@ -233,6 +233,18 @@ ifndef ignore-not-found
   ignore-not-found = false
 endif
 
+# Helm release configuration
+HELM ?= helm
+HELM_RELEASE ?= fleet-management-operator
+HELM_NAMESPACE ?= fleet-management-system
+# Optional path to a values file: make deploy HELM_VALUES=my-values.yaml
+HELM_VALUES ?=
+# Optional extra helm args: make deploy HELM_ARGS="--set fleetManagement.baseUrl=https://..."
+HELM_ARGS ?=
+# Split IMG into repository and tag for helm --set overrides
+_HELM_IMG_REPO = $(shell echo "$(IMG)" | sed 's/:[^:]*$$//')
+_HELM_IMG_TAG  = $(shell echo "$(IMG)" | sed 's/.*://')
+
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
@@ -244,13 +256,18 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
 
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
+deploy: manifests ## Deploy controller via Helm chart (charts/fleet-management-operator) with default values.
+	$(HELM) upgrade --install $(HELM_RELEASE) charts/fleet-management-operator \
+		--namespace $(HELM_NAMESPACE) \
+		--create-namespace \
+		--set image.repository=$(_HELM_IMG_REPO) \
+		--set image.tag=$(_HELM_IMG_TAG) \
+		$(if $(HELM_VALUES),--values $(HELM_VALUES)) \
+		$(HELM_ARGS)
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+undeploy: ## Undeploy controller via Helm. Pass HELM_RELEASE/HELM_NAMESPACE to target a specific release.
+	$(HELM) uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE) 2>/dev/null || true
 
 ##@ Dependencies
 
