@@ -36,6 +36,7 @@ type PolicySelector struct {
 	// double-checked by the validating webhook.
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
+	// +kubebuilder:validation:items:MinLength=1
 	// +kubebuilder:validation:items:MaxLength=200
 	Matchers []string `json:"matchers,omitempty"`
 
@@ -44,6 +45,7 @@ type PolicySelector struct {
 	// if the Matchers would otherwise reject it.
 	// +optional
 	// +kubebuilder:validation:MaxItems=1000
+	// +kubebuilder:validation:items:MinLength=1
 	CollectorIDs []string `json:"collectorIDs,omitempty"`
 }
 
@@ -52,13 +54,17 @@ type PolicySelector struct {
 // values are overridden by the Collector CR's own spec.RemoteAttributes —
 // the Policy is a default, the Collector CR is an override.
 type RemoteAttributePolicySpec struct {
+	// +kubebuilder:validation:XValidation:rule="(has(self.matchers) && self.matchers.size() > 0) || (has(self.collectorIDs) && self.collectorIDs.size() > 0)",message="selector must specify at least one matcher or collectorID"
 	Selector PolicySelector `json:"selector"`
 
 	// Attributes applied to every matched collector. Reserved-prefix keys
 	// ("collector.") are rejected by the API server (CEL) and the
 	// validating webhook.
+	// +kubebuilder:validation:MinProperties=1
 	// +kubebuilder:validation:MaxProperties=100
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k.size() > 0)",message="keys must not be empty"
 	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('collector.'))",message="keys must not use the reserved 'collector.' prefix"
+	// +kubebuilder:validation:XValidation:rule="self.all(k, self[k].size() <= 1024)",message="values must be 1024 characters or fewer"
 	Attributes map[string]string `json:"attributes"`
 
 	// Priority breaks ties when multiple policies match the same collector

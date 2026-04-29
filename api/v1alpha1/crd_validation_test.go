@@ -97,6 +97,15 @@ func TestCollectorCRD_SpecIDIsImmutable(t *testing.T) {
 // remote-attribute keys with the reserved "collector." prefix.
 const reservedKeyPrefixRule = "self.all(k, !k.startsWith('collector.'))"
 
+const (
+	selectorNonEmptyRule      = "(has(self.matchers) && self.matchers.size() > 0) || (has(self.collectorIDs) && self.collectorIDs.size() > 0)"
+	mapKeyNonEmptyRule        = "self.all(k, k.size() > 0)"
+	mapValueMaxLength1024Rule = "self.all(k, self[k].size() <= 1024)"
+	mapValueNonEmptyRule      = "self.all(k, self[k].size() > 0)"
+	externalSourceOneOfRule   = "(self.kind == 'HTTP' && has(self.http) && !has(self.sql)) || (self.kind == 'SQL' && has(self.sql) && !has(self.http))"
+	externalSecretRefNameRule = "!has(self.secretRef) || (has(self.secretRef.name) && self.secretRef.name.size() > 0)"
+)
+
 func TestRemoteAttributeMaps_RejectReservedKeyPrefix(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -128,6 +137,61 @@ func TestRemoteAttributeMaps_RejectReservedKeyPrefix(t *testing.T) {
 			assert.True(t, hasCELRule(prop, reservedKeyPrefixRule),
 				"%s must declare CEL rule %q to reject reserved 'collector.' key prefix",
 				tc.name, reservedKeyPrefixRule)
+		})
+	}
+}
+
+func TestRemoteAttributeMaps_HaveKeyAndValueBounds(t *testing.T) {
+	cases := []struct {
+		name          string
+		filename      string
+		path          []string
+		wantMinProps  bool
+		wantNonEmpty  bool
+		wantValueSize bool
+	}{
+		{
+			name:          "Collector spec.remoteAttributes",
+			filename:      "fleetmanagement.grafana.com_collectors.yaml",
+			path:          []string{"spec", "remoteAttributes"},
+			wantValueSize: true,
+		},
+		{
+			name:          "RemoteAttributePolicy spec.attributes",
+			filename:      "fleetmanagement.grafana.com_remoteattributepolicies.yaml",
+			path:          []string{"spec", "attributes"},
+			wantMinProps:  true,
+			wantValueSize: true,
+		},
+		{
+			name:          "ExternalAttributeSync spec.mapping.attributeFields",
+			filename:      "fleetmanagement.grafana.com_externalattributesyncs.yaml",
+			path:          []string{"spec", "mapping", "attributeFields"},
+			wantMinProps:  true,
+			wantNonEmpty:  true,
+			wantValueSize: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			crd := loadCRD(t, tc.filename)
+			schema := firstServedSchema(t, crd)
+			prop := schemaProperty(schema, tc.path...)
+			require.NotNil(t, prop, "property %v missing", tc.path)
+			assert.True(t, hasCELRule(prop, mapKeyNonEmptyRule),
+				"%s must reject empty map keys with CEL rule %q", tc.name, mapKeyNonEmptyRule)
+			if tc.wantMinProps {
+				require.NotNil(t, prop.MinProperties, "%s minProperties not set", tc.name)
+				assert.EqualValues(t, 1, *prop.MinProperties, "%s minProperties must be 1", tc.name)
+			}
+			if tc.wantNonEmpty {
+				assert.True(t, hasCELRule(prop, mapValueNonEmptyRule),
+					"%s must reject empty map values with CEL rule %q", tc.name, mapValueNonEmptyRule)
+			}
+			if tc.wantValueSize {
+				assert.True(t, hasCELRule(prop, mapValueMaxLength1024Rule),
+					"%s must cap map values with CEL rule %q", tc.name, mapValueMaxLength1024Rule)
+			}
 		})
 	}
 }
@@ -186,4 +250,88 @@ func TestMatcherSlices_HaveItemMaxLength200(t *testing.T) {
 				tc.name)
 		})
 	}
+}
+
+func TestSelectorSlices_HaveItemMinLength(t *testing.T) {
+	cases := []struct {
+		name     string
+		filename string
+		path     []string
+	}{
+		{
+			name:     "Pipeline spec.matchers",
+			filename: "fleetmanagement.grafana.com_pipelines.yaml",
+			path:     []string{"spec", "matchers"},
+		},
+		{
+			name:     "RemoteAttributePolicy spec.selector.matchers",
+			filename: "fleetmanagement.grafana.com_remoteattributepolicies.yaml",
+			path:     []string{"spec", "selector", "matchers"},
+		},
+		{
+			name:     "RemoteAttributePolicy spec.selector.collectorIDs",
+			filename: "fleetmanagement.grafana.com_remoteattributepolicies.yaml",
+			path:     []string{"spec", "selector", "collectorIDs"},
+		},
+		{
+			name:     "ExternalAttributeSync spec.selector.matchers",
+			filename: "fleetmanagement.grafana.com_externalattributesyncs.yaml",
+			path:     []string{"spec", "selector", "matchers"},
+		},
+		{
+			name:     "ExternalAttributeSync spec.selector.collectorIDs",
+			filename: "fleetmanagement.grafana.com_externalattributesyncs.yaml",
+			path:     []string{"spec", "selector", "collectorIDs"},
+		},
+		{
+			name:     "ExternalAttributeSync spec.mapping.requiredKeys",
+			filename: "fleetmanagement.grafana.com_externalattributesyncs.yaml",
+			path:     []string{"spec", "mapping", "requiredKeys"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			crd := loadCRD(t, tc.filename)
+			schema := firstServedSchema(t, crd)
+			prop := schemaProperty(schema, tc.path...)
+			require.NotNil(t, prop, "property %v missing", tc.path)
+			items := schemaItems(prop)
+			require.NotNil(t, items, "%s items schema missing", tc.name)
+			require.NotNil(t, items.MinLength, "%s items.minLength not set", tc.name)
+			assert.EqualValues(t, 1, *items.MinLength,
+				"%s items.minLength must be 1; check +kubebuilder:validation:items:MinLength=1 marker",
+				tc.name)
+		})
+	}
+}
+
+func TestRemoteAttributePolicyCRD_SelectorRequiresATarget(t *testing.T) {
+	crd := loadCRD(t, "fleetmanagement.grafana.com_remoteattributepolicies.yaml")
+	schema := firstServedSchema(t, crd)
+	selector := schemaProperty(schema, "spec", "selector")
+	require.NotNil(t, selector, "spec.selector property missing")
+	assert.True(t, hasCELRule(selector, selectorNonEmptyRule),
+		"RemoteAttributePolicy spec.selector must declare CEL rule %q", selectorNonEmptyRule)
+}
+
+func TestExternalAttributeSyncCRD_SelectorSourceAndSecretRules(t *testing.T) {
+	crd := loadCRD(t, "fleetmanagement.grafana.com_externalattributesyncs.yaml")
+	schema := firstServedSchema(t, crd)
+
+	selector := schemaProperty(schema, "spec", "selector")
+	require.NotNil(t, selector, "spec.selector property missing")
+	assert.True(t, hasCELRule(selector, selectorNonEmptyRule),
+		"ExternalAttributeSync spec.selector must declare CEL rule %q", selectorNonEmptyRule)
+
+	source := schemaProperty(schema, "spec", "source")
+	require.NotNil(t, source, "spec.source property missing")
+	assert.True(t, hasCELRule(source, externalSourceOneOfRule),
+		"ExternalAttributeSync spec.source must declare CEL rule %q", externalSourceOneOfRule)
+	assert.True(t, hasCELRule(source, externalSecretRefNameRule),
+		"ExternalAttributeSync spec.source must declare CEL rule %q", externalSecretRefNameRule)
+
+	query := schemaProperty(schema, "spec", "source", "sql", "query")
+	require.NotNil(t, query, "spec.source.sql.query property missing")
+	require.NotNil(t, query.MinLength, "spec.source.sql.query minLength not set")
+	assert.EqualValues(t, 1, *query.MinLength)
 }

@@ -169,13 +169,14 @@ type PipelineSpec struct {
 	// maxLength) and double-checked by the validating webhook.
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
+	// +kubebuilder:validation:items:MinLength=1
 	// +kubebuilder:validation:items:MaxLength=200
 	Matchers []string `json:"matchers,omitempty"`
 
 	// Enabled indicates whether the pipeline is enabled for collectors
 	// +optional
 	// +kubebuilder:default=true
-	Enabled bool `json:"enabled"`
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// ConfigType specifies the type of configuration (Alloy or OpenTelemetryCollector)
 	// +optional
@@ -194,6 +195,16 @@ type PipelineSpec struct {
 	// +optional
 	// +kubebuilder:default=false
 	Paused bool `json:"paused,omitempty"`
+}
+
+// GetEnabled returns spec.enabled with the API default applied for callers
+// that may receive a non-defaulted in-memory object (for example fake clients
+// or typed-client zero values before API-server defaulting).
+func (s PipelineSpec) GetEnabled() bool {
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
 }
 
 // PipelineStatus defines the observed state of Pipeline.

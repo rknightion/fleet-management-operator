@@ -77,7 +77,9 @@ type CollectorSpec struct {
 	// this map removes it from Fleet (delete-detected via
 	// status.attributeOwners).
 	// +kubebuilder:validation:MaxProperties=100
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k.size() > 0)",message="keys must not be empty"
 	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('collector.'))",message="keys must not use the reserved 'collector.' prefix"
+	// +kubebuilder:validation:XValidation:rule="self.all(k, self[k].size() <= 1024)",message="values must be 1024 characters or fewer"
 	// +optional
 	RemoteAttributes map[string]string `json:"remoteAttributes,omitempty"`
 }

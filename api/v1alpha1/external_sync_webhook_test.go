@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -193,6 +194,16 @@ func TestExternalAttributeSync_ValidateCreate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid - SQL source with CTE SELECT",
+			eas: newExternalSync("ok-sql-cte", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindSQL,
+					SQL:  &SQLSourceSpec{Driver: "postgres", Query: "WITH hosts AS (SELECT id FROM t) SELECT id FROM hosts"},
+				},
+			}),
+			wantErr: false,
+		},
+		{
 			name: "invalid - HTTP kind with nil http spec",
 			eas: newExternalSync("http-nil", ExternalAttributeSyncSpec{
 				Source: ExternalSource{
@@ -236,6 +247,50 @@ func TestExternalAttributeSync_ValidateCreate(t *testing.T) {
 			wantErr: true,
 			errMsg:  "must not also set spec.source.http",
 		},
+		{
+			name: "invalid - SQL query with DELETE",
+			eas: newExternalSync("sql-delete", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindSQL,
+					SQL:  &SQLSourceSpec{Driver: "postgres", Query: "DELETE FROM hosts"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "read-only SELECT",
+		},
+		{
+			name: "invalid - SQL query with UPDATE",
+			eas: newExternalSync("sql-update", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindSQL,
+					SQL:  &SQLSourceSpec{Driver: "postgres", Query: "UPDATE hosts SET team = 'platform'"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "disallowed SQL keyword",
+		},
+		{
+			name: "invalid - SQL query with DROP",
+			eas: newExternalSync("sql-drop", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindSQL,
+					SQL:  &SQLSourceSpec{Driver: "postgres", Query: "DROP TABLE hosts"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "disallowed SQL keyword",
+		},
+		{
+			name: "invalid - SQL query with semicolon",
+			eas: newExternalSync("sql-semicolon", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindSQL,
+					SQL:  &SQLSourceSpec{Driver: "postgres", Query: "SELECT id FROM hosts; SELECT id FROM other"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "multiple statements",
+		},
 
 		// --- Rule 4: HTTP URL parses, has scheme http or https. ---
 		{
@@ -247,6 +302,47 @@ func TestExternalAttributeSync_ValidateCreate(t *testing.T) {
 				},
 			}),
 			wantErr: false,
+		},
+		{
+			name: "invalid - http scheme rejected when secretRef is set",
+			eas: newExternalSync("http-secret-plaintext", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind:      ExternalSourceKindHTTP,
+					HTTP:      &HTTPSourceSpec{URL: "http://internal.example.com/records"},
+					SecretRef: &corev1.SecretReference{Name: "source-creds"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "must use https",
+		},
+		{
+			name: "valid - explicit same-namespace secretRef accepted",
+			eas: newExternalSync("secret-same-ns", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindHTTP,
+					HTTP: &HTTPSourceSpec{URL: "https://internal.example.com/records"},
+					SecretRef: &corev1.SecretReference{
+						Namespace: "default",
+						Name:      "source-creds",
+					},
+				},
+			}),
+			wantErr: false,
+		},
+		{
+			name: "invalid - cross-namespace secretRef rejected",
+			eas: newExternalSync("secret-cross-ns", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindHTTP,
+					HTTP: &HTTPSourceSpec{URL: "https://internal.example.com/records"},
+					SecretRef: &corev1.SecretReference{
+						Namespace: "other",
+						Name:      "source-creds",
+					},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "secretRef.namespace",
 		},
 		{
 			name: "invalid - HTTP URL is whitespace-only",
@@ -291,6 +387,39 @@ func TestExternalAttributeSync_ValidateCreate(t *testing.T) {
 			}),
 			wantErr: true,
 			errMsg:  "missing a host component",
+		},
+		{
+			name: "invalid - HTTP URL targets loopback address",
+			eas: newExternalSync("loopback-url", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindHTTP,
+					HTTP: &HTTPSourceSpec{URL: "https://127.0.0.1/records"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "not allowed",
+		},
+		{
+			name: "invalid - HTTP URL targets private address",
+			eas: newExternalSync("private-url", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindHTTP,
+					HTTP: &HTTPSourceSpec{URL: "https://10.0.0.10/records"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "not allowed",
+		},
+		{
+			name: "invalid - HTTP URL targets cluster service DNS",
+			eas: newExternalSync("svc-url", ExternalAttributeSyncSpec{
+				Source: ExternalSource{
+					Kind: ExternalSourceKindHTTP,
+					HTTP: &HTTPSourceSpec{URL: "https://cmdb.default.svc/records"},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "not allowed",
 		},
 		{
 			name: "invalid - HTTP URL is unparseable garbage",
@@ -448,6 +577,29 @@ func TestExternalAttributeSync_ValidateCreate(t *testing.T) {
 			}),
 			wantErr: true,
 			errMsg:  "empty key",
+		},
+		{
+			name: "invalid - empty source field in attributeFields",
+			eas: newExternalSync("empty-source-field", ExternalAttributeSyncSpec{
+				Mapping: AttributeMapping{
+					CollectorIDField: "collector_id",
+					AttributeFields:  map[string]string{"team": ""},
+				},
+			}),
+			wantErr: true,
+			errMsg:  `attributeFields["team"] source field`,
+		},
+		{
+			name: "invalid - requiredKeys contains empty string",
+			eas: newExternalSync("empty-required-key", ExternalAttributeSyncSpec{
+				Mapping: AttributeMapping{
+					CollectorIDField: "collector_id",
+					AttributeFields:  map[string]string{"team": "team_field"},
+					RequiredKeys:     []string{"collector_id", ""},
+				},
+			}),
+			wantErr: true,
+			errMsg:  "spec.mapping.requiredKeys[1]",
 		},
 		{
 			name: "valid - case-sensitive non-reserved prefix",

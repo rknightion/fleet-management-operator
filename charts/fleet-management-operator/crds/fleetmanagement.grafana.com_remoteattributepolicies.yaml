@@ -61,10 +61,15 @@ spec:
                   ("collector.") are rejected by the API server (CEL) and the
                   validating webhook.
                 maxProperties: 100
+                minProperties: 1
                 type: object
                 x-kubernetes-validations:
+                - message: keys must not be empty
+                  rule: self.all(k, k.size() > 0)
                 - message: keys must not use the reserved 'collector.' prefix
                   rule: self.all(k, !k.startsWith('collector.'))
+                - message: values must be 1024 characters or fewer
+                  rule: self.all(k, self[k].size() <= 1024)
               priority:
                 default: 0
                 description: |-
@@ -89,6 +94,7 @@ spec:
                       OR'd with Matchers — a Collector matches if its ID appears here, even
                       if the Matchers would otherwise reject it.
                     items:
+                      minLength: 1
                       type: string
                     maxItems: 1000
                     type: array
@@ -103,10 +109,15 @@ spec:
                       double-checked by the validating webhook.
                     items:
                       maxLength: 200
+                      minLength: 1
                       type: string
                     maxItems: 100
                     type: array
                 type: object
+                x-kubernetes-validations:
+                - message: selector must specify at least one matcher or collectorID
+                  rule: (has(self.matchers) && self.matchers.size() > 0) || (has(self.collectorIDs)
+                    && self.collectorIDs.size() > 0)
             required:
             - attributes
             - selector

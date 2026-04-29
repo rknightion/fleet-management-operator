@@ -24,6 +24,12 @@ const (
 	// PipelineDiscovery. Value is the PipelineDiscovery's metadata.name.
 	PipelineDiscoveryNameLabel = "fleetmanagement.grafana.com/pipeline-discovery-name"
 
+	// PipelineDiscoveryNamespaceLabel marks the namespace of the
+	// PipelineDiscovery that owns a Pipeline CR. Together with
+	// PipelineDiscoveryNameLabel, this makes ownership unambiguous when
+	// same-named discoveries target one namespace.
+	PipelineDiscoveryNamespaceLabel = "fleetmanagement.grafana.com/pipeline-discovery-namespace"
+
 	// PipelineDiscoveredByAnnotation records "<namespace>/<name>" of the
 	// owning PipelineDiscovery for human-readable provenance.
 	PipelineDiscoveredByAnnotation = "fleetmanagement.grafana.com/pipeline-discovered-by"

@@ -80,10 +80,17 @@ spec:
                       prefix are rejected by the API server (CEL) and the validating
                       webhook.
                     maxProperties: 100
+                    minProperties: 1
                     type: object
                     x-kubernetes-validations:
+                    - message: keys must not be empty
+                      rule: self.all(k, k.size() > 0)
                     - message: keys must not use the reserved 'collector.' prefix
                       rule: self.all(k, !k.startsWith('collector.'))
+                    - message: values must not be empty
+                      rule: self.all(k, self[k].size() > 0)
+                    - message: values must be 1024 characters or fewer
+                      rule: self.all(k, self[k].size() <= 1024)
                   collectorIDField:
                     description: |-
                       CollectorIDField is the source field whose value identifies the
@@ -96,6 +103,7 @@ spec:
                       record to be applied. A record missing any required key is skipped
                       (counted in RecordsSeen but not RecordsApplied).
                     items:
+                      minLength: 1
                       type: string
                     type: array
                 required:
@@ -119,6 +127,7 @@ spec:
                       OR'd with Matchers — a Collector matches if its ID appears here, even
                       if the Matchers would otherwise reject it.
                     items:
+                      minLength: 1
                       type: string
                     maxItems: 1000
                     type: array
@@ -133,10 +142,15 @@ spec:
                       double-checked by the validating webhook.
                     items:
                       maxLength: 200
+                      minLength: 1
                       type: string
                     maxItems: 100
                     type: array
                 type: object
+                x-kubernetes-validations:
+                - message: selector must specify at least one matcher or collectorID
+                  rule: (has(self.matchers) && self.matchers.size() > 0) || (has(self.collectorIDs)
+                    && self.collectorIDs.size() > 0)
               source:
                 description: Source identifies the kind and configuration of the external
                   system.
@@ -202,11 +216,20 @@ spec:
                         description: |-
                           Query is the SQL query to execute. Must SELECT at minimum the
                           CollectorIDField and every AttributeFields source column.
+                        minLength: 1
                         type: string
                     type: object
                 required:
                 - kind
                 type: object
+                x-kubernetes-validations:
+                - message: 'kind must match exactly one source config: HTTP requires
+                    http only, SQL requires sql only'
+                  rule: (self.kind == 'HTTP' && has(self.http) && !has(self.sql))
+                    || (self.kind == 'SQL' && has(self.sql) && !has(self.http))
+                - message: secretRef.name is required when secretRef is set
+                  rule: '!has(self.secretRef) || (has(self.secretRef.name) && self.secretRef.name.size()
+                    > 0)'
             required:
             - mapping
             - schedule

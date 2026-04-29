@@ -40,7 +40,7 @@ func TestPipeline_ValidateCreate(t *testing.T) {
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"default\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers:   []string{"collector.os=linux"},
 				},
 			},
@@ -63,7 +63,7 @@ service:
     metrics:
       receivers: [otlp]`,
 					ConfigType: ConfigTypeOpenTelemetryCollector,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 				},
 			},
 			wantErr: false,
@@ -77,7 +77,7 @@ service:
 				},
 				Spec: PipelineSpec{
 					Contents: "   ",
-					Enabled:  true,
+					Enabled:  boolPtr(true),
 				},
 			},
 			wantErr: true,
@@ -93,7 +93,7 @@ service:
 				Spec: PipelineSpec{
 					Contents:   "receivers:\n  otlp: {}",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 				},
 			},
 			wantErr: true,
@@ -112,7 +112,7 @@ service:
     protocols:
       grpc: {}`,
 					ConfigType: ConfigTypeOpenTelemetryCollector,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 				},
 			},
 			wantErr: true,
@@ -128,7 +128,7 @@ service:
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"default\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers:   []string{"collector.os==linux"},
 				},
 			},
@@ -145,7 +145,7 @@ service:
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"default\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers: []string{
 						"very.long.label.name.that.exceeds.the.limit=very.long.value.that.also.contributes.to.exceeding.the.two.hundred.character.limit.for.matchers.in.the.fleet.management.api.which.is.documented.in.the.api.specification.and.must.be.enforced",
 					},
@@ -164,7 +164,7 @@ service:
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"default\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers: []string{
 						"collector.os=linux",
 						"environment!=development",
@@ -185,7 +185,7 @@ service:
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"default\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers:   []string{""},
 				},
 			},
@@ -202,7 +202,7 @@ service:
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"default\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers:   []string{"collector.os"},
 				},
 			},
@@ -237,7 +237,7 @@ func TestPipeline_ValidateUpdate(t *testing.T) {
 		Spec: PipelineSpec{
 			Contents:   "prometheus.scrape \"old\" { }",
 			ConfigType: ConfigTypeAlloy,
-			Enabled:    true,
+			Enabled:    boolPtr(true),
 		},
 	}
 
@@ -257,7 +257,7 @@ func TestPipeline_ValidateUpdate(t *testing.T) {
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"new\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 				},
 			},
 			wantErr: false,
@@ -272,7 +272,7 @@ func TestPipeline_ValidateUpdate(t *testing.T) {
 				Spec: PipelineSpec{
 					Contents:   "prometheus.scrape \"new\" { }",
 					ConfigType: ConfigTypeAlloy,
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers:   []string{"invalid==matcher"},
 				},
 			},

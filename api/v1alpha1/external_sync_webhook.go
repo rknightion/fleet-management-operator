@@ -19,11 +19,14 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/robfig/cron/v3"
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -148,9 +151,16 @@ func (r *ExternalAttributeSync) validateSchedule() error {
 //   - kind=HTTP requires spec.source.http to be set and spec.source.sql to be nil
 //   - kind=SQL requires spec.source.sql to be set and spec.source.http to be nil
 //   - HTTP source URL must parse with scheme http or https
+//   - HTTP source URL must be https when secretRef is set
+//   - secretRef namespace, when set, must equal the ExternalAttributeSync namespace
+//   - SQL query must be read-only SELECT / WITH ... SELECT and a single statement
 //   - HTTP method (when set) is GET or POST
 func (r *ExternalAttributeSync) validateSource() error {
 	src := r.Spec.Source
+
+	if err := validateExternalSyncSecretRef(r.Namespace, src.SecretRef); err != nil {
+		return err
+	}
 
 	switch src.Kind {
 	case ExternalSourceKindHTTP:
@@ -160,7 +170,7 @@ func (r *ExternalAttributeSync) validateSource() error {
 		if src.SQL != nil {
 			return fmt.Errorf("spec.source.kind=HTTP must not also set spec.source.sql")
 		}
-		if err := validateHTTPSource(src.HTTP); err != nil {
+		if err := validateHTTPSource(src.HTTP, src.SecretRef != nil); err != nil {
 			return err
 		}
 
@@ -171,6 +181,9 @@ func (r *ExternalAttributeSync) validateSource() error {
 		if src.HTTP != nil {
 			return fmt.Errorf("spec.source.kind=SQL must not also set spec.source.http")
 		}
+		if err := validateSQLSource(src.SQL); err != nil {
+			return err
+		}
 
 	default:
 		return fmt.Errorf(
@@ -180,11 +193,28 @@ func (r *ExternalAttributeSync) validateSource() error {
 	return nil
 }
 
+func validateExternalSyncSecretRef(syncNamespace string, ref *corev1.SecretReference) error {
+	if ref == nil {
+		return nil
+	}
+	if strings.TrimSpace(ref.Name) == "" {
+		return fmt.Errorf("spec.source.secretRef.name is required when secretRef is set")
+	}
+	if ref.Namespace != "" && ref.Namespace != syncNamespace {
+		return fmt.Errorf(
+			"spec.source.secretRef.namespace %q is invalid; ExternalAttributeSync secretRef must stay in namespace %q",
+			ref.Namespace, syncNamespace,
+		)
+	}
+	return nil
+}
+
 // validateHTTPSource enforces:
 //   - URL non-empty after trim and parses successfully
 //   - URL scheme is http or https
+//   - URL scheme is https when secretRef is set
 //   - method (when set) is GET or POST
-func validateHTTPSource(http *HTTPSourceSpec) error {
+func validateHTTPSource(http *HTTPSourceSpec, hasSecretRef bool) error {
 	rawURL := strings.TrimSpace(http.URL)
 	if rawURL == "" {
 		return fmt.Errorf("spec.source.http.url is required and must not be empty")
@@ -200,9 +230,15 @@ func validateHTTPSource(http *HTTPSourceSpec) error {
 		return fmt.Errorf(
 			"spec.source.http.url scheme %q is invalid; must be http or https", parsed.Scheme)
 	}
+	if hasSecretRef && scheme != "https" {
+		return fmt.Errorf("spec.source.http.url must use https when spec.source.secretRef is set")
+	}
 
 	if parsed.Host == "" {
 		return fmt.Errorf("spec.source.http.url %q is missing a host component", rawURL)
+	}
+	if err := validateHTTPDestination(parsed); err != nil {
+		return err
 	}
 
 	switch http.Method {
@@ -216,10 +252,173 @@ func validateHTTPSource(http *HTTPSourceSpec) error {
 	return nil
 }
 
+func validateHTTPDestination(u *url.URL) error {
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "" {
+		return fmt.Errorf("spec.source.http.url %q is missing a host component", u.String())
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+			addr.IsLinkLocalMulticast() || addr.IsUnspecified() {
+			return fmt.Errorf("spec.source.http.url host %q is not allowed; use a public, explicitly approved external source endpoint", host)
+		}
+		return nil
+	}
+	switch {
+	case host == "localhost",
+		strings.HasSuffix(host, ".localhost"),
+		strings.HasSuffix(host, ".local"),
+		strings.HasSuffix(host, ".svc"),
+		strings.HasSuffix(host, ".cluster.local"):
+		return fmt.Errorf("spec.source.http.url host %q is not allowed; use a public, explicitly approved external source endpoint", host)
+	default:
+		return nil
+	}
+}
+
+func validateSQLSource(sql *SQLSourceSpec) error {
+	if strings.TrimSpace(sql.Query) == "" {
+		return fmt.Errorf("spec.source.sql.query is required and must not be empty")
+	}
+	if err := validateReadOnlySQLQuery(sql.Query); err != nil {
+		return fmt.Errorf("spec.source.sql.query must be a single read-only SELECT statement: %w", err)
+	}
+	return nil
+}
+
+var externalSyncDisallowedSQLTokens = map[string]struct{}{
+	"alter":    {},
+	"analyze":  {},
+	"call":     {},
+	"create":   {},
+	"delete":   {},
+	"drop":     {},
+	"execute":  {},
+	"grant":    {},
+	"insert":   {},
+	"merge":    {},
+	"revoke":   {},
+	"truncate": {},
+	"update":   {},
+	"vacuum":   {},
+}
+
+func validateReadOnlySQLQuery(query string) error {
+	if strings.Contains(query, ";") {
+		return fmt.Errorf("multiple statements are not allowed")
+	}
+	tokens := sqlTokens(query)
+	if len(tokens) == 0 {
+		return fmt.Errorf("query is empty")
+	}
+	for _, tok := range tokens {
+		if _, disallowed := externalSyncDisallowedSQLTokens[tok]; disallowed {
+			return fmt.Errorf("disallowed SQL keyword %q", tok)
+		}
+	}
+	switch tokens[0] {
+	case "select":
+		return nil
+	case "with":
+		if withQueryHasFinalSelect(tokens) {
+			return nil
+		}
+		return fmt.Errorf("WITH query must end in a SELECT")
+	default:
+		return fmt.Errorf("query must start with SELECT or WITH")
+	}
+}
+
+func sqlTokens(query string) []string {
+	tokens := make([]string, 0)
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, strings.ToLower(b.String()))
+		b.Reset()
+	}
+	for _, r := range query {
+		switch r {
+		case '(', ')', ',':
+			flush()
+			tokens = append(tokens, string(r))
+			continue
+		}
+		if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			_, _ = b.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return tokens
+}
+
+func withQueryHasFinalSelect(tokens []string) bool {
+	i := 1
+	if i < len(tokens) && tokens[i] == "recursive" {
+		i++
+	}
+	for {
+		if i >= len(tokens) || !isSQLIdentifierToken(tokens[i]) {
+			return false
+		}
+		i++
+		if i < len(tokens) && tokens[i] == "(" {
+			next := skipSQLBalancedParens(tokens, i)
+			if next < 0 {
+				return false
+			}
+			i = next
+		}
+		if i >= len(tokens) || tokens[i] != "as" {
+			return false
+		}
+		i++
+		if i >= len(tokens) || tokens[i] != "(" {
+			return false
+		}
+		next := skipSQLBalancedParens(tokens, i)
+		if next < 0 {
+			return false
+		}
+		i = next
+		if i < len(tokens) && tokens[i] == "," {
+			i++
+			continue
+		}
+		break
+	}
+	return i < len(tokens) && tokens[i] == "select"
+}
+
+func skipSQLBalancedParens(tokens []string, start int) int {
+	depth := 0
+	for i := start; i < len(tokens); i++ {
+		switch tokens[i] {
+		case "(":
+			depth++
+		case ")":
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
+}
+
+func isSQLIdentifierToken(tok string) bool {
+	return tok != "" && tok != "(" && tok != ")" && tok != ","
+}
+
 // validateMapping enforces:
 //   - spec.mapping.collectorIDField is non-empty after trim
 //   - spec.mapping.attributeFields is non-empty (a mapping with no outputs is meaningless)
 //   - attribute keys must not start with the reserved "collector." prefix
+//   - attribute source fields and required keys must be populated
 func (r *ExternalAttributeSync) validateMapping() error {
 	mapping := r.Spec.Mapping
 
@@ -232,7 +431,7 @@ func (r *ExternalAttributeSync) validateMapping() error {
 			"spec.mapping.attributeFields must contain at least one entry; a mapping with no attribute fields produces no output")
 	}
 
-	for key := range mapping.AttributeFields {
+	for key, sourceField := range mapping.AttributeFields {
 		if key == "" {
 			return fmt.Errorf("spec.mapping.attributeFields contains an empty key")
 		}
@@ -241,6 +440,21 @@ func (r *ExternalAttributeSync) validateMapping() error {
 			return fmt.Errorf(
 				"spec.mapping.attributeFields key %q uses reserved prefix %q which is reserved by Fleet Management for collector-reported attributes",
 				key, collectorReservedAttributePrefix)
+		}
+
+		if strings.TrimSpace(sourceField) == "" {
+			return fmt.Errorf("spec.mapping.attributeFields[%q] source field is required and must not be empty or whitespace", key)
+		}
+		if len(sourceField) > collectorMaxAttributeValueLength {
+			return fmt.Errorf(
+				"spec.mapping.attributeFields[%q] source field length %d exceeds the maximum of %d characters",
+				key, len(sourceField), collectorMaxAttributeValueLength)
+		}
+	}
+
+	for i, key := range mapping.RequiredKeys {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("spec.mapping.requiredKeys[%d] is empty; required keys must be non-empty", i)
 		}
 	}
 

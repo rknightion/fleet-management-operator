@@ -61,12 +61,15 @@ type SQLSourceSpec struct {
 	// Query is the SQL query to execute. Must SELECT at minimum the
 	// CollectorIDField and every AttributeFields source column.
 	// +optional
+	// +kubebuilder:validation:MinLength=1
 	Query string `json:"query,omitempty"`
 }
 
 // ExternalSource is the union-typed source configuration referenced by an
 // ExternalAttributeSync. Exactly one of HTTP / SQL must be populated and
 // must match Kind.
+// +kubebuilder:validation:XValidation:rule="(self.kind == 'HTTP' && has(self.http) && !has(self.sql)) || (self.kind == 'SQL' && has(self.sql) && !has(self.http))",message="kind must match exactly one source config: HTTP requires http only, SQL requires sql only"
+// +kubebuilder:validation:XValidation:rule="!has(self.secretRef) || (has(self.secretRef.name) && self.secretRef.name.size() > 0)",message="secretRef.name is required when secretRef is set"
 type ExternalSource struct {
 	Kind      ExternalSourceKind      `json:"kind"`
 	HTTP      *HTTPSourceSpec         `json:"http,omitempty"`
@@ -86,14 +89,19 @@ type AttributeMapping struct {
 	// whose value becomes its value. Keys with the reserved "collector."
 	// prefix are rejected by the API server (CEL) and the validating
 	// webhook.
+	// +kubebuilder:validation:MinProperties=1
 	// +kubebuilder:validation:MaxProperties=100
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k.size() > 0)",message="keys must not be empty"
 	// +kubebuilder:validation:XValidation:rule="self.all(k, !k.startsWith('collector.'))",message="keys must not use the reserved 'collector.' prefix"
+	// +kubebuilder:validation:XValidation:rule="self.all(k, self[k].size() > 0)",message="values must not be empty"
+	// +kubebuilder:validation:XValidation:rule="self.all(k, self[k].size() <= 1024)",message="values must be 1024 characters or fewer"
 	AttributeFields map[string]string `json:"attributeFields"`
 
 	// RequiredKeys is the set of source fields that must be present for a
 	// record to be applied. A record missing any required key is skipped
 	// (counted in RecordsSeen but not RecordsApplied).
 	// +optional
+	// +kubebuilder:validation:items:MinLength=1
 	RequiredKeys []string `json:"requiredKeys,omitempty"`
 }
 
@@ -110,6 +118,7 @@ type ExternalAttributeSyncSpec struct {
 
 	// Selector picks the collectors this sync targets. Reuses the
 	// PolicySelector shape: matchers AND'd, OR'd with explicit collectorIDs.
+	// +kubebuilder:validation:XValidation:rule="(has(self.matchers) && self.matchers.size() > 0) || (has(self.collectorIDs) && self.collectorIDs.size() > 0)",message="selector must specify at least one matcher or collectorID"
 	Selector PolicySelector `json:"selector"`
 
 	// Mapping projects source records into collector attributes.

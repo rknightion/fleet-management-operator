@@ -72,7 +72,7 @@ func TestPipelineValidator_NilCheckerSkipsTenantStep(t *testing.T) {
 		Spec: PipelineSpec{
 			Contents:   "prometheus.scrape \"x\" {}",
 			ConfigType: ConfigTypeAlloy,
-			Enabled:    true,
+			Enabled:    boolPtr(true),
 			Matchers:   []string{"team=billing"},
 		},
 	}
@@ -91,7 +91,7 @@ func TestPipelineValidator_ChecksMatchersAndRejectsOnError(t *testing.T) {
 		Spec: PipelineSpec{
 			Contents:   "prometheus.scrape \"x\" {}",
 			ConfigType: ConfigTypeAlloy,
-			Enabled:    true,
+			Enabled:    boolPtr(true),
 			Matchers:   []string{"team=other", "env=prod"},
 		},
 	}
@@ -121,7 +121,7 @@ func TestPipelineValidator_ChecksMatchersOnUpdate(t *testing.T) {
 		Spec: PipelineSpec{
 			Contents:   "prometheus.scrape \"x\" {}",
 			ConfigType: ConfigTypeAlloy,
-			Enabled:    true,
+			Enabled:    boolPtr(true),
 			Matchers:   []string{"team=billing"},
 		},
 	}
@@ -152,7 +152,7 @@ func TestPipelineValidator_SpecValidationRunsBeforeTenantCheck(t *testing.T) {
 		Spec: PipelineSpec{
 			Contents:   "",
 			ConfigType: ConfigTypeAlloy,
-			Enabled:    true,
+			Enabled:    boolPtr(true),
 		},
 	}
 	if _, err := v.ValidateCreate(context.Background(), p); err == nil {

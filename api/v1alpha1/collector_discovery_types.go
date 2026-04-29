@@ -55,6 +55,11 @@ const (
 	// rules, so usable verbatim as a label value).
 	DiscoveryNameLabel = "fleetmanagement.grafana.com/discovery-name"
 
+	// DiscoveryNamespaceLabel marks the namespace of the CollectorDiscovery
+	// that owns a Collector CR. Together with DiscoveryNameLabel, this makes
+	// ownership unambiguous when same-named discoveries target one namespace.
+	DiscoveryNamespaceLabel = "fleetmanagement.grafana.com/discovery-namespace"
+
 	// DiscoveredByAnnotation records the namespaced name
 	// ("<namespace>/<name>") of the CollectorDiscovery that created
 	// this Collector CR. Provenance for humans and tooling.

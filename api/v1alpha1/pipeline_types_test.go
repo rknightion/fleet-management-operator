@@ -125,6 +125,24 @@ func TestSourceType_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestPipelineSpec_GetEnabled(t *testing.T) {
+	tests := []struct {
+		name string
+		in   *bool
+		want bool
+	}{
+		{name: "nil defaults true", in: nil, want: true},
+		{name: "explicit true", in: boolPtr(true), want: true},
+		{name: "explicit false", in: boolPtr(false), want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := PipelineSpec{Enabled: tc.in}
+			assert.Equal(t, tc.want, spec.GetEnabled())
+		})
+	}
+}
+
 func TestCollectorTypeFromFleetAPI(t *testing.T) {
 	cases := []struct {
 		name string

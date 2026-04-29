@@ -93,8 +93,12 @@ spec:
                 maxProperties: 100
                 type: object
                 x-kubernetes-validations:
+                - message: keys must not be empty
+                  rule: self.all(k, k.size() > 0)
                 - message: keys must not use the reserved 'collector.' prefix
                   rule: self.all(k, !k.startsWith('collector.'))
+                - message: values must be 1024 characters or fewer
+                  rule: self.all(k, self[k].size() <= 1024)
             required:
             - id
             type: object
