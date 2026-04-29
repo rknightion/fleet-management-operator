@@ -17,8 +17,12 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCollectorDiscovery_validatePollInterval(t *testing.T) {
@@ -235,4 +239,95 @@ func TestCollectorDiscovery_validateCollectorDiscovery_endToEnd(t *testing.T) {
 	if _, err := cd.validateCollectorDiscovery(); err != nil {
 		t.Fatalf("validateCollectorDiscovery() unexpected error: %v", err)
 	}
+}
+
+// validCollectorDiscovery is a minimum-viable spec that passes every
+// validation rule. Tests that want to exercise individual failure modes
+// start from this and mutate one field.
+func validCollectorDiscovery() *CollectorDiscovery {
+	return &CollectorDiscovery{
+		Spec: CollectorDiscoverySpec{
+			PollInterval: "5m",
+			Selector: PolicySelector{
+				Matchers: []string{"env=prod"},
+			},
+			TargetNamespace: "fleet-mirror",
+			Policy: DiscoveryPolicy{
+				OnCollectorRemoved: DiscoveryOnRemovedKeep,
+				OnConflict:         DiscoveryOnConflictSkip,
+			},
+		},
+	}
+}
+
+// TestCollectorDiscovery_ValidateCreate covers the webhook entry point used
+// by the API server on every create. The plumbing is trivial — it forwards
+// to validateCollectorDiscovery — but exercising the entry point directly
+// catches the regression where someone wires a different validator into
+// the registration call.
+func TestCollectorDiscovery_ValidateCreate(t *testing.T) {
+	ctx := context.Background()
+	r := &CollectorDiscovery{}
+
+	t.Run("valid spec passes", func(t *testing.T) {
+		obj := validCollectorDiscovery()
+		warnings, err := r.ValidateCreate(ctx, obj)
+		require.NoError(t, err)
+		assert.Empty(t, warnings, "valid spec must not emit warnings")
+	})
+
+	t.Run("invalid pollInterval is rejected", func(t *testing.T) {
+		obj := validCollectorDiscovery()
+		obj.Spec.PollInterval = "30s"
+		_, err := r.ValidateCreate(ctx, obj)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "below the minimum")
+	})
+
+	t.Run("empty selector emits PERF-02 warning but is allowed", func(t *testing.T) {
+		obj := validCollectorDiscovery()
+		obj.Spec.Selector = PolicySelector{}
+		warnings, err := r.ValidateCreate(ctx, obj)
+		require.NoError(t, err, "empty selector is a legitimate (if unscoped) configuration")
+		require.Len(t, warnings, 1, "empty selector must surface the large-fleet warning")
+		assert.Contains(t, warnings[0], "spec.selector is empty")
+		assert.Contains(t, warnings[0], "shard")
+	})
+}
+
+// TestCollectorDiscovery_ValidateUpdate is the update-path mirror. CRD
+// fields are all mutable, so the update path runs the same validation as
+// create (and gets the same warnings).
+func TestCollectorDiscovery_ValidateUpdate(t *testing.T) {
+	ctx := context.Background()
+	r := &CollectorDiscovery{}
+
+	t.Run("valid update passes", func(t *testing.T) {
+		oldObj := validCollectorDiscovery()
+		newObj := validCollectorDiscovery()
+		newObj.Spec.PollInterval = "10m"
+		warnings, err := r.ValidateUpdate(ctx, oldObj, newObj)
+		require.NoError(t, err)
+		assert.Empty(t, warnings)
+	})
+
+	t.Run("update with invalid spec is rejected", func(t *testing.T) {
+		oldObj := validCollectorDiscovery()
+		newObj := validCollectorDiscovery()
+		newObj.Spec.TargetNamespace = "Invalid_Namespace"
+		_, err := r.ValidateUpdate(ctx, oldObj, newObj)
+		require.Error(t, err, "DNS-1123 violation in targetNamespace must reject the update")
+	})
+}
+
+// TestCollectorDiscovery_ValidateDelete is a sanity check on the no-op
+// delete path. The webhook is registered for create+update only (verbs in
+// the +kubebuilder:webhook marker), but the method is on the validator
+// interface and must not produce errors or warnings.
+func TestCollectorDiscovery_ValidateDelete(t *testing.T) {
+	ctx := context.Background()
+	r := &CollectorDiscovery{}
+	warnings, err := r.ValidateDelete(ctx, validCollectorDiscovery())
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
 }
