@@ -43,7 +43,6 @@ additive-then-remove window.
 | `Synced`           | Ready, Synced  | UpsertPipeline succeeded.                                            |
 | `SyncFailed`       | Ready, Synced  | Fleet API call failed (network, 5xx, rate-limit).                    |
 | `ValidationError`  | Ready, Synced  | Spec failed pre-API validation (configType/contents, matchers).      |
-| `Deleting`         | Ready, Synced  | DeletionTimestamp set; finalizer running.                            |
 | `DeleteFailed`     | Ready, Synced  | DeletePipeline returned an error other than 404.                     |
 
 ### Collector (`internal/controller/collector_controller.go`)
@@ -54,7 +53,6 @@ additive-then-remove window.
 | `SyncFailed`       | Ready, Synced  | Fleet API call failed.                                                                    |
 | `NotRegistered`    | Ready, Synced  | Collector CR points at an ID that has not yet appeared in Fleet Management. Requeues.     |
 | `ValidationError`  | Ready, Synced  | Spec fails server-side validation (e.g. reserved key prefix slipped past a stale schema). |
-| `Deleting`         | Ready, Synced  | DeletionTimestamp set; finalizer running.                                                 |
 | `DeleteFailed`     | Ready, Synced  | Cleanup of owned keys failed.                                                             |
 
 ### RemoteAttributePolicy (`internal/controller/policy_controller.go`)
@@ -69,14 +67,14 @@ additive-then-remove window.
 
 ### ExternalAttributeSync (`internal/controller/external_sync_controller.go`)
 
-| Reason               | Used on              | Meaning                                                                                      |
-| -------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| `Synced`             | Ready, Synced        | Fetch returned records and the claim was applied.                                            |
-| `SourceFailed`       | Ready, Synced        | Source `Fetch` returned a non-nil error.                                                     |
-| `Stalled`            | Stalled              | `Fetch` returned 0 records and `spec.allowEmptyResults=false`; claim preserved.              |
-| `InvalidSchedule`    | Ready, Synced        | `spec.schedule` failed both duration and cron parsers.                                       |
-| `OwnedKeysTruncated` | Truncated            | ownedKeys capped at 1000; collectors beyond cap may retain attributes on CR deletion.        |
-| `NotTruncated`       | Truncated            | ownedKeys was not capped.                                                                    |
+| Reason               | Used on                | Meaning                                                                                      |
+| -------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
+| `Synced`             | Ready, Synced, Stalled | Fetch returned records and the claim was applied. On Stalled, signals recovery from a prior empty fetch. |
+| `SourceFailed`       | Ready, Synced          | Source `Fetch` returned a non-nil error.                                                     |
+| `Stalled`            | Ready, Synced, Stalled | `Fetch` returned 0 records and `spec.allowEmptyResults=false`; claim preserved. Surfaced on all three condition types so generic alerts and the dedicated Stalled lane stay consistent. |
+| `InvalidSchedule`    | Ready, Synced          | `spec.schedule` failed both duration and cron parsers.                                       |
+| `OwnedKeysTruncated` | Truncated              | ownedKeys capped at 1000; collectors beyond cap may retain attributes on CR deletion.        |
+| `NotTruncated`       | Truncated              | ownedKeys was not capped.                                                                    |
 
 ### CollectorDiscovery (`internal/controller/collector_discovery_controller.go`)
 
