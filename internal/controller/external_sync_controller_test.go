@@ -611,14 +611,14 @@ func buildRecordsForCollectors(n int) []sources.Record {
 	return out
 }
 
-// drainExternalSyncTruncatedEvents pulls events off the recorder's channel
-// without blocking and returns the count whose message contains "Truncated".
-func drainExternalSyncTruncatedEvents(rec *record.FakeRecorder) int {
+// drainExternalSyncCapExceededEvents pulls events off the recorder's channel
+// without blocking and returns the count whose reason is OwnedKeysExceeded.
+func drainExternalSyncCapExceededEvents(rec *record.FakeRecorder) int {
 	count := 0
 	for {
 		select {
 		case ev := <-rec.Events:
-			if strings.Contains(ev, "Truncated") {
+			if strings.Contains(ev, externalSyncEventReasonOwnedKeysExceeded) {
 				count++
 			}
 		default:
@@ -627,34 +627,35 @@ func drainExternalSyncTruncatedEvents(rec *record.FakeRecorder) int {
 	}
 }
 
-// E4: Truncation tests for ExternalAttributeSync.
+// E4/P1-05: maxOwnedKeys tests for ExternalAttributeSync.
 //
 // These tests use a fake K8s client to fan out 1000+ Collector CRs and
 // drive the reconciler with a matching number of source records. They
 // cover:
-//   - Truncated condition set when ownedKeys exceeds maxOwnedKeys
-//   - Truncated condition CLEARED on transition back below the cap
+//   - fail-closed status when ownedKeys exceeds maxOwnedKeys
+//   - no partial OwnedKeys handoff is published above the cap
+//   - cap-exceeded condition CLEARED on transition back below the cap
 //   - Warning event emitted on truncation
 //   - No-op short-circuit doesn't preserve a stale Stalled=True after
 //     same-data recovery (B3) or a stale Truncated=True after the
 //     matched-set drops (B4-equivalent for owned keys)
-var _ = Describe("ExternalAttributeSync Truncation", func() {
+var _ = Describe("ExternalAttributeSync owned-key cap", func() {
 	const truncNS = "extsync-trunc"
 
 	type tc struct {
-		name           string
-		n              int
-		wantTruncated  bool
-		wantOwnedLen   int
-		wantEvent      bool
-		wantEventCount int
+		name            string
+		n               int
+		wantCapExceeded bool
+		wantOwnedLen    int
+		wantEvent       bool
+		wantEventCount  int
 	}
 
 	cases := []tc{
-		{name: "below cap (999)", n: 999, wantTruncated: false, wantOwnedLen: 999, wantEvent: false},
-		{name: "at cap (1000)", n: 1000, wantTruncated: false, wantOwnedLen: 1000, wantEvent: false},
-		{name: "just over cap (1001)", n: 1001, wantTruncated: true, wantOwnedLen: maxOwnedKeys, wantEvent: true, wantEventCount: 1},
-		{name: "well over cap (5000)", n: 5000, wantTruncated: true, wantOwnedLen: maxOwnedKeys, wantEvent: true, wantEventCount: 1},
+		{name: "below cap (999)", n: 999, wantCapExceeded: false, wantOwnedLen: 999, wantEvent: false},
+		{name: "at cap (1000)", n: 1000, wantCapExceeded: false, wantOwnedLen: 1000, wantEvent: false},
+		{name: "just over cap (1001)", n: 1001, wantCapExceeded: true, wantOwnedLen: 0, wantEvent: true, wantEventCount: 1},
+		{name: "well over cap (5000)", n: 5000, wantCapExceeded: true, wantOwnedLen: 0, wantEvent: true, wantEventCount: 1},
 	}
 
 	for _, tt := range cases {
@@ -715,18 +716,28 @@ var _ = Describe("ExternalAttributeSync Truncation", func() {
 			Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "trunc-sync"}, got)).To(Succeed())
 
 			Expect(got.Status.OwnedKeys).To(HaveLen(tt.wantOwnedLen),
-				"OwnedKeys length must equal min(matched, maxOwnedKeys)")
+				"OwnedKeys must be fully published under the cap and cleared above the cap")
 			truncCond := findExternalSyncCondition(got, externalSyncConditionTruncated)
 			Expect(truncCond).NotTo(BeNil())
-			if tt.wantTruncated {
+			readyCond := findExternalSyncCondition(got, conditionTypeReady)
+			Expect(readyCond).NotTo(BeNil())
+			syncedCond := findExternalSyncCondition(got, conditionTypeSynced)
+			Expect(syncedCond).NotTo(BeNil())
+			if tt.wantCapExceeded {
 				Expect(truncCond.Status).To(Equal(metav1.ConditionTrue))
-				Expect(truncCond.Reason).To(Equal(externalSyncReasonTruncated))
+				Expect(truncCond.Reason).To(Equal(externalSyncReasonOwnedKeysExceeded))
+				Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+				Expect(readyCond.Reason).To(Equal(externalSyncReasonOwnedKeysExceeded))
+				Expect(syncedCond.Status).To(Equal(metav1.ConditionFalse))
+				Expect(syncedCond.Reason).To(Equal(externalSyncReasonOwnedKeysExceeded))
 			} else {
 				Expect(truncCond.Status).To(Equal(metav1.ConditionFalse))
 				Expect(truncCond.Reason).To(Equal(externalSyncReasonNotTruncated))
+				Expect(readyCond.Status).To(Equal(metav1.ConditionTrue))
+				Expect(syncedCond.Status).To(Equal(metav1.ConditionTrue))
 			}
 
-			truncEvents := drainExternalSyncTruncatedEvents(fakeRecorder)
+			truncEvents := drainExternalSyncCapExceededEvents(fakeRecorder)
 			if tt.wantEvent {
 				Expect(truncEvents).To(BeNumerically(">=", tt.wantEventCount))
 			} else {
@@ -735,9 +746,94 @@ var _ = Describe("ExternalAttributeSync Truncation", func() {
 		})
 	}
 
-	It("clears Truncated condition when ownedKeys drops below the cap", func() {
-		// Step 1: 1500 records -> truncated.
-		// Step 2: 800 records -> Truncated must flip to False.
+	It("clears a previous OwnedKeys claim when the computed handoff exceeds the cap", func() {
+		ctx := context.Background()
+		previousSuccess := metav1.NewTime(time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC))
+		sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "cap-clears-previous",
+				Namespace:  truncNS,
+				Generation: 1,
+			},
+			Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+				Source: fleetmanagementv1alpha1.ExternalSource{
+					Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+					HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
+				},
+				Schedule: "5m",
+				Selector: fleetmanagementv1alpha1.PolicySelector{
+					Matchers: []string{`tier="edge"`},
+				},
+				Mapping: fleetmanagementv1alpha1.AttributeMapping{
+					CollectorIDField: "hostname",
+					AttributeFields:  map[string]string{"env": "env"},
+				},
+			},
+			Status: fleetmanagementv1alpha1.ExternalAttributeSyncStatus{
+				ObservedGeneration: 1,
+				LastSuccessTime:    &previousSuccess,
+				RecordsSeen:        1,
+				RecordsApplied:     1,
+				OwnedKeys: []fleetmanagementv1alpha1.OwnedKeyEntry{
+					{CollectorID: "id-00000", Attributes: map[string]string{"env": "prod"}},
+				},
+				Conditions: []metav1.Condition{
+					{
+						Type:               conditionTypeReady,
+						Status:             metav1.ConditionTrue,
+						Reason:             externalSyncReasonSynced,
+						ObservedGeneration: 1,
+					},
+					{
+						Type:               conditionTypeSynced,
+						Status:             metav1.ConditionTrue,
+						Reason:             externalSyncReasonSynced,
+						ObservedGeneration: 1,
+					},
+				},
+			},
+		}
+
+		objs := []client.Object{sync}
+		for _, c := range buildMatchedCollectorList(truncNS, maxOwnedKeys+1) {
+			objs = append(objs, c)
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithStatusSubresource(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
+			WithObjects(objs...).
+			Build()
+		testSrc := &fakeSource{}
+		testSrc.setRecords(buildRecordsForCollectors(maxOwnedKeys + 1))
+
+		r := &ExternalAttributeSyncReconciler{
+			Client: fakeClient,
+			Scheme: scheme.Scheme,
+			Factory: func(_ fleetmanagementv1alpha1.ExternalSource, _ *corev1.Secret) (sources.Source, error) {
+				return testSrc, nil
+			},
+		}
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: truncNS, Name: "cap-clears-previous"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		got := &fleetmanagementv1alpha1.ExternalAttributeSync{}
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "cap-clears-previous"}, got)).To(Succeed())
+		Expect(got.Status.OwnedKeys).To(BeEmpty(), "previous handoff must be cleared above maxOwnedKeys")
+		Expect(got.Status.LastSuccessTime).NotTo(BeNil())
+		Expect(got.Status.LastSuccessTime.Time.Equal(previousSuccess.Time)).To(BeTrue(),
+			"over-cap attempts must not advance LastSuccessTime")
+		Expect(findExternalSyncCondition(got, conditionTypeReady).Reason).To(Equal(externalSyncReasonOwnedKeysExceeded))
+		Expect(findExternalSyncCondition(got, conditionTypeSynced).Status).To(Equal(metav1.ConditionFalse))
+	})
+
+	It("clears cap-exceeded status when ownedKeys drops below the cap", func() {
+		// Step 1: 1500 records -> fail closed with no OwnedKeys handoff.
+		// Step 2: 800 records -> Truncated must flip to False and OwnedKeys
+		// can be published again.
 		ctx := context.Background()
 
 		sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
@@ -792,8 +888,9 @@ var _ = Describe("ExternalAttributeSync Truncation", func() {
 
 		got := &fleetmanagementv1alpha1.ExternalAttributeSync{}
 		Expect(fakeClient.Get(ctx, types.NamespacedName{Namespace: truncNS, Name: "trunc-clear-sync"}, got)).To(Succeed())
-		Expect(got.Status.OwnedKeys).To(HaveLen(maxOwnedKeys))
+		Expect(got.Status.OwnedKeys).To(BeEmpty())
 		Expect(findExternalSyncCondition(got, externalSyncConditionTruncated).Status).To(Equal(metav1.ConditionTrue))
+		Expect(findExternalSyncCondition(got, conditionTypeReady).Status).To(Equal(metav1.ConditionFalse))
 
 		// Step 2: drop the records to 800. Generation unchanged.
 		testSrc.setRecords(buildRecordsForCollectors(800))
@@ -809,6 +906,7 @@ var _ = Describe("ExternalAttributeSync Truncation", func() {
 		Expect(truncCond2).NotTo(BeNil())
 		Expect(truncCond2.Status).To(Equal(metav1.ConditionFalse),
 			"Truncated condition must clear when ownedKeys drops below cap")
+		Expect(findExternalSyncCondition(got2, conditionTypeReady).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("clears Stalled when source recovers with the SAME records as last successful run (B3)", func() {

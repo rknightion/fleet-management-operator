@@ -198,9 +198,11 @@ func TestPipelineDiscovery_CreatesPipelineCRs(t *testing.T) {
 	assert.Equal(t, "loki.source.api \"default\" {}", p1.Spec.Contents)
 	assert.Equal(t, []string{"env=prod"}, p1.Spec.Matchers)
 	assert.Equal(t, v1alpha1.ConfigTypeAlloy, p1.Spec.ConfigType)
-	assert.True(t, p1.Spec.Enabled)
+	require.NotNil(t, p1.Spec.Enabled)
+	assert.True(t, *p1.Spec.Enabled)
 	assert.Equal(t, v1alpha1.PipelineDiscoveryNameLabel, v1alpha1.PipelineDiscoveryNameLabel)
 	assert.Equal(t, "pd-test", p1.Labels[v1alpha1.PipelineDiscoveryNameLabel])
+	assert.Equal(t, "default", p1.Labels[v1alpha1.PipelineDiscoveryNamespaceLabel])
 	assert.Equal(t, "default/pd-test", p1.Annotations[v1alpha1.PipelineDiscoveredByAnnotation])
 	assert.Equal(t, "id-1", p1.Annotations[v1alpha1.FleetPipelineIDAnnotation])
 	assert.False(t, p1.Spec.Paused, "Adopt mode should leave Paused=false")
@@ -446,7 +448,7 @@ func TestPipelineDiscovery_ConflictNotOwnedByDiscovery(t *testing.T) {
 		Spec: v1alpha1.PipelineSpec{
 			Name:     "manual-pipeline",
 			Contents: "original.content {}",
-			Enabled:  true,
+			Enabled:  boolPtr(true),
 		},
 	}
 
@@ -495,7 +497,7 @@ func TestPipelineDiscovery_ConflictOwnedByOtherDiscovery(t *testing.T) {
 		Spec: v1alpha1.PipelineSpec{
 			Name:     "owned-pipeline",
 			Contents: "other.content {}",
-			Enabled:  true,
+			Enabled:  boolPtr(true),
 		},
 	}
 
@@ -710,4 +712,85 @@ func TestPipelineDiscovery_TargetNamespace(t *testing.T) {
 		client.MatchingLabels{v1alpha1.PipelineDiscoveryNameLabel: "pd-ns"},
 	))
 	assert.Len(t, pipelinesTarget.Items, 1)
+}
+
+// TestPipelineDiscovery_OwnershipScopedByNamespace verifies that same-named
+// PipelineDiscoveries in different namespaces do not manage each other's
+// Pipeline CRs when they target the same namespace.
+func TestPipelineDiscovery_OwnershipScopedByNamespace(t *testing.T) {
+	now := time.Now()
+	pdA := newPD("source-a", "shared", v1alpha1.PipelineDiscoverySpec{
+		PollInterval:    "5m",
+		TargetNamespace: "target",
+	})
+	pdB := newPD("source-b", "shared", v1alpha1.PipelineDiscoverySpec{
+		PollInterval:    "5m",
+		TargetNamespace: "target",
+	})
+
+	s := newPipelineDiscoveryTestScheme(t)
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&v1alpha1.PipelineDiscovery{}).
+		WithObjects(pdA, pdB).
+		Build()
+
+	fleetA := &fakePipelineDiscoveryClient{
+		pipelines: []*fleetclient.Pipeline{
+			fleetPipeline("id-a", "pipe-a", "a.content {}"),
+		},
+	}
+	fleetB := &fakePipelineDiscoveryClient{
+		pipelines: []*fleetclient.Pipeline{
+			fleetPipeline("id-b", "pipe-b", "b.content {}"),
+		},
+	}
+
+	nowA := now
+	nowB := now
+	rA := &PipelineDiscoveryReconciler{
+		Client:      c,
+		Scheme:      s,
+		FleetClient: fleetA,
+		Now:         func() time.Time { return nowA },
+	}
+	rB := &PipelineDiscoveryReconciler{
+		Client:      c,
+		Scheme:      s,
+		FleetClient: fleetB,
+		Now:         func() time.Time { return nowB },
+	}
+
+	reconcileN(t, rA, pdKey("source-a", "shared"), 1)
+	reconcileN(t, rB, pdKey("source-b", "shared"), 1)
+
+	var pipelines v1alpha1.PipelineList
+	require.NoError(t, c.List(context.Background(), &pipelines,
+		client.InNamespace("target"),
+		client.MatchingLabels{v1alpha1.PipelineDiscoveryNameLabel: "shared"},
+	))
+	require.Len(t, pipelines.Items, 2)
+
+	pipeA := &v1alpha1.Pipeline{}
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "target", Name: "pipe-a"}, pipeA))
+	assert.Equal(t, "source-a", pipeA.Labels[v1alpha1.PipelineDiscoveryNamespaceLabel])
+	assert.Empty(t, pipeA.Annotations[v1alpha1.PipelineDiscoveryStaleAnnotation])
+
+	pipeB := &v1alpha1.Pipeline{}
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "target", Name: "pipe-b"}, pipeB))
+	assert.Equal(t, "source-b", pipeB.Labels[v1alpha1.PipelineDiscoveryNamespaceLabel])
+
+	fleetB.mu.Lock()
+	fleetB.pipelines = nil
+	fleetB.mu.Unlock()
+	nowB = now.Add(10 * time.Minute)
+	reconcileN(t, rB, pdKey("source-b", "shared"), 1)
+
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "target", Name: "pipe-b"}, pipeB))
+	assert.Equal(t, v1alpha1.PipelineDiscoveryStaleAnnotationValue,
+		pipeB.Annotations[v1alpha1.PipelineDiscoveryStaleAnnotation])
+
+	require.NoError(t, c.Get(context.Background(), client.ObjectKey{Namespace: "target", Name: "pipe-a"}, pipeA))
+	assert.Empty(t, pipeA.Annotations[v1alpha1.PipelineDiscoveryStaleAnnotation],
+		"source-b discovery must not mark source-a's Pipeline stale")
 }

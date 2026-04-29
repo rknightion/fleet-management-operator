@@ -43,6 +43,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/grafana/fleet-management-operator/pkg/sources"
 )
@@ -51,6 +52,13 @@ import (
 // is zero. Mirrors httpsource.defaultTimeout so operator-wide source behavior
 // stays consistent.
 const defaultTimeout = 30 * time.Second
+
+const (
+	defaultMaxOpenConns    = 4
+	defaultMaxIdleConns    = 2
+	defaultConnMaxLifetime = 30 * time.Minute
+	defaultConnMaxIdleTime = 5 * time.Minute
+)
 
 // supportedDrivers enumerates the database/sql drivers this package registers.
 // The check is duplicated in New so callers get a clear error before any
@@ -114,6 +122,9 @@ func New(cfg Config) (*Source, error) {
 	if strings.TrimSpace(cfg.Query) == "" {
 		return nil, fmt.Errorf("sqlsource: query is required")
 	}
+	if err := validateReadOnlyQuery(cfg.Query); err != nil {
+		return nil, fmt.Errorf("sqlsource: query must be a single read-only SELECT statement: %w", err)
+	}
 	if strings.TrimSpace(cfg.DSN) == "" {
 		return nil, fmt.Errorf("sqlsource: DSN is required")
 	}
@@ -138,6 +149,7 @@ func newWithDB(cfg Config, db *sql.DB) *Source {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
 	}
+	configurePool(db)
 	return &Source{cfg: cfg, db: db}
 }
 
@@ -240,6 +252,7 @@ func (s *Source) handle(ctx context.Context) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlsource: open %s: %w", s.cfg.Driver, err)
 	}
+	configurePool(db)
 	if err := db.PingContext(ctx); err != nil {
 		// If the Ping fails the DB handle is unusable; close it so we
 		// don't leak the underlying connection slot, and clear the
@@ -249,6 +262,144 @@ func (s *Source) handle(ctx context.Context) (*sql.DB, error) {
 	}
 	s.db = db
 	return db, nil
+}
+
+func configurePool(db *sql.DB) {
+	if db == nil {
+		return
+	}
+	db.SetMaxOpenConns(defaultMaxOpenConns)
+	db.SetMaxIdleConns(defaultMaxIdleConns)
+	db.SetConnMaxLifetime(defaultConnMaxLifetime)
+	db.SetConnMaxIdleTime(defaultConnMaxIdleTime)
+}
+
+var disallowedSQLTokens = map[string]struct{}{
+	"alter":    {},
+	"analyze":  {},
+	"call":     {},
+	"create":   {},
+	"delete":   {},
+	"drop":     {},
+	"execute":  {},
+	"grant":    {},
+	"insert":   {},
+	"merge":    {},
+	"revoke":   {},
+	"truncate": {},
+	"update":   {},
+	"vacuum":   {},
+}
+
+func validateReadOnlyQuery(query string) error {
+	if strings.Contains(query, ";") {
+		return fmt.Errorf("multiple statements are not allowed")
+	}
+	tokens := sqlTokens(query)
+	if len(tokens) == 0 {
+		return fmt.Errorf("query is empty")
+	}
+	for _, tok := range tokens {
+		if _, disallowed := disallowedSQLTokens[tok]; disallowed {
+			return fmt.Errorf("disallowed SQL keyword %q", tok)
+		}
+	}
+	switch tokens[0] {
+	case "select":
+		return nil
+	case "with":
+		if withQueryHasFinalSelect(tokens) {
+			return nil
+		}
+		return fmt.Errorf("WITH query must end in a SELECT")
+	default:
+		return fmt.Errorf("query must start with SELECT or WITH")
+	}
+}
+
+func sqlTokens(query string) []string {
+	tokens := make([]string, 0)
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, strings.ToLower(b.String()))
+		b.Reset()
+	}
+	for _, r := range query {
+		switch r {
+		case '(', ')', ',':
+			flush()
+			tokens = append(tokens, string(r))
+			continue
+		}
+		if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			_, _ = b.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return tokens
+}
+
+func withQueryHasFinalSelect(tokens []string) bool {
+	i := 1
+	if i < len(tokens) && tokens[i] == "recursive" {
+		i++
+	}
+	for {
+		if i >= len(tokens) || !isSQLIdentifierToken(tokens[i]) {
+			return false
+		}
+		i++
+		if i < len(tokens) && tokens[i] == "(" {
+			next := skipSQLBalancedParens(tokens, i)
+			if next < 0 {
+				return false
+			}
+			i = next
+		}
+		if i >= len(tokens) || tokens[i] != "as" {
+			return false
+		}
+		i++
+		if i >= len(tokens) || tokens[i] != "(" {
+			return false
+		}
+		next := skipSQLBalancedParens(tokens, i)
+		if next < 0 {
+			return false
+		}
+		i = next
+		if i < len(tokens) && tokens[i] == "," {
+			i++
+			continue
+		}
+		break
+	}
+	return i < len(tokens) && tokens[i] == "select"
+}
+
+func skipSQLBalancedParens(tokens []string, start int) int {
+	depth := 0
+	for i := start; i < len(tokens); i++ {
+		switch tokens[i] {
+		case "(":
+			depth++
+		case ")":
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
+}
+
+func isSQLIdentifierToken(tok string) bool {
+	return tok != "" && tok != "(" && tok != ")" && tok != ","
 }
 
 // fetchContext applies cfg.Timeout as a context deadline unless the caller

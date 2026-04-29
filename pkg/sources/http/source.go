@@ -42,6 +42,12 @@ const defaultTimeout = 30 * time.Second
 // so a multi-MB error page does not balloon log output.
 const bodyExcerptLimit = 200
 
+// successfulBodyLimit caps successful JSON response bodies. External sources
+// are customer-controlled network endpoints; bounding the read protects the
+// reconciler from large-response memory pressure while preserving the existing
+// non-2xx excerpt behavior.
+const successfulBodyLimit int64 = 10 * 1024 * 1024
+
 // Config is the typed construction input for an HTTP/JSON Source.
 //
 // The controller adapts v1alpha1.HTTPSourceSpec plus secret material into a
@@ -106,6 +112,9 @@ func New(cfg Config) (*Source, error) {
 	}
 	if parsed.Host == "" {
 		return nil, fmt.Errorf("httpsource: URL must include a host: %q", cfg.URL)
+	}
+	if parsed.Scheme != "https" && (configHasCredentials(cfg) || parsed.User != nil) {
+		return nil, fmt.Errorf("httpsource: URL scheme must be https when credentials are configured")
 	}
 
 	method := strings.ToUpper(strings.TrimSpace(cfg.Method))
@@ -197,12 +206,15 @@ func (s *Source) Fetch(ctx context.Context) ([]sources.Record, error) {
 		)
 	}
 
-	// Decode the entire body as a single any so we can walk RecordsPath
-	// uniformly. The records-array sizes that ExternalAttributeSync targets
-	// are bounded by collector counts (typically <10k); pulling the full
-	// JSON into memory is acceptable here.
+	body, err := readLimitedBody(resp.Body, successfulBodyLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Decode the bounded body as a single any so we can walk RecordsPath
+	// uniformly.
 	var decoded any
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.Unmarshal(body, &decoded); err != nil {
 		return nil, fmt.Errorf("httpsource: decode JSON: %w", err)
 	}
 
@@ -222,6 +234,24 @@ func (s *Source) Fetch(ctx context.Context) ([]sources.Record, error) {
 		out = append(out, sources.Record(obj))
 	}
 	return out, nil
+}
+
+func configHasCredentials(cfg Config) bool {
+	return cfg.BearerToken != "" || cfg.Username != "" || cfg.Password != ""
+}
+
+func readLimitedBody(r io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("httpsource: response body limit must be positive")
+	}
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("httpsource: read response body: %w", err)
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("httpsource: response body exceeds %d byte limit", limit)
+	}
+	return body, nil
 }
 
 // walkRecordsPath descends into decoded along the dotted recordsPath. An

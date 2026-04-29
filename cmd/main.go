@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -94,6 +95,7 @@ func main() {
 	var policyMaxConcurrent int
 	var syncMaxConcurrent int
 	var discoveryMaxConcurrent int
+	var pipelineDiscoveryMaxConcurrent int
 	var syncSourceTargetRate float64
 	var syncSourceTargetBurst int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -152,6 +154,9 @@ func main() {
 	flag.IntVar(&discoveryMaxConcurrent, "controller-discovery-max-concurrent", 1,
 		"Max concurrent reconciles for CollectorDiscovery. Keep at 1: concurrency > 1 "+
 			"triggers multiple ListCollectors calls per poll cycle without benefit.")
+	flag.IntVar(&pipelineDiscoveryMaxConcurrent, "controller-pipeline-discovery-max-concurrent", 1,
+		"Max concurrent reconciles for PipelineDiscovery. Keep at 1: concurrency > 1 "+
+			"triggers multiple ListPipelines calls per poll cycle without benefit.")
 	flag.Float64Var(&syncSourceTargetRate, "controller-sync-target-rate", 0,
 		"Per-target rate limit (tokens/sec) applied before each ExternalAttributeSync Source.Fetch "+
 			"call. Two syncs against the same upstream (HTTP host or SQL secret) share a token "+
@@ -363,6 +368,10 @@ func main() {
 		setupLog.Error(nil, "FLEET_MANAGEMENT_BASE_URL environment variable is required")
 		os.Exit(1)
 	}
+	if err := validateFleetBaseURL(fleetBaseURL); err != nil {
+		setupLog.Error(err, "invalid FLEET_MANAGEMENT_BASE_URL")
+		os.Exit(1)
+	}
 
 	fleetUsername := os.Getenv("FLEET_MANAGEMENT_USERNAME")
 	if fleetUsername == "" {
@@ -558,10 +567,11 @@ func main() {
 
 	if enablePipelineDiscoveryController {
 		if err = (&controller.PipelineDiscoveryReconciler{
-			Client:      mgr.GetClient(),
-			Scheme:      mgr.GetScheme(),
-			FleetClient: fleetClient,
-			Recorder:    mgr.GetEventRecorderFor("pipeline-discovery-controller"),
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			FleetClient:             fleetClient,
+			Recorder:                mgr.GetEventRecorderFor("pipeline-discovery-controller"),
+			MaxConcurrentReconciles: pipelineDiscoveryMaxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "PipelineDiscovery")
 			os.Exit(1)
@@ -612,6 +622,22 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
+	}
+}
+
+func validateFleetBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("parse Fleet Management base URL: %w", err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("Fleet Management base URL must include scheme and host")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	default:
+		return fmt.Errorf("Fleet Management base URL scheme %q is unsupported; use https", u.Scheme)
 	}
 }
 

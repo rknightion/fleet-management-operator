@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -29,6 +30,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 	"github.com/grafana/fleet-management-operator/pkg/fleetclient"
@@ -245,6 +251,28 @@ func stripRemoteAttrPath(path string) string {
 	return path
 }
 
+type statusCountingClient struct {
+	client.Client
+	statusUpdates int
+}
+
+type statusCountingWriter struct {
+	client.StatusWriter
+	updates *int
+}
+
+func (c *statusCountingClient) Status() client.StatusWriter {
+	return &statusCountingWriter{
+		StatusWriter: c.Client.Status(),
+		updates:      &c.statusUpdates,
+	}
+}
+
+func (w *statusCountingWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	*w.updates++
+	return w.StatusWriter.Update(ctx, obj, opts...)
+}
+
 var _ = Describe("Collector Controller", func() {
 	const (
 		collectorName      = "test-collector"
@@ -366,6 +394,100 @@ var _ = Describe("Collector Controller", func() {
 		Expect(collector.Status.Registered).To(BeFalse())
 	})
 
+	It("skips unchanged NotRegistered status writes while preserving timed requeue", func() {
+		ctx := context.Background()
+		readyMessage := "Collector \"edge-host-42\" has not yet registered with Fleet Management"
+		collector := &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "notregistered-noop",
+				Namespace:  collectorNamespace,
+				Generation: 3,
+			},
+			Spec: fleetmanagementv1alpha1.CollectorSpec{ID: collectorID},
+			Status: fleetmanagementv1alpha1.CollectorStatus{
+				ObservedGeneration: 3,
+				Registered:         false,
+				Conditions: []metav1.Condition{
+					{
+						Type:               conditionTypeReady,
+						Status:             metav1.ConditionFalse,
+						Reason:             collectorReasonNotRegistered,
+						Message:            readyMessage,
+						ObservedGeneration: 3,
+					},
+					{
+						Type:               conditionTypeSynced,
+						Status:             metav1.ConditionFalse,
+						Reason:             collectorReasonNotRegistered,
+						Message:            "Awaiting collector registration",
+						ObservedGeneration: 3,
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithStatusSubresource(&fleetmanagementv1alpha1.Collector{}).
+			WithObjects(collector).
+			Build()
+		countingClient := &statusCountingClient{Client: fakeClient}
+		reconciler := &CollectorReconciler{Client: countingClient, Scheme: scheme.Scheme}
+
+		result, err := reconciler.updateStatusNotRegistered(ctx, collector)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(notRegisteredRequeueAfter))
+		Expect(countingClient.statusUpdates).To(Equal(0))
+	})
+
+	It("skips identical error status writes while preserving exponential backoff", func() {
+		ctx := context.Background()
+		originalErr := errors.New("temporary Fleet Management outage")
+		formatted := formatConditionMessage(collectorReasonSyncFailed, originalErr)
+		collector := &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "error-noop",
+				Namespace:  collectorNamespace,
+				Generation: 5,
+			},
+			Spec: fleetmanagementv1alpha1.CollectorSpec{ID: collectorID},
+			Status: fleetmanagementv1alpha1.CollectorStatus{
+				ObservedGeneration: 5,
+				Conditions: []metav1.Condition{
+					{
+						Type:               conditionTypeReady,
+						Status:             metav1.ConditionFalse,
+						Reason:             collectorReasonSyncFailed,
+						Message:            formatted,
+						ObservedGeneration: 5,
+					},
+					{
+						Type:               conditionTypeSynced,
+						Status:             metav1.ConditionFalse,
+						Reason:             collectorReasonSyncFailed,
+						Message:            formatted,
+						ObservedGeneration: 5,
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithStatusSubresource(&fleetmanagementv1alpha1.Collector{}).
+			WithObjects(collector).
+			Build()
+		countingClient := &statusCountingClient{Client: fakeClient}
+		reconciler := &CollectorReconciler{Client: countingClient, Scheme: scheme.Scheme}
+
+		var outcome string
+		result, err := reconciler.updateStatusError(ctx, collector, collectorReasonSyncFailed, originalErr, &outcome)
+
+		Expect(err).To(Equal(originalErr))
+		Expect(result).To(Equal(ctrl.Result{}))
+		Expect(outcome).To(Equal(collectorReasonSyncFailed))
+		Expect(countingClient.statusUpdates).To(Equal(0))
+	})
+
 	It("emits REMOVE operations on delete for keys it owns", func() {
 		ctx := context.Background()
 
@@ -409,6 +531,181 @@ var _ = Describe("Collector Controller", func() {
 		}
 	})
 })
+
+var _ = Describe("Collector cross-layer watches", func() {
+	It("suppresses status-only Policy and ExternalAttributeSync updates", func() {
+		oldPolicy := &fleetmanagementv1alpha1.RemoteAttributePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default", Generation: 1},
+			Status: fleetmanagementv1alpha1.RemoteAttributePolicyStatus{
+				MatchedCollectorIDs: []string{"edge-1"},
+			},
+		}
+		newPolicy := oldPolicy.DeepCopy()
+		newPolicy.Status.MatchedCollectorIDs = []string{"edge-1", "edge-2"}
+		Expect(collectorPolicyWatchPredicate().Update(event.UpdateEvent{
+			ObjectOld: oldPolicy,
+			ObjectNew: newPolicy,
+		})).To(BeFalse())
+
+		newPolicySpec := oldPolicy.DeepCopy()
+		newPolicySpec.Generation = 2
+		Expect(collectorPolicyWatchPredicate().Update(event.UpdateEvent{
+			ObjectOld: oldPolicy,
+			ObjectNew: newPolicySpec,
+		})).To(BeTrue())
+
+		oldSync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{Name: "sync", Namespace: "default", Generation: 1},
+			Status: fleetmanagementv1alpha1.ExternalAttributeSyncStatus{
+				RecordsSeen: 1,
+				OwnedKeys: []fleetmanagementv1alpha1.OwnedKeyEntry{
+					{CollectorID: "edge-1", Attributes: map[string]string{"env": "prod"}},
+				},
+			},
+		}
+		newSyncStatusOnly := oldSync.DeepCopy()
+		newSyncStatusOnly.Status.RecordsSeen = 2
+		Expect(collectorExternalSyncWatchPredicate().Update(event.UpdateEvent{
+			ObjectOld: oldSync,
+			ObjectNew: newSyncStatusOnly,
+		})).To(BeFalse())
+
+		newSyncOwnedKeys := oldSync.DeepCopy()
+		newSyncOwnedKeys.Status.OwnedKeys = []fleetmanagementv1alpha1.OwnedKeyEntry{
+			{CollectorID: "edge-2", Attributes: map[string]string{"env": "prod"}},
+		}
+		Expect(collectorExternalSyncWatchPredicate().Update(event.UpdateEvent{
+			ObjectOld: oldSync,
+			ObjectNew: newSyncOwnedKeys,
+		})).To(BeTrue())
+	})
+
+	It("maps ExternalAttributeSync events only to collectors named in ownedKeys", func() {
+		ctx := context.Background()
+		collectors := []client.Object{
+			&fleetmanagementv1alpha1.Collector{
+				ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default"},
+				Spec:       fleetmanagementv1alpha1.CollectorSpec{ID: "edge-1"},
+			},
+			&fleetmanagementv1alpha1.Collector{
+				ObjectMeta: metav1.ObjectMeta{Name: "two", Namespace: "default"},
+				Spec:       fleetmanagementv1alpha1.CollectorSpec{ID: "edge-2"},
+			},
+			&fleetmanagementv1alpha1.Collector{
+				ObjectMeta: metav1.ObjectMeta{Name: "three", Namespace: "default"},
+				Spec:       fleetmanagementv1alpha1.CollectorSpec{ID: "edge-3"},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(collectors...).
+			Build()
+
+		r := &CollectorReconciler{Client: fakeClient, Scheme: scheme.Scheme}
+		sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{Name: "sync", Namespace: "default"},
+			Status: fleetmanagementv1alpha1.ExternalAttributeSyncStatus{
+				OwnedKeys: []fleetmanagementv1alpha1.OwnedKeyEntry{
+					{CollectorID: "edge-2", Attributes: map[string]string{"env": "prod"}},
+					{CollectorID: "missing", Attributes: map[string]string{"env": "prod"}},
+				},
+			},
+		}
+
+		Expect(r.collectorsTouchedBySync(ctx, sync)).To(ConsistOf(reconcileRequest("default", "two")))
+	})
+
+	It("ignores Truncated ExternalAttributeSync handoffs when building the external layer", func() {
+		ctx := context.Background()
+		collector := &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: "default"},
+			Spec:       fleetmanagementv1alpha1.CollectorSpec{ID: "edge-1"},
+		}
+		sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{Name: "sync", Namespace: "default"},
+			Status: fleetmanagementv1alpha1.ExternalAttributeSyncStatus{
+				OwnedKeys: []fleetmanagementv1alpha1.OwnedKeyEntry{
+					{CollectorID: "edge-1", Attributes: map[string]string{"env": "prod"}},
+				},
+				Conditions: []metav1.Condition{
+					{
+						Type:   externalSyncConditionTruncated,
+						Status: metav1.ConditionTrue,
+						Reason: externalSyncReasonOwnedKeysExceeded,
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(collector, sync).
+			Build()
+
+		r := &CollectorReconciler{Client: fakeClient, Scheme: scheme.Scheme}
+		layer, err := r.externalSyncLayerForCollector(ctx, collector)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(layer.Attrs).To(BeEmpty())
+	})
+
+	It("periodically resyncs and removes keys from deleted layers", func() {
+		ctx := context.Background()
+		mock := newMockFleetCollectorClient()
+		mock.register(&fleetclient.Collector{
+			ID:               "edge-1",
+			RemoteAttributes: map[string]string{"env": "prod"},
+			LocalAttributes:  map[string]string{"collector.os": "linux"},
+			CollectorType:    "COLLECTOR_TYPE_ALLOY",
+		})
+
+		collector := &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "edge",
+				Namespace:  "default",
+				Finalizers: []string{collectorFinalizer},
+			},
+			Spec: fleetmanagementv1alpha1.CollectorSpec{ID: "edge-1"},
+			Status: fleetmanagementv1alpha1.CollectorStatus{
+				ObservedGeneration: 1,
+				AttributeOwners: []fleetmanagementv1alpha1.AttributeOwnership{
+					{
+						Key:       "env",
+						OwnerKind: fleetmanagementv1alpha1.AttributeOwnerExternalAttributeSync,
+						OwnerName: "default/sync",
+						Value:     "prod",
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithStatusSubresource(&fleetmanagementv1alpha1.Collector{}).
+			WithObjects(collector).
+			Build()
+
+		r := &CollectorReconciler{
+			Client:      fakeClient,
+			Scheme:      scheme.Scheme,
+			FleetClient: mock,
+		}
+
+		result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{
+			Namespace: "default",
+			Name:      "edge",
+		}})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(collectorPeriodicResyncAfter))
+		Expect(mock.callCountBulkUpdate).To(Equal(1))
+		Expect(mock.lastBulkUpdateOps).To(HaveLen(1))
+		Expect(mock.lastBulkUpdateOps[0].Op).To(Equal(fleetclient.OpRemove))
+		Expect(mock.lastBulkUpdateOps[0].Path).To(Equal("/remote_attributes/env"))
+	})
+})
+
+func reconcileRequest(namespace, name string) ctrl.Request {
+	return ctrl.Request{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}
+}
 
 // collectorMockOwnedKeys returns the keys from the mock's most recent
 // reconciliation that the suite-level CollectorReconciler claimed ownership

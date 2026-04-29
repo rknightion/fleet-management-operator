@@ -308,7 +308,7 @@ func (r *PipelineReconciler) buildUpsertRequest(pipeline *fleetmanagementv1alpha
 		Name:       pipelineName,
 		Contents:   pipeline.Spec.Contents,
 		Matchers:   pipeline.Spec.Matchers,
-		Enabled:    pipeline.Spec.Enabled,
+		Enabled:    pipeline.Spec.GetEnabled(),
 		ConfigType: pipeline.Spec.ConfigType.ToFleetAPI(),
 	}
 
@@ -550,8 +550,10 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	log := logf.FromContext(ctx)
 	*outcome = reason
 
-	// Update observedGeneration to indicate we tried
-	pipeline.Status.ObservedGeneration = pipeline.Generation
+	retryable := shouldRetry(originalErr, reason)
+	if !retryable {
+		pipeline.Status.ObservedGeneration = pipeline.Generation
+	}
 
 	// Capture previous Ready condition state to detect transitions
 	oldCondition := meta.FindStatusCondition(pipeline.Status.Conditions, conditionTypeReady)
@@ -608,7 +610,7 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	}
 
 	// CRITICAL: Validation errors are permanent - user must fix spec before retry
-	if !shouldRetry(originalErr, reason) {
+	if !retryable {
 		log.Info("validation error, not requeueing", "namespace", pipeline.Namespace, "name", pipeline.Name, "error", originalErr.Error())
 		// Outcome counter (set above) is incremented by the deferred handler in Reconcile().
 		return ctrl.Result{}, nil

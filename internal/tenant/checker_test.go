@@ -225,12 +225,11 @@ func TestChecker_MultiPolicyUnion(t *testing.T) {
 	}
 }
 
-// TestChecker_NamespaceFetchErrorFailsOpen pins the C3 fix: any non-nil
-// error from the namespace Get (NotFound, Forbidden, ServerTimeout, etc.)
-// must collapse to "policy does not apply" so a transient apiserver hiccup
-// cannot block legitimate writes. The previous behavior returned the
-// underlying error, which Check() then propagated as an admission denial.
-func TestChecker_NamespaceFetchErrorFailsOpen(t *testing.T) {
+// TestChecker_NamespaceFetchErrorFailsClosed pins P1-07: any non-nil error
+// from the namespace Get (NotFound, Forbidden, ServerTimeout, etc.) must
+// fail closed because the checker cannot prove the namespace selector does
+// not apply.
+func TestChecker_NamespaceFetchErrorFailsClosed(t *testing.T) {
 	scheme := newScheme(t)
 
 	policy := &fleetmanagementv1alpha1.TenantPolicy{
@@ -266,11 +265,23 @@ func TestChecker_NamespaceFetchErrorFailsOpen(t *testing.T) {
 		Groups:   []string{"team-billing"},
 	})
 
-	// The CR has no required matcher — but with the namespace fetch
-	// failing we must NOT propagate the error and must NOT treat the
-	// policy as applicable. Net result: allow.
-	if err := c.Check(ctx, "billing", []string{}); err != nil {
-		t.Fatalf("namespace fetch error must fail-open and allow the request, got %v", err)
+	// The CR has no required matcher and the namespace fetch fails, so the
+	// checker must fail closed instead of treating the policy as
+	// non-applicable.
+	err := c.Check(ctx, "billing", []string{})
+	if err == nil {
+		t.Fatalf("namespace fetch error must fail closed and reject the request")
+	}
+	if !strings.Contains(err.Error(), `failed to get namespace "billing"`) {
+		t.Fatalf("error should mention namespace lookup failure, got %q", err.Error())
+	}
+
+	matched, matchErr := c.Matches(ctx, "billing")
+	if matchErr == nil {
+		t.Fatalf("Matches must also fail closed on namespace lookup errors")
+	}
+	if matched {
+		t.Fatalf("Matches should not report true when namespace lookup failed")
 	}
 }
 

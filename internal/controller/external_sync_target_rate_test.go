@@ -17,10 +17,15 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
 )
@@ -30,6 +35,8 @@ import (
 // must produce equal keys; CRs against distinct upstreams must produce
 // distinct keys.
 func TestSourceTargetKey(t *testing.T) {
+	const syncNamespace = "default"
+
 	httpURL := func(u string) fleetmanagementv1alpha1.ExternalSource {
 		return fleetmanagementv1alpha1.ExternalSource{
 			Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
@@ -87,6 +94,11 @@ func TestSourceTargetKey(t *testing.T) {
 			want: "sql:default/cmdb-creds",
 		},
 		{
+			name: "sql empty secret namespace normalizes to sync namespace",
+			spec: sqlSecret("", "cmdb-creds"),
+			want: "sql:default/cmdb-creds",
+		},
+		{
 			name: "sql with same secret in different namespaces produces different keys",
 			spec: sqlSecret("staging", "cmdb-creds"),
 			want: "sql:staging/cmdb-creds",
@@ -103,9 +115,33 @@ func TestSourceTargetKey(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, sourceTargetKey(tc.spec))
+			assert.Equal(t, tc.want, sourceTargetKey(syncNamespace, tc.spec))
 		})
 	}
+}
+
+func TestSourceTargetKey_SQLExplicitAndImplicitSameNamespaceMatch(t *testing.T) {
+	implicit := fleetmanagementv1alpha1.ExternalSource{
+		Kind: fleetmanagementv1alpha1.ExternalSourceKindSQL,
+		SQL:  &fleetmanagementv1alpha1.SQLSourceSpec{Driver: "postgres"},
+		SecretRef: &corev1.SecretReference{
+			Name: "cmdb-creds",
+		},
+	}
+	explicit := fleetmanagementv1alpha1.ExternalSource{
+		Kind: fleetmanagementv1alpha1.ExternalSourceKindSQL,
+		SQL:  &fleetmanagementv1alpha1.SQLSourceSpec{Driver: "postgres"},
+		SecretRef: &corev1.SecretReference{
+			Namespace: "default",
+			Name:      "cmdb-creds",
+		},
+	}
+
+	assert.Equal(t,
+		sourceTargetKey("default", implicit),
+		sourceTargetKey("default", explicit),
+		"implicit same-namespace SecretRef must share the same SQL target limiter key",
+	)
 }
 
 // TestLimiterForSource_DisabledByDefault confirms the per-target limiter is
@@ -117,10 +153,10 @@ func TestLimiterForSource_DisabledByDefault(t *testing.T) {
 		Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
 		HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "http://example/"},
 	}
-	assert.Nil(t, r.limiterForSource(spec), "rate=0 must disable the limiter")
+	assert.Nil(t, r.limiterForSource("default", spec), "rate=0 must disable the limiter")
 
 	r.SourceTargetRate = -1
-	assert.Nil(t, r.limiterForSource(spec), "negative rate must also disable the limiter")
+	assert.Nil(t, r.limiterForSource("default", spec), "negative rate must also disable the limiter")
 }
 
 // TestLimiterForSource_SharedAcrossSameTarget proves two reconciles against
@@ -142,8 +178,8 @@ func TestLimiterForSource_SharedAcrossSameTarget(t *testing.T) {
 		HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "https://cmdb.example/v2/other"},
 	}
 
-	lim1 := r.limiterForSource(spec1)
-	lim2 := r.limiterForSource(spec2)
+	lim1 := r.limiterForSource("default", spec1)
+	lim2 := r.limiterForSource("default", spec2)
 	assert.Same(t, lim1, lim2, "same host different paths must share the limiter instance")
 }
 
@@ -163,8 +199,8 @@ func TestLimiterForSource_DistinctAcrossDifferentTargets(t *testing.T) {
 		HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "https://b.example/devices"},
 	}
 
-	lim1 := r.limiterForSource(spec1)
-	lim2 := r.limiterForSource(spec2)
+	lim1 := r.limiterForSource("default", spec1)
+	lim2 := r.limiterForSource("default", spec2)
 	assert.NotSame(t, lim1, lim2, "different hosts must not share a limiter")
 }
 
@@ -177,7 +213,38 @@ func TestLimiterForSource_BurstFallback(t *testing.T) {
 		Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
 		HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "https://x/"},
 	}
-	lim := r.limiterForSource(spec)
+	lim := r.limiterForSource("default", spec)
 	assert.NotNil(t, lim)
 	assert.Equal(t, 4, lim.Burst(), "zero burst must fall back to 4")
+}
+
+func TestResolveSecret_RejectsCrossNamespaceSecretRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, fleetmanagementv1alpha1.AddToScheme(scheme))
+
+	r := &ExternalAttributeSyncReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: "other"},
+		}).Build(),
+	}
+
+	sync := &fleetmanagementv1alpha1.ExternalAttributeSync{
+		ObjectMeta: metav1.ObjectMeta{Name: "cmdb", Namespace: "default"},
+		Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+			Source: fleetmanagementv1alpha1.ExternalSource{
+				Kind: fleetmanagementv1alpha1.ExternalSourceKindHTTP,
+				HTTP: &fleetmanagementv1alpha1.HTTPSourceSpec{URL: "https://example.com"},
+				SecretRef: &corev1.SecretReference{
+					Namespace: "other",
+					Name:      "creds",
+				},
+			},
+		},
+	}
+
+	secret, err := r.resolveSecret(context.Background(), sync)
+	require.Error(t, err)
+	assert.Nil(t, secret)
+	assert.Contains(t, err.Error(), "outside ExternalAttributeSync namespace")
 }

@@ -37,7 +37,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
@@ -160,8 +159,8 @@ func (c *Checker) Check(ctx context.Context, namespace string, matchers []string
 //
 // A nil Checker or missing admission.Request in ctx returns (false, nil) —
 // "tenancy does not apply", which is the default-allow position.
-// Namespace-fetch errors fail-open via namespaceMatches; they do not
-// surface as Matches errors.
+// Namespace-fetch errors fail closed via namespaceMatches and surface as
+// Matches errors.
 func (c *Checker) Matches(ctx context.Context, namespace string) (bool, error) {
 	if c == nil {
 		return false, nil
@@ -222,13 +221,10 @@ func subjectMatchesUser(subjects []rbacv1.Subject, info authnv1.UserInfo) bool {
 // the CR's namespace. A nil selector means "all namespaces"; an empty
 // LabelSelector also matches everything (per K8s convention).
 //
-// Namespace-fetch errors are uniformly treated as "policy does not apply"
-// (fail-open). The alternative — failing the admission request because a
-// transient apiserver hiccup masked a label-selector evaluation — would
-// block legitimate requests indefinitely whenever the cluster's
-// namespace cache is unhealthy. NotFound, Forbidden, ServerTimeout, and
-// any other error path collapse to the same outcome here. Errors are
-// logged at warning level so operators can correlate.
+// Namespace-fetch errors fail closed. If a policy has a non-empty selector
+// and we cannot fetch the namespace labels, we cannot prove the policy does
+// not apply, so admission must deny the request instead of bypassing tenant
+// scope enforcement.
 func (c *Checker) namespaceMatches(ctx context.Context, sel *metav1.LabelSelector, namespace string) (bool, error) {
 	if sel == nil {
 		return true, nil
@@ -243,12 +239,7 @@ func (c *Checker) namespaceMatches(ctx context.Context, sel *metav1.LabelSelecto
 
 	ns := &corev1.Namespace{}
 	if err := c.client.Get(ctx, client.ObjectKey{Name: namespace}, ns); err != nil {
-		logf.FromContext(ctx).Info(
-			"namespace fetch failed; treating policy as non-applicable",
-			"namespace", namespace,
-			"error", err.Error(),
-		)
-		return false, nil
+		return false, fmt.Errorf("failed to get namespace %q for TenantPolicy namespaceSelector: %w", namespace, err)
 	}
 	return selector.Matches(labels.Set(ns.Labels)), nil
 }

@@ -47,20 +47,23 @@ import (
 )
 
 const (
-	externalSyncReasonSynced       = "Synced"
-	externalSyncReasonSourceFailed = "SourceFailed"
-	externalSyncReasonStalled      = "Stalled"
-	externalSyncReasonScheduleErr  = "InvalidSchedule"
+	externalSyncReasonSynced            = "Synced"
+	externalSyncReasonSourceFailed      = "SourceFailed"
+	externalSyncReasonStalled           = "Stalled"
+	externalSyncReasonScheduleErr       = "InvalidSchedule"
+	externalSyncReasonOwnedKeysExceeded = "OwnedKeysExceeded"
 
-	externalSyncEventReasonSynced       = "Synced"
-	externalSyncEventReasonStalled      = "Stalled"
-	externalSyncEventReasonSourceFailed = "SourceFailed"
+	externalSyncEventReasonSynced            = "Synced"
+	externalSyncEventReasonStalled           = "Stalled"
+	externalSyncEventReasonSourceFailed      = "SourceFailed"
+	externalSyncEventReasonOwnedKeysExceeded = "OwnedKeysExceeded"
 
 	externalSyncConditionStalled = "Stalled"
 
 	// Truncated condition type and reasons for ExternalAttributeSync.
-	// Set when status.ownedKeys is capped at maxOwnedKeys. Attributes for
-	// collectors beyond the cap may not be removed on CR deletion.
+	// Set when the computed handoff exceeds maxOwnedKeys. In that case the
+	// controller clears status.ownedKeys rather than publishing a partial
+	// authoritative claim that Collector would consume.
 	externalSyncConditionTruncated = "Truncated"
 	externalSyncReasonTruncated    = "OwnedKeysTruncated"
 	externalSyncReasonNotTruncated = "NotTruncated"
@@ -276,7 +279,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 	// stampede a single customer-owned source during a restart wave.
 	// Disabled by default (SourceTargetRate <= 0); operators opt in via
 	// --controller-sync-target-rate.
-	if lim := r.limiterForSource(sync.Spec.Source); lim != nil {
+	if lim := r.limiterForSource(sync.Namespace, sync.Spec.Source); lim != nil {
 		if waitErr := lim.Wait(ctx); waitErr != nil {
 			outcome = externalSyncReasonSourceFailed
 			return ctrl.Result{}, waitErr
@@ -345,13 +348,66 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
 	}
 
-	ownedStatus, truncated := ownedKeysToStatus(owned)
+	ownedStatus, ownedKeysExceeded := ownedKeysToStatus(owned)
 
 	// D8: record owned-key count for this CR up-front, BEFORE the no-op
 	// short-circuit. This ensures the gauge reflects current intent on
 	// operator restart even when the status itself is steady-state and the
 	// reconcile takes the no-op path.
 	fleetExternalSyncOwnedKeys.WithLabelValues(sync.Namespace, sync.Name).Set(float64(len(ownedStatus)))
+
+	if ownedKeysExceeded {
+		if externalSyncCapExceededStatusUnchanged(sync, len(records), recordsApplied) {
+			log.V(1).Info("owned-key cap still exceeded and status already fail-closed, skipping status write",
+				"namespace", sync.Namespace, "name", sync.Name,
+				"computedOwnedKeys", len(owned), "maxOwnedKeys", maxOwnedKeys)
+			outcome = outcomeNoOp
+			return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
+		}
+
+		message := fmt.Sprintf(
+			"Computed %d owned collector entries, which exceeds maxOwnedKeys=%d; status.ownedKeys was cleared to avoid publishing a partial handoff",
+			len(owned), maxOwnedKeys,
+		)
+		log.Info("owned-key cap exceeded; clearing handoff",
+			"namespace", sync.Namespace, "name", sync.Name,
+			"computedOwnedKeys", len(owned), "maxOwnedKeys", maxOwnedKeys)
+		r.emitEventf(sync, corev1.EventTypeWarning, externalSyncEventReasonOwnedKeysExceeded,
+			"%s; reduce selector or source cardinality below the cap", message)
+
+		sync.Status.LastSyncTime = &now
+		sync.Status.RecordsSeen = int32(len(records))
+		sync.Status.RecordsApplied = int32(recordsApplied)
+		// Fail closed: a partial status.ownedKeys slice would be consumed by
+		// Collector as authoritative. Clearing the handoff causes collectors
+		// that previously saw this sync as an owner to remove those keys on
+		// their next reconcile.
+		sync.Status.OwnedKeys = nil
+		sync.Status.ObservedGeneration = sync.Generation
+
+		meta.SetStatusCondition(&sync.Status.Conditions, metav1.Condition{
+			Type:               externalSyncConditionTruncated,
+			Status:             metav1.ConditionTrue,
+			Reason:             externalSyncReasonOwnedKeysExceeded,
+			Message:            message,
+			ObservedGeneration: sync.Generation,
+		})
+		setStalledCondition(&sync.Status.Conditions, sync.Generation, false, "")
+		setReadyCondition(&sync.Status.Conditions, sync.Generation, false, externalSyncReasonOwnedKeysExceeded, message)
+		setSyncedCondition(&sync.Status.Conditions, sync.Generation, false, externalSyncReasonOwnedKeysExceeded, message)
+
+		if err := r.Status().Update(ctx, sync); err != nil {
+			if apierrors.IsConflict(err) {
+				outcome = outcomeNoOp
+				return ctrl.Result{Requeue: true}, nil
+			}
+			outcome = externalSyncReasonSourceFailed
+			return ctrl.Result{}, err
+		}
+
+		outcome = externalSyncReasonOwnedKeysExceeded
+		return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
+	}
 
 	// OBS-03: record sync age using the previous LastSuccessTime before overwriting it
 	if sync.Status.LastSuccessTime != nil && !sync.Status.LastSuccessTime.IsZero() {
@@ -365,7 +421,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 	// missing the Stalled / Truncated condition transitions (B3, B4).
 	// Without this check, a stalled source that recovers with the same
 	// records as the last successful run would leave Stalled=True forever.
-	if externalSyncStatusUnchanged(sync, len(records), recordsApplied, ownedStatus, truncated) {
+	if externalSyncStatusUnchanged(sync, len(records), recordsApplied, ownedStatus, false) {
 		log.V(1).Info("no-op sync: source, owned-keys, and conditions unchanged, skipping status write",
 			"namespace", sync.Namespace, "name", sync.Name)
 		outcome = outcomeNoOp
@@ -379,25 +435,12 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 	sync.Status.OwnedKeys = ownedStatus
 	sync.Status.ObservedGeneration = sync.Generation
 
-	if truncated {
-		r.emitEventf(sync, corev1.EventTypeWarning, "Truncated",
-			"ownedKeys capped at %d; collectors beyond cap may retain attributes on CR deletion",
-			maxOwnedKeys)
-		meta.SetStatusCondition(&sync.Status.Conditions, metav1.Condition{
-			Type:               externalSyncConditionTruncated,
-			Status:             metav1.ConditionTrue,
-			Reason:             externalSyncReasonTruncated,
-			Message:            fmt.Sprintf("ownedKeys truncated to %d entries; attributes for collectors beyond the cap may not be removed on CR deletion — shard sources with >%d collectors", maxOwnedKeys, maxOwnedKeys),
-			ObservedGeneration: sync.Generation,
-		})
-	} else {
-		meta.SetStatusCondition(&sync.Status.Conditions, metav1.Condition{
-			Type:               externalSyncConditionTruncated,
-			Status:             metav1.ConditionFalse,
-			Reason:             externalSyncReasonNotTruncated,
-			ObservedGeneration: sync.Generation,
-		})
-	}
+	meta.SetStatusCondition(&sync.Status.Conditions, metav1.Condition{
+		Type:               externalSyncConditionTruncated,
+		Status:             metav1.ConditionFalse,
+		Reason:             externalSyncReasonNotTruncated,
+		ObservedGeneration: sync.Generation,
+	})
 
 	setStalledCondition(&sync.Status.Conditions, sync.Generation, false, "")
 	setReadyCondition(&sync.Status.Conditions, sync.Generation, true, externalSyncReasonSynced,
@@ -417,11 +460,7 @@ func (r *ExternalAttributeSyncReconciler) Reconcile(ctx context.Context, req ctr
 	r.emitEventf(sync, corev1.EventTypeNormal, externalSyncEventReasonSynced,
 		"Synced %d records, %d applied across %d collector(s)", len(records), recordsApplied, len(owned))
 
-	if truncated {
-		outcome = externalSyncReasonTruncated
-	} else {
-		outcome = externalSyncReasonSynced
-	}
+	outcome = externalSyncReasonSynced
 	return ctrl.Result{RequeueAfter: durationUntil(nextRun)}, nil
 }
 
@@ -465,6 +504,55 @@ func externalSyncStatusUnchanged(
 		return false
 	}
 	return true
+}
+
+// externalSyncCapExceededStatusUnchanged reports whether an over-cap sync has
+// already published the fail-closed status: no owned-key handoff, Ready/Synced
+// false, and Truncated true with the cap-exceeded reason.
+func externalSyncCapExceededStatusUnchanged(
+	sync *fleetmanagementv1alpha1.ExternalAttributeSync,
+	recordsSeen int,
+	recordsApplied int,
+) bool {
+	if sync.Status.ObservedGeneration != sync.Generation {
+		return false
+	}
+	if sync.Status.RecordsSeen != int32(recordsSeen) {
+		return false
+	}
+	if sync.Status.RecordsApplied != int32(recordsApplied) {
+		return false
+	}
+	if len(sync.Status.OwnedKeys) != 0 {
+		return false
+	}
+	if !externalSyncConditionMatches(sync.Status.Conditions,
+		externalSyncConditionTruncated, metav1.ConditionTrue, externalSyncReasonOwnedKeysExceeded, sync.Generation) {
+		return false
+	}
+	if !externalSyncConditionMatches(sync.Status.Conditions,
+		conditionTypeReady, metav1.ConditionFalse, externalSyncReasonOwnedKeysExceeded, sync.Generation) {
+		return false
+	}
+	if !externalSyncConditionMatches(sync.Status.Conditions,
+		conditionTypeSynced, metav1.ConditionFalse, externalSyncReasonOwnedKeysExceeded, sync.Generation) {
+		return false
+	}
+	return externalSyncStalledIsFalse(sync)
+}
+
+func externalSyncConditionMatches(
+	conditions []metav1.Condition,
+	condType string,
+	status metav1.ConditionStatus,
+	reason string,
+	observedGeneration int64,
+) bool {
+	cond := meta.FindStatusCondition(conditions, condType)
+	return cond != nil &&
+		cond.Status == status &&
+		cond.Reason == reason &&
+		cond.ObservedGeneration == observedGeneration
 }
 
 // externalSyncTruncatedConditionMatches returns true when the existing
@@ -533,6 +621,12 @@ func (r *ExternalAttributeSyncReconciler) resolveSecret(ctx context.Context, syn
 	ns := ref.Namespace
 	if ns == "" {
 		ns = sync.Namespace
+	}
+	if ns != sync.Namespace {
+		return nil, fmt.Errorf(
+			"secretRef %s/%s is outside ExternalAttributeSync namespace %q",
+			ns, ref.Name, sync.Namespace,
+		)
 	}
 	secret := &corev1.Secret{}
 	key := types.NamespacedName{Namespace: ns, Name: ref.Name}
@@ -677,7 +771,7 @@ func (r *ExternalAttributeSyncReconciler) updateStatusError(
 // DSN at this layer; same secret = same target by construction. When SQL has
 // no SecretRef the driver name is the only stable handle, so it falls back
 // to that.
-func sourceTargetKey(spec fleetmanagementv1alpha1.ExternalSource) string {
+func sourceTargetKey(syncNamespace string, spec fleetmanagementv1alpha1.ExternalSource) string {
 	switch spec.Kind {
 	case fleetmanagementv1alpha1.ExternalSourceKindHTTP:
 		if spec.HTTP == nil {
@@ -690,7 +784,11 @@ func sourceTargetKey(spec fleetmanagementv1alpha1.ExternalSource) string {
 		return "http:" + u.Scheme + "://" + u.Host
 	case fleetmanagementv1alpha1.ExternalSourceKindSQL:
 		if spec.SecretRef != nil {
-			return "sql:" + spec.SecretRef.Namespace + "/" + spec.SecretRef.Name
+			ns := spec.SecretRef.Namespace
+			if ns == "" {
+				ns = syncNamespace
+			}
+			return "sql:" + ns + "/" + spec.SecretRef.Name
 		}
 		if spec.SQL != nil {
 			return "sql:driver=" + spec.SQL.Driver
@@ -705,7 +803,7 @@ func sourceTargetKey(spec fleetmanagementv1alpha1.ExternalSource) string {
 // (SourceTargetRate <= 0). The returned limiter is shared across every
 // reconcile that resolves to the same target key, so concurrent reconciles
 // for distinct CRs against the same upstream cooperate on a single bucket.
-func (r *ExternalAttributeSyncReconciler) limiterForSource(spec fleetmanagementv1alpha1.ExternalSource) *rate.Limiter {
+func (r *ExternalAttributeSyncReconciler) limiterForSource(syncNamespace string, spec fleetmanagementv1alpha1.ExternalSource) *rate.Limiter {
 	if r.SourceTargetRate <= 0 {
 		return nil
 	}
@@ -713,7 +811,7 @@ func (r *ExternalAttributeSyncReconciler) limiterForSource(spec fleetmanagementv
 	if burst <= 0 {
 		burst = 4
 	}
-	key := sourceTargetKey(spec)
+	key := sourceTargetKey(syncNamespace, spec)
 	r.targetLimitersMu.Lock()
 	defer r.targetLimitersMu.Unlock()
 	if r.targetLimiters == nil {
@@ -883,20 +981,19 @@ func hasAllRequired(r sources.Record, required []string) bool {
 
 // ownedKeysToStatus converts the projected per-collector attribute map into
 // the OwnedKeyEntry slice the CRD status exposes, sorted by collectorID for
-// deterministic output. Returns the slice and a truncated flag — when
-// truncated=true the caller must set the Truncated condition and emit a
-// Warning event so operators know that collectors beyond the cap are affected.
+// deterministic output. If the computed set exceeds maxOwnedKeys, it returns
+// nil and true so the caller can fail closed instead of publishing a lossy
+// partial handoff that Collector would treat as authoritative.
 func ownedKeysToStatus(owned map[string]map[string]string) ([]fleetmanagementv1alpha1.OwnedKeyEntry, bool) {
+	if len(owned) > maxOwnedKeys {
+		return nil, true
+	}
+
 	ids := make([]string, 0, len(owned))
 	for id := range owned {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	truncated := false
-	if len(ids) > maxOwnedKeys {
-		ids = ids[:maxOwnedKeys]
-		truncated = true
-	}
 	out := make([]fleetmanagementv1alpha1.OwnedKeyEntry, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, fleetmanagementv1alpha1.OwnedKeyEntry{
@@ -904,7 +1001,7 @@ func ownedKeysToStatus(owned map[string]map[string]string) ([]fleetmanagementv1a
 			Attributes:  owned[id],
 		})
 	}
-	return out, truncated
+	return out, false
 }
 
 // ownedKeyEntriesEqual reports whether two OwnedKeyEntry slices have the

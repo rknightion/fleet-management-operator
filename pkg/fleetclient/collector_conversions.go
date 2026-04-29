@@ -111,11 +111,10 @@ func operationToProto(o *Operation) *collectorv1.Operation {
 		Op:   opTypeStringToProto(o.Op),
 		Path: o.Path,
 	}
-	// Value, OldValue and From are proto3 optional (*string). To preserve the
-	// "unset vs explicit empty" distinction we only populate them when the
-	// caller supplied a non-empty string. This matches the API contract where
-	// an empty/unset Value on REMOVE means "remove unconditionally".
-	if o.Value != "" {
+	// Value, OldValue and From are proto3 optional (*string). ADD and REPLACE
+	// always carry Value, even when it is the explicit empty string. REMOVE
+	// without Value leaves it unset, which means "remove unconditionally".
+	if o.Op == OpAdd || o.Op == OpReplace || o.Value != "" {
 		v := o.Value
 		out.Value = &v
 	}

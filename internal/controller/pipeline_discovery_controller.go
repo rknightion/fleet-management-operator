@@ -78,8 +78,8 @@ type PipelineDiscoveryFleetClient interface {
 
 // PipelineDiscoveryReconciler reconciles a PipelineDiscovery object.
 //
-// MaxConcurrentReconciles must stay at 1. Discovery is poll-driven:
-// concurrency > 1 would trigger multiple ListPipelines calls per poll cycle
+// MaxConcurrentReconciles defaults to 1. Discovery is poll-driven:
+// concurrency > 1 can trigger multiple ListPipelines calls per poll cycle
 // without benefit, consuming unnecessary Fleet API budget.
 //
 // On each reconcile (poll cadence or spec change) the controller:
@@ -99,6 +99,10 @@ type PipelineDiscoveryReconciler struct {
 	Scheme      *runtime.Scheme
 	FleetClient PipelineDiscoveryFleetClient
 	Recorder    record.EventRecorder
+
+	// MaxConcurrentReconciles controls controller-runtime worker concurrency.
+	// Zero defaults to 1.
+	MaxConcurrentReconciles int
 
 	// Now is overridable in tests. Defaults to time.Now.
 	Now func() time.Time
@@ -302,15 +306,17 @@ func (r *PipelineDiscoveryReconciler) upsertPipelineCRs(
 		if apierrors.IsNotFound(err) {
 			// Create a new Pipeline CR.
 			paused := pd.Spec.ImportMode == v1alpha1.PipelineDiscoveryImportModeReadOnly
+			enabled := fp.Enabled
 			pipeline := &v1alpha1.Pipeline{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      crName,
 					Namespace: targetNS,
 					Labels: map[string]string{
-						v1alpha1.PipelineDiscoveryNameLabel: pd.Name,
+						v1alpha1.PipelineDiscoveryNameLabel:      pd.Name,
+						v1alpha1.PipelineDiscoveryNamespaceLabel: pd.Namespace,
 					},
 					Annotations: map[string]string{
-						v1alpha1.PipelineDiscoveredByAnnotation: pd.Namespace + "/" + pd.Name,
+						v1alpha1.PipelineDiscoveredByAnnotation: pipelineDiscoveryOwnerAnnotation(pd),
 						v1alpha1.FleetPipelineIDAnnotation:      fp.ID,
 					},
 				},
@@ -318,7 +324,7 @@ func (r *PipelineDiscoveryReconciler) upsertPipelineCRs(
 					Name:       fp.Name,
 					Contents:   fp.Contents,
 					Matchers:   fp.Matchers,
-					Enabled:    fp.Enabled,
+					Enabled:    &enabled,
 					ConfigType: v1alpha1.ConfigTypeFromFleetAPI(fp.ConfigType),
 					Paused:     paused,
 				},
@@ -339,7 +345,7 @@ func (r *PipelineDiscoveryReconciler) upsertPipelineCRs(
 		}
 
 		// CR already exists — check ownership.
-		ownerPDName, owned := existing.Labels[v1alpha1.PipelineDiscoveryNameLabel]
+		_, owned := existing.Labels[v1alpha1.PipelineDiscoveryNameLabel]
 		switch {
 		case !owned:
 			// Manually-created CR with the same name. Skip.
@@ -348,7 +354,7 @@ func (r *PipelineDiscoveryReconciler) upsertPipelineCRs(
 				CRName:     crName,
 				Reason:     v1alpha1.PipelineDiscoveryConflictNotOwned,
 			})
-		case ownerPDName != pd.Name:
+		case !pipelineIsOwnedByDiscovery(existing, pd):
 			// Owned by a different PipelineDiscovery; first-write wins.
 			conflicts = append(conflicts, v1alpha1.PipelineDiscoveryConflict{
 				PipelineID: fp.Name,
@@ -396,7 +402,7 @@ func (r *PipelineDiscoveryReconciler) processStaleP(
 		return nil, 0, fmt.Errorf("list managed pipelines in %s: %w", targetNS, err)
 	}
 
-	managed := len(crs.Items)
+	managed := 0
 	onRemoved := pd.Spec.Policy.OnPipelineRemoved
 	if onRemoved == "" {
 		onRemoved = v1alpha1.PipelineDiscoveryOnRemovedKeep
@@ -405,6 +411,10 @@ func (r *PipelineDiscoveryReconciler) processStaleP(
 	staleNames := make([]string, 0)
 	for i := range crs.Items {
 		cr := &crs.Items[i]
+		if !pipelineIsOwnedByDiscovery(cr, pd) {
+			continue
+		}
+		managed++
 		fleetID := cr.Annotations[v1alpha1.FleetPipelineIDAnnotation]
 		if _, present := currentNames[fleetID]; present {
 			// Still in Fleet; clear any stale annotation.
@@ -434,6 +444,21 @@ func (r *PipelineDiscoveryReconciler) processStaleP(
 
 	sort.Strings(staleNames)
 	return staleNames, managed, nil
+}
+
+func pipelineDiscoveryOwnerAnnotation(pd *v1alpha1.PipelineDiscovery) string {
+	return pd.Namespace + "/" + pd.Name
+}
+
+func pipelineIsOwnedByDiscovery(cr *v1alpha1.Pipeline, pd *v1alpha1.PipelineDiscovery) bool {
+	labels := cr.GetLabels()
+	if labels[v1alpha1.PipelineDiscoveryNameLabel] != pd.Name {
+		return false
+	}
+	if ownerNS, ok := labels[v1alpha1.PipelineDiscoveryNamespaceLabel]; ok {
+		return ownerNS == pd.Namespace
+	}
+	return cr.GetAnnotations()[v1alpha1.PipelineDiscoveredByAnnotation] == pipelineDiscoveryOwnerAnnotation(pd)
 }
 
 // setPipelineStaleAnnotation marks a Pipeline CR as stale. No-op if already set.
@@ -561,9 +586,13 @@ func choosePipelineCRName(name string) string {
 // SetupWithManager wires the reconciler. Discovery is purely poll-driven via
 // RequeueAfter; no cross-resource watches are needed.
 func (r *PipelineDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	maxConcurrent := r.MaxConcurrentReconciles
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.PipelineDiscovery{}).
-		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrent}).
 		Named("pipelinediscovery").
 		Complete(r)
 }

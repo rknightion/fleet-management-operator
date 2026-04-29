@@ -44,6 +44,7 @@ func newSource(t *testing.T, srv *httptest.Server, mut func(*Config)) *Source {
 	}
 	src, err := New(cfg)
 	require.NoError(t, err)
+	src.httpClient = srv.Client()
 	return src
 }
 
@@ -116,7 +117,7 @@ func TestHTTPSource_Non2xx(t *testing.T) {
 // TestHTTPSource_BearerAuth confirms that a configured bearer token is
 // forwarded as an Authorization header.
 func TestHTTPSource_BearerAuth(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer abc", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[]`)
@@ -133,7 +134,7 @@ func TestHTTPSource_BearerAuth(t *testing.T) {
 // TestHTTPSource_BasicAuth confirms that username+password fall back to
 // HTTP Basic auth when no bearer token is set.
 func TestHTTPSource_BasicAuth(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
 		assert.True(t, ok)
 		assert.Equal(t, "alice", user)
@@ -156,7 +157,7 @@ func TestHTTPSource_BasicAuth(t *testing.T) {
 // when both forms of credentials are configured (it's the documented
 // precedence and a frequent source of operator confusion).
 func TestHTTPSource_BearerOverridesBasic(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
 		assert.False(t,
 			strings.HasPrefix(r.Header.Get("Authorization"), "Basic "),
@@ -211,6 +212,33 @@ func TestHTTPSource_InvalidURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := New(Config{URL: tc.url})
 			assert.Error(t, err, "expected New to reject %q", tc.url)
+		})
+	}
+}
+
+func TestHTTPSource_RejectsPlaintextCredentials(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{
+			name: "bearer token",
+			cfg:  Config{URL: "http://example.com", BearerToken: "abc"},
+		},
+		{
+			name: "basic auth",
+			cfg:  Config{URL: "http://example.com", Username: "alice", Password: "secret"},
+		},
+		{
+			name: "url userinfo",
+			cfg:  Config{URL: "http://alice:secret@example.com"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := New(tc.cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "https")
 		})
 	}
 }
@@ -302,6 +330,22 @@ func TestHTTPSource_BodyExcerptLimit(t *testing.T) {
 	excerpt := err.Error()[idx+len(marker):]
 	assert.LessOrEqual(t, len(excerpt), bodyExcerptLimit,
 		"excerpt must be capped at %d bytes, got %d", bodyExcerptLimit, len(excerpt))
+}
+
+func TestHTTPSource_SuccessBodyLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("["))
+		_, _ = io.Copy(w, strings.NewReader(strings.Repeat(" ", int(successfulBodyLimit)+1)))
+	}))
+	defer srv.Close()
+
+	src := newSource(t, srv, nil)
+
+	records, err := src.Fetch(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, records)
+	assert.Contains(t, err.Error(), "response body exceeds")
 }
 
 // TestHTTPSource_ContextCancellation ensures Fetch propagates ctx
@@ -444,7 +488,7 @@ func TestHTTPSource_FetchErrorRedactsURLCredentials(t *testing.T) {
 	t.Run("network-error", func(t *testing.T) {
 		// Port 1 is reserved — connect refused / timeout produces the
 		// "do request" branch that previously embedded cfg.URL verbatim.
-		src, err := New(Config{URL: "http://user:s3cret-token@127.0.0.1:1/path"})
+		src, err := New(Config{URL: "https://user:s3cret-token@127.0.0.1:1/path"})
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -468,7 +512,7 @@ func TestHTTPSource_FetchErrorRedactsURLCredentials(t *testing.T) {
 		// Source via New on a credentialed URL pointing at the test
 		// server.
 		var hits int
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			hits++
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, "server boom")
@@ -477,9 +521,10 @@ func TestHTTPSource_FetchErrorRedactsURLCredentials(t *testing.T) {
 
 		// Inject userinfo into the test server URL so the redacted form
 		// is genuinely different from the raw form.
-		credentialed := strings.Replace(srv.URL, "http://", "http://user:s3cret-token@", 1)
+		credentialed := strings.Replace(srv.URL, "https://", "https://user:s3cret-token@", 1)
 		src, err := New(Config{URL: credentialed})
 		require.NoError(t, err)
+		src.httpClient = srv.Client()
 
 		_, err = src.Fetch(context.Background())
 		require.Error(t, err)

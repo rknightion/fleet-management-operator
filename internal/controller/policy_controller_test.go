@@ -149,13 +149,8 @@ var _ = Describe("RemoteAttributePolicy Controller", func() {
 		}, policyTimeout, policyInterval).Should(ConsistOf(listedID))
 	})
 
-	It("treats an empty selector as matching nothing", func() {
+	It("rejects an empty selector at API validation", func() {
 		ctx := context.Background()
-
-		Expect(k8sClient.Create(ctx, &fleetmanagementv1alpha1.Collector{
-			ObjectMeta: metav1.ObjectMeta{Name: "alpha", Namespace: policyNS},
-			Spec:       fleetmanagementv1alpha1.CollectorSpec{ID: "id-alpha-" + uniqueSuffix(), RemoteAttributes: map[string]string{}},
-		})).To(Succeed())
 
 		policyName := "empty-selector"
 		policy := &fleetmanagementv1alpha1.RemoteAttributePolicy{
@@ -165,16 +160,9 @@ var _ = Describe("RemoteAttributePolicy Controller", func() {
 				Attributes: map[string]string{"team": "platform"},
 			},
 		}
-		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
-
-		Eventually(func(g Gomega) {
-			got := &fleetmanagementv1alpha1.RemoteAttributePolicy{}
-			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: policyName, Namespace: policyNS}, got)).To(Succeed())
-			g.Expect(readyReason(got)).To(Equal(policyReasonNoMatch))
-			g.Expect(readyCondition(got)).To(Equal(metav1.ConditionFalse))
-			g.Expect(got.Status.MatchedCollectorIDs).To(BeEmpty())
-			g.Expect(got.Status.MatchedCount).To(BeEquivalentTo(0))
-		}, policyTimeout, policyInterval).Should(Succeed())
+		Expect(k8sClient.Create(ctx, policy)).To(MatchError(ContainSubstring(
+			"selector must specify at least one matcher or collectorID",
+		)))
 	})
 
 	It("re-reconciles when a new matching Collector is added", func() {
@@ -227,7 +215,7 @@ var _ = Describe("RemoteAttributePolicy Controller", func() {
 		policy := &fleetmanagementv1alpha1.RemoteAttributePolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: policyName, Namespace: policyNS},
 			Spec: fleetmanagementv1alpha1.RemoteAttributePolicySpec{
-				Selector:   fleetmanagementv1alpha1.PolicySelector{},
+				Selector:   fleetmanagementv1alpha1.PolicySelector{Matchers: []string{"env=prod"}},
 				Attributes: map[string]string{"team": "platform"},
 			},
 		}

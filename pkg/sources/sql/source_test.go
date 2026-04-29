@@ -250,6 +250,38 @@ func TestSQLSource_New_RequiresFields(t *testing.T) {
 	}
 }
 
+func TestSQLSource_New_RejectsNonReadOnlyQueries(t *testing.T) {
+	cases := []struct {
+		name    string
+		query   string
+		wantSub string
+	}{
+		{name: "delete", query: "DELETE FROM hosts", wantSub: "disallowed SQL keyword"},
+		{name: "update", query: "UPDATE hosts SET team = 'platform'", wantSub: "disallowed SQL keyword"},
+		{name: "drop", query: "DROP TABLE hosts", wantSub: "disallowed SQL keyword"},
+		{name: "semicolon", query: "SELECT id FROM hosts; SELECT id FROM other", wantSub: "multiple statements"},
+		{name: "insert cte", query: "WITH changed AS (INSERT INTO hosts(id) VALUES (1) RETURNING id) SELECT id FROM changed", wantSub: "disallowed SQL keyword"},
+		{name: "cte without final select", query: "WITH hosts AS (SELECT id FROM inventory) VALUES (1)", wantSub: "WITH query must end in a SELECT"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := New(Config{Driver: "postgres", Query: tc.query, DSN: "x"})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantSub)
+		})
+	}
+}
+
+func TestSQLSource_New_AcceptsSelectWithCTE(t *testing.T) {
+	src, err := New(Config{
+		Driver: "postgres",
+		Query:  "WITH hosts AS (SELECT id FROM inventory) SELECT id FROM hosts",
+		DSN:    "x",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "WITH hosts AS (SELECT id FROM inventory) SELECT id FROM hosts", src.cfg.Query)
+}
+
 // TestSQLSource_New_NormalizesDriverCase confirms the driver name comparison
 // is case-insensitive — "Postgres" or "MySQL" in a CRD spec should be
 // accepted, since Kubernetes does not enforce case in string fields.
@@ -266,6 +298,17 @@ func TestSQLSource_New_AppliesDefaultTimeout(t *testing.T) {
 	src, err := New(Config{Driver: "postgres", Query: "SELECT 1", DSN: "x"})
 	require.NoError(t, err)
 	assert.Equal(t, defaultTimeout, src.cfg.Timeout)
+}
+
+func TestSQLSource_NewWithDB_ConfiguresConservativePoolCaps(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	src := newWithDB(Config{Driver: "postgres", Query: "SELECT 1", DSN: "x"}, db)
+
+	stats := src.db.Stats()
+	assert.Equal(t, defaultMaxOpenConns, stats.MaxOpenConnections)
 }
 
 // TestSQLSource_Fetch_BytesAreUTF8String verifies the []byte → string

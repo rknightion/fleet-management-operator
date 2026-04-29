@@ -28,6 +28,7 @@ import (
 	collectorv1 "github.com/grafana/fleet-management-api/api/gen/proto/go/collector/v1"
 	"github.com/grafana/fleet-management-api/api/gen/proto/go/collector/v1/collectorv1connect"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -280,6 +281,19 @@ func TestBulkUpdateCollectors_Operations(t *testing.T) {
 			assert.Nil(t, gotOps[2].Value, "REMOVE without explicit value should leave Value unset")
 		}
 	}
+}
+
+func TestOperationToProto_PreservesExplicitEmptyValueForWriteOps(t *testing.T) {
+	add := operationToProto(&Operation{Op: OpAdd, Path: "/remote_attributes/empty", Value: ""})
+	require.NotNil(t, add.Value, "ADD must preserve explicit empty string value")
+	assert.Equal(t, "", add.GetValue())
+
+	replace := operationToProto(&Operation{Op: OpReplace, Path: "/remote_attributes/empty", Value: ""})
+	require.NotNil(t, replace.Value, "REPLACE must preserve explicit empty string value")
+	assert.Equal(t, "", replace.GetValue())
+
+	remove := operationToProto(&Operation{Op: OpRemove, Path: "/remote_attributes/empty"})
+	assert.Nil(t, remove.Value, "REMOVE without explicit value should leave Value unset")
 }
 
 // TestBulkUpdateCollectors_Errors covers an error path through the bulk RPC.

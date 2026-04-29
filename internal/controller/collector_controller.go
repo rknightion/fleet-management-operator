@@ -32,10 +32,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	fleetmanagementv1alpha1 "github.com/grafana/fleet-management-operator/api/v1alpha1"
@@ -67,6 +70,13 @@ const (
 	// most a few minutes after deployment — so we re-check on a coarse
 	// schedule rather than thrashing.
 	notRegisteredRequeueAfter = 30 * time.Second
+
+	// collectorPeriodicResyncAfter is the durable cleanup backstop for
+	// missed Policy / ExternalAttributeSync delete events. The watch paths
+	// handle the normal case immediately; this periodic pass ensures stale
+	// remote attributes are eventually removed even if the operator was down
+	// when an owning layer was deleted.
+	collectorPeriodicResyncAfter = 30 * time.Minute
 )
 
 // FleetCollectorClient is the controller-side abstraction over the Fleet
@@ -262,6 +272,9 @@ func (r *CollectorReconciler) externalSyncLayerForCollector(
 	resolved := map[string]string{}
 	owners := []string{}
 	for _, s := range syncs {
+		if !externalSyncOwnedKeysUsable(s) {
+			continue
+		}
 		entry := findOwnedEntry(s.Status.OwnedKeys, collector.Spec.ID)
 		if entry == nil {
 			continue
@@ -294,6 +307,11 @@ func findOwnedEntry(entries []fleetmanagementv1alpha1.OwnedKeyEntry, collectorID
 		}
 	}
 	return nil
+}
+
+func externalSyncOwnedKeysUsable(sync *fleetmanagementv1alpha1.ExternalAttributeSync) bool {
+	cond := meta.FindStatusCondition(sync.Status.Conditions, externalSyncConditionTruncated)
+	return cond == nil || cond.Status != metav1.ConditionTrue
 }
 
 // policyLayerForCollector lists every RemoteAttributePolicy in the collector's
@@ -509,7 +527,7 @@ func (r *CollectorReconciler) updateStatusSuccess(
 		// collectors at steady state. Recording them under the NoOp
 		// outcome keeps PromQL rate(...) representative of activity.
 		*outcome = outcomeNoOp
-		return ctrl.Result{}, nil
+		return ctrl.Result{RequeueAfter: collectorPeriodicResyncAfter}, nil
 	}
 
 	// OBS-03: record sync age using the previous LastPing before overwriting it
@@ -567,13 +585,23 @@ func (r *CollectorReconciler) updateStatusSuccess(
 	log.Info("successfully reconciled collector",
 		"namespace", collector.Namespace, "name", collector.Name,
 		"id", collector.Spec.ID, "generation", collector.Generation)
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: collectorPeriodicResyncAfter}, nil
 }
 
 // updateStatusNotRegistered records the "waiting for collector to register"
 // state without flagging an error.
 func (r *CollectorReconciler) updateStatusNotRegistered(ctx context.Context, collector *fleetmanagementv1alpha1.Collector) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+
+	readyMessage := fmt.Sprintf("Collector %q has not yet registered with Fleet Management", collector.Spec.ID)
+	if collector.Status.ObservedGeneration == collector.Generation &&
+		!collector.Status.Registered &&
+		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, collectorReasonNotRegistered, readyMessage, collector.Generation) &&
+		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeSynced, metav1.ConditionFalse, collectorReasonNotRegistered, "Awaiting collector registration", collector.Generation) {
+		log.V(1).Info("collector NotRegistered status unchanged, skipping write",
+			"namespace", collector.Namespace, "name", collector.Name)
+		return ctrl.Result{RequeueAfter: notRegisteredRequeueAfter}, nil
+	}
 
 	collector.Status.ObservedGeneration = collector.Generation
 	collector.Status.Registered = false
@@ -582,7 +610,7 @@ func (r *CollectorReconciler) updateStatusNotRegistered(ctx context.Context, col
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionFalse,
 		Reason:             collectorReasonNotRegistered,
-		Message:            fmt.Sprintf("Collector %q has not yet registered with Fleet Management", collector.Spec.ID),
+		Message:            readyMessage,
 		ObservedGeneration: collector.Generation,
 	})
 	meta.SetStatusCondition(&collector.Status.Conditions, metav1.Condition{
@@ -612,8 +640,21 @@ func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *
 	log := logf.FromContext(ctx)
 	*outcome = reason
 
-	collector.Status.ObservedGeneration = collector.Generation
 	formatted := formatConditionMessage(reason, originalErr)
+	if collector.Status.ObservedGeneration == collector.Generation &&
+		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, formatted, collector.Generation) &&
+		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeSynced, metav1.ConditionFalse, reason, formatted, collector.Generation) {
+		log.V(1).Info("collector error status unchanged, skipping write",
+			"namespace", collector.Namespace, "name", collector.Name, "reason", reason)
+		if !shouldRetry(originalErr, reason) {
+			log.Info("validation error, not requeueing",
+				"namespace", collector.Namespace, "name", collector.Name, "error", originalErr.Error())
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, originalErr
+	}
+
+	collector.Status.ObservedGeneration = collector.Generation
 
 	meta.SetStatusCondition(&collector.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
@@ -653,6 +694,22 @@ func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *
 	return ctrl.Result{}, originalErr
 }
 
+func collectorStatusConditionMatches(
+	conditions []metav1.Condition,
+	condType string,
+	status metav1.ConditionStatus,
+	reason string,
+	message string,
+	observedGeneration int64,
+) bool {
+	condition := meta.FindStatusCondition(conditions, condType)
+	return condition != nil &&
+		condition.Status == status &&
+		condition.Reason == reason &&
+		condition.Message == message &&
+		condition.ObservedGeneration == observedGeneration
+}
+
 // SetupWithManager wires the watches for this reconciler. The CollectorReconciler
 // is the sole writer to Fleet for collector remote attributes, so it must
 // re-reconcile when any input layer changes — its own CR (For), any
@@ -664,10 +721,12 @@ func (r *CollectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&fleetmanagementv1alpha1.RemoteAttributePolicy{},
 			handler.EnqueueRequestsFromMapFunc(r.collectorsMatchedByPolicy),
+			builder.WithPredicates(collectorPolicyWatchPredicate()),
 		).
 		Watches(
 			&fleetmanagementv1alpha1.ExternalAttributeSync{},
 			handler.EnqueueRequestsFromMapFunc(r.collectorsTouchedBySync),
+			builder.WithPredicates(collectorExternalSyncWatchPredicate()),
 		).
 		Named("collector").
 		Complete(r)
@@ -675,14 +734,18 @@ func (r *CollectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // collectorsTouchedBySync returns reconcile requests for every Collector CR
 // in the namespace whose ID appears in the changed ExternalAttributeSync's
-// status.ownedKeys. We also include the inverse — any Collector that was
-// previously claimed by this sync but has since been dropped — by simply
-// listing all Collectors in the namespace; the cost is bounded and the
-// alternative (tracking per-sync claim history) would add notable
-// complexity for marginal benefit at Phase 3 volumes.
+// status.ownedKeys. On update events controller-runtime runs this map
+// function for both old and new objects, so Collector receives the union of
+// previously-claimed and newly-claimed collector IDs without enqueuing the
+// whole namespace.
 func (r *CollectorReconciler) collectorsTouchedBySync(ctx context.Context, obj client.Object) []reconcile.Request {
 	sync, ok := obj.(*fleetmanagementv1alpha1.ExternalAttributeSync)
 	if !ok {
+		return nil
+	}
+
+	touchedIDs := collectorIDsFromOwnedKeys(sync.Status.OwnedKeys)
+	if len(touchedIDs) == 0 {
 		return nil
 	}
 
@@ -693,14 +756,69 @@ func (r *CollectorReconciler) collectorsTouchedBySync(ctx context.Context, obj c
 		return nil
 	}
 
-	requests := make([]reconcile.Request, 0, len(collectors.Items))
+	requests := make([]reconcile.Request, 0, len(touchedIDs))
 	for i := range collectors.Items {
 		c := &collectors.Items[i]
+		if _, ok := touchedIDs[c.Spec.ID]; !ok {
+			continue
+		}
 		requests = append(requests, reconcile.Request{
 			NamespacedName: client.ObjectKey{Namespace: c.Namespace, Name: c.Name},
 		})
 	}
 	return requests
+}
+
+func collectorIDsFromOwnedKeys(entries []fleetmanagementv1alpha1.OwnedKeyEntry) map[string]struct{} {
+	out := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry.CollectorID == "" {
+			continue
+		}
+		out[entry.CollectorID] = struct{}{}
+	}
+	return out
+}
+
+func collectorPolicyWatchPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(event.CreateEvent) bool { return true },
+		DeleteFunc: func(event.DeleteEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldPolicy, oldOK := e.ObjectOld.(*fleetmanagementv1alpha1.RemoteAttributePolicy)
+			newPolicy, newOK := e.ObjectNew.(*fleetmanagementv1alpha1.RemoteAttributePolicy)
+			if !oldOK || !newOK {
+				return false
+			}
+			return oldPolicy.Generation != newPolicy.Generation ||
+				deletionTimestampChanged(oldPolicy, newPolicy)
+		},
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+}
+
+func collectorExternalSyncWatchPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(event.CreateEvent) bool { return true },
+		DeleteFunc: func(event.DeleteEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldSync, oldOK := e.ObjectOld.(*fleetmanagementv1alpha1.ExternalAttributeSync)
+			newSync, newOK := e.ObjectNew.(*fleetmanagementv1alpha1.ExternalAttributeSync)
+			if !oldOK || !newOK {
+				return false
+			}
+			return oldSync.Generation != newSync.Generation ||
+				deletionTimestampChanged(oldSync, newSync) ||
+				!ownedKeyEntriesEqual(oldSync.Status.OwnedKeys, newSync.Status.OwnedKeys)
+		},
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+}
+
+func deletionTimestampChanged(oldObj, newObj client.Object) bool {
+	oldDeleting := !oldObj.GetDeletionTimestamp().IsZero()
+	newDeleting := !newObj.GetDeletionTimestamp().IsZero()
+	return oldDeleting != newDeleting
 }
 
 // collectorsMatchedByPolicy is the watch map function for RemoteAttributePolicy

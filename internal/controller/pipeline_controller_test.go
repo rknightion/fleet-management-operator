@@ -46,6 +46,8 @@ import (
 // Do not enable Ginkgo parallel mode -- mock state is shared.
 var pipelineMock *mockFleetClient
 
+func boolPtr(b bool) *bool { return &b }
+
 // Mock Fleet Management API client
 type mockFleetClient struct {
 	mu sync.Mutex
@@ -252,7 +254,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers:   []string{"env=prod"},
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
@@ -292,6 +294,46 @@ var _ = Describe("Pipeline Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 		})
 
+		It("should default spec.enabled through the CRD schema while preserving explicit values", func() {
+			cases := []struct {
+				name    string
+				enabled *bool
+				want    bool
+			}{
+				{name: "omitted", enabled: nil, want: true},
+				{name: "explicit-true", enabled: boolPtr(true), want: true},
+				{name: "explicit-false", enabled: boolPtr(false), want: false},
+			}
+
+			for _, tc := range cases {
+				By("Creating a Pipeline with " + tc.name + " enabled")
+				pipeline := &fleetmanagementv1alpha1.Pipeline{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      pipelineName + "-" + tc.name,
+						Namespace: pipelineNamespace,
+					},
+					Spec: fleetmanagementv1alpha1.PipelineSpec{
+						Contents:   "prometheus.exporter.self \"alloy\" { }",
+						Enabled:    tc.enabled,
+						ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+					},
+				}
+				key := types.NamespacedName{Name: pipeline.Name, Namespace: pipeline.Namespace}
+				Expect(k8sClient.Create(ctx, pipeline)).To(Succeed())
+
+				got := &fleetmanagementv1alpha1.Pipeline{}
+				Expect(k8sClient.Get(ctx, key, got)).To(Succeed())
+				Expect(got.Spec.Enabled).NotTo(BeNil())
+				Expect(*got.Spec.Enabled).To(Equal(tc.want))
+
+				Expect(k8sClient.Delete(ctx, got)).To(Succeed())
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, key, got)
+					return err != nil && apierrors.IsNotFound(err)
+				}, timeout, interval).Should(BeTrue())
+			}
+		})
+
 		It("should skip reconciliation when spec hasn't changed", func() {
 			By("Creating a Pipeline with Fleet ID already set")
 			pipeline := &fleetmanagementv1alpha1.Pipeline{
@@ -302,7 +344,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -338,7 +380,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -376,7 +418,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					Matchers:   []string{"env=prod"},
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
@@ -455,7 +497,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "test content",
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -474,7 +516,7 @@ var _ = Describe("Pipeline Controller", func() {
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Name:       "custom-pipeline-name",
 					Contents:   "test content",
-					Enabled:    true,
+					Enabled:    boolPtr(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -498,6 +540,38 @@ var _ = Describe("Pipeline Controller", func() {
 
 			req := reconciler.buildUpsertRequest(pipeline)
 			Expect(req.Pipeline.ConfigType).To(Equal("CONFIG_TYPE_OTEL"))
+		})
+
+		It("should apply the enabled default for non-defaulted typed-client objects", func() {
+			reconciler := &PipelineReconciler{}
+
+			cases := []struct {
+				name    string
+				enabled *bool
+				want    bool
+			}{
+				{name: "omitted before API defaulting", enabled: nil, want: true},
+				{name: "explicit true", enabled: boolPtr(true), want: true},
+				{name: "explicit false", enabled: boolPtr(false), want: false},
+			}
+
+			for _, tc := range cases {
+				By("checking " + tc.name)
+				pipeline := &fleetmanagementv1alpha1.Pipeline{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test",
+						Namespace: "default",
+					},
+					Spec: fleetmanagementv1alpha1.PipelineSpec{
+						Contents:   "test",
+						Enabled:    tc.enabled,
+						ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+					},
+				}
+
+				req := reconciler.buildUpsertRequest(pipeline)
+				Expect(req.Pipeline.Enabled).To(Equal(tc.want))
+			}
 		})
 	})
 
@@ -602,7 +676,7 @@ var _ = Describe("Pipeline Controller", func() {
 			Expect(outcome).To(Equal(reasonSyncFailed))
 
 			By("Verifying status fields were updated in-memory")
-			Expect(pipeline.Status.ObservedGeneration).To(Equal(pipeline.Generation))
+			Expect(pipeline.Status.ObservedGeneration).To(Equal(int64(0)))
 			Expect(pipeline.Status.Conditions).ToNot(BeEmpty())
 
 			// Find Ready condition
@@ -616,6 +690,67 @@ var _ = Describe("Pipeline Controller", func() {
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal(reasonSyncFailed))
+		})
+
+		It("retries the same generation after a retryable upsert failure", func() {
+			By("Setting up a Pipeline that already has its finalizer")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "retry-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+					Finalizers: []string{pipelineFinalizer},
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents:   "prometheus.exporter.self \"alloy\" { }",
+					Enabled:    boolPtr(true),
+					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			mock := newMockFleetClient()
+			firstErr := errors.New("temporary Fleet outage")
+			mock.upsertError = firstErr
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: mock,
+			}
+
+			key := types.NamespacedName{Namespace: pipeline.Namespace, Name: pipeline.Name}
+
+			By("Reconciling once with a retryable Fleet failure")
+			result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+			Expect(err).To(Equal(firstErr))
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(mock.CallCount()).To(Equal(1))
+
+			By("Verifying the failed retryable attempt did not mark the generation observed")
+			fresh := &fleetmanagementv1alpha1.Pipeline{}
+			Expect(fakeClient.Get(ctx, key, fresh)).To(Succeed())
+			Expect(fresh.Generation).To(Equal(int64(1)))
+			Expect(fresh.Status.ObservedGeneration).NotTo(Equal(fresh.Generation))
+
+			By("Reconciling the same generation again after Fleet recovers")
+			mock.mu.Lock()
+			mock.upsertError = nil
+			mock.mu.Unlock()
+
+			result, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(mock.CallCount()).To(Equal(2), "second reconcile must call UpsertPipeline again")
+
+			Expect(fakeClient.Get(ctx, key, fresh)).To(Succeed())
+			Expect(fresh.Status.ID).To(Equal("mock-id-123"))
+			Expect(fresh.Status.ObservedGeneration).To(Equal(fresh.Generation))
 		})
 
 		It("should trigger requeue on status conflict", func() {
@@ -828,7 +963,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents: "prometheus.exporter.self \"alloy\" { }",
-					Enabled:  true,
+					Enabled:  boolPtr(true),
 				},
 				Status: fleetmanagementv1alpha1.PipelineStatus{
 					ID: "fleet-id-abc",

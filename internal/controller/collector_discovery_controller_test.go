@@ -127,6 +127,7 @@ var _ = Describe("CollectorDiscovery Controller", func() {
 		crs := listManagedCRs(ctx)
 		for _, cr := range crs {
 			Expect(cr.Labels).To(HaveKeyWithValue(fleetmanagementv1alpha1.DiscoveryNameLabel, cdName))
+			Expect(cr.Labels).To(HaveKeyWithValue(fleetmanagementv1alpha1.DiscoveryNamespaceLabel, discoveryNS))
 			Expect(cr.Annotations).To(HaveKeyWithValue(
 				fleetmanagementv1alpha1.DiscoveredByAnnotation,
 				discoveryNS+"/"+cdName,
@@ -433,6 +434,79 @@ var _ = Describe("CollectorDiscovery Controller", func() {
 
 		// Nothing in the discovery's own namespace.
 		Expect(listManagedCRs(ctx)).To(BeEmpty())
+	})
+
+	It("scopes same-named discoveries by source namespace in a shared target namespace", func() {
+		ctx := context.Background()
+
+		targetNS := "discovery-shared-target-" + uniqueDiscoverySuffix()
+		otherDiscoveryNS := "discovery-other-" + uniqueDiscoverySuffix()
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: targetNS},
+		})).To(Succeed())
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: otherDiscoveryNS},
+		})).To(Succeed())
+
+		collectorMock.setListResult([]*fleetclient.Collector{
+			fleetCollector("edge-a"),
+		})
+
+		createDiscovery(ctx, fleetmanagementv1alpha1.CollectorDiscoverySpec{
+			PollInterval:    "1h",
+			TargetNamespace: targetNS,
+		})
+
+		Eventually(func() int {
+			return len(listManagedCRsIn(ctx, targetNS))
+		}, discoveryTimeout, discoveryInterval).Should(Equal(1))
+
+		collectorMock.setListResult([]*fleetclient.Collector{
+			fleetCollector("edge-b"),
+		})
+
+		other := &fleetmanagementv1alpha1.CollectorDiscovery{
+			ObjectMeta: metav1.ObjectMeta{Name: cdName, Namespace: otherDiscoveryNS},
+			Spec: fleetmanagementv1alpha1.CollectorDiscoverySpec{
+				PollInterval:    "1h",
+				TargetNamespace: targetNS,
+			},
+		}
+		Expect(k8sClient.Create(ctx, other)).To(Succeed())
+
+		Eventually(func() int {
+			return len(listManagedCRsIn(ctx, targetNS))
+		}, discoveryTimeout, discoveryInterval).Should(Equal(2))
+
+		edgeA := &fleetmanagementv1alpha1.Collector{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: targetNS, Name: "edge-a"}, edgeA)).To(Succeed())
+		Expect(edgeA.Labels).To(HaveKeyWithValue(fleetmanagementv1alpha1.DiscoveryNamespaceLabel, discoveryNS))
+		Expect(edgeA.Annotations).NotTo(HaveKey(fleetmanagementv1alpha1.DiscoveryStaleAnnotation))
+
+		edgeB := &fleetmanagementv1alpha1.Collector{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: targetNS, Name: "edge-b"}, edgeB)).To(Succeed())
+		Expect(edgeB.Labels).To(HaveKeyWithValue(fleetmanagementv1alpha1.DiscoveryNamespaceLabel, otherDiscoveryNS))
+
+		collectorMock.setListResult(nil)
+		Eventually(func() error {
+			latest := &fleetmanagementv1alpha1.CollectorDiscovery{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: otherDiscoveryNS, Name: cdName}, latest); err != nil {
+				return err
+			}
+			latest.Spec.IncludeInactive = true
+			return k8sClient.Update(ctx, latest)
+		}, discoveryTimeout, discoveryInterval).Should(Succeed())
+
+		Eventually(func() string {
+			cr := &fleetmanagementv1alpha1.Collector{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: targetNS, Name: "edge-b"}, cr); err != nil {
+				return ""
+			}
+			return cr.Annotations[fleetmanagementv1alpha1.DiscoveryStaleAnnotation]
+		}, discoveryTimeout, discoveryInterval).Should(Equal(fleetmanagementv1alpha1.DiscoveryStaleAnnotationValue))
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: targetNS, Name: "edge-a"}, edgeA)).To(Succeed())
+		Expect(edgeA.Annotations).NotTo(HaveKey(fleetmanagementv1alpha1.DiscoveryStaleAnnotation))
 	})
 
 	It("requeues with an error condition when ListCollectors fails", func() {

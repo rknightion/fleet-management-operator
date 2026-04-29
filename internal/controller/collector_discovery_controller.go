@@ -379,10 +379,11 @@ func (r *CollectorDiscoveryReconciler) upsertCollectorCRs(
 					Name:      name,
 					Namespace: targetNS,
 					Labels: map[string]string{
-						fleetmanagementv1alpha1.DiscoveryNameLabel: cd.Name,
+						fleetmanagementv1alpha1.DiscoveryNameLabel:      cd.Name,
+						fleetmanagementv1alpha1.DiscoveryNamespaceLabel: cd.Namespace,
 					},
 					Annotations: map[string]string{
-						fleetmanagementv1alpha1.DiscoveredByAnnotation:     cd.Namespace + "/" + cd.Name,
+						fleetmanagementv1alpha1.DiscoveredByAnnotation:     collectorDiscoveryOwnerAnnotation(cd),
 						fleetmanagementv1alpha1.FleetCollectorIDAnnotation: c.ID,
 					},
 				},
@@ -406,7 +407,7 @@ func (r *CollectorDiscoveryReconciler) upsertCollectorCRs(
 			continue
 		}
 
-		ownerCDName, owned := existing.Labels[fleetmanagementv1alpha1.DiscoveryNameLabel]
+		_, owned := existing.Labels[fleetmanagementv1alpha1.DiscoveryNameLabel]
 		switch {
 		case !owned:
 			// Manually-created CR with the same name. Skip.
@@ -415,7 +416,7 @@ func (r *CollectorDiscoveryReconciler) upsertCollectorCRs(
 				CRName:      name,
 				Reason:      fleetmanagementv1alpha1.DiscoveryConflictNotOwned,
 			})
-		case ownerCDName != cd.Name:
+		case !collectorIsOwnedByDiscovery(existing, cd):
 			// Owned by a different CollectorDiscovery; first-write wins.
 			conflicts = append(conflicts, fleetmanagementv1alpha1.DiscoveryConflict{
 				CollectorID: c.ID,
@@ -477,7 +478,7 @@ func (r *CollectorDiscoveryReconciler) processStale(
 		return nil, 0, fmt.Errorf("list managed collectors in %s: %w", targetNS, err)
 	}
 
-	managed := len(crs.Items)
+	managed := 0
 	onRemoved := cd.Spec.Policy.OnCollectorRemoved
 	if onRemoved == "" {
 		onRemoved = fleetmanagementv1alpha1.DiscoveryOnRemovedKeep
@@ -486,6 +487,10 @@ func (r *CollectorDiscoveryReconciler) processStale(
 	staleIDs := make([]string, 0)
 	for i := range crs.Items {
 		cr := &crs.Items[i]
+		if !collectorIsOwnedByDiscovery(cr, cd) {
+			continue
+		}
+		managed++
 		if _, present := currentIDs[cr.Spec.ID]; present {
 			// Still in Fleet; clear any stale annotation set by a
 			// previous run.
@@ -515,6 +520,21 @@ func (r *CollectorDiscoveryReconciler) processStale(
 
 	sort.Strings(staleIDs)
 	return staleIDs, managed, nil
+}
+
+func collectorDiscoveryOwnerAnnotation(cd *fleetmanagementv1alpha1.CollectorDiscovery) string {
+	return cd.Namespace + "/" + cd.Name
+}
+
+func collectorIsOwnedByDiscovery(cr *fleetmanagementv1alpha1.Collector, cd *fleetmanagementv1alpha1.CollectorDiscovery) bool {
+	labels := cr.GetLabels()
+	if labels[fleetmanagementv1alpha1.DiscoveryNameLabel] != cd.Name {
+		return false
+	}
+	if ownerNS, ok := labels[fleetmanagementv1alpha1.DiscoveryNamespaceLabel]; ok {
+		return ownerNS == cd.Namespace
+	}
+	return cr.GetAnnotations()[fleetmanagementv1alpha1.DiscoveredByAnnotation] == collectorDiscoveryOwnerAnnotation(cd)
 }
 
 // setStaleAnnotation marks a Collector CR as stale via a server-side
