@@ -216,29 +216,10 @@ and `CollectorDiscovery` are not covered. See `docs/tenant-policy.md`.
 
 ## Kubernetes Events
 
-**Controllers emit events for debugging.** Reasons are constants defined per
-controller; the canonical list is below (cross-check against
-`grep -n 'eventReason' internal/controller/*.go`).
-
-**Pipeline** (`internal/controller/pipeline_controller.go`):
-- Normal: `Created`, `Updated`, `Synced`, `Deleted`
-- Warning: `SyncFailed`, `ValidationFailed`, `RateLimited`, `Recreated`
-
-**Collector** (`internal/controller/collector_controller.go`):
-- Normal: `Synced`, `AttributesUpdated`, `Deleted`
-- Warning: `SyncFailed`, `RateLimited`, `NotRegistered`, `DeleteFailed`
-
-**CollectorDiscovery** (`internal/controller/collector_discovery_controller.go`):
-- Normal: `Discovered`, `Pruned`, `Synced`
-- Warning: `Conflict`, `Failed`, `TruncatedConflicts`
-
-**ExternalAttributeSync** (`internal/controller/external_sync_controller.go`):
-- Normal: `Synced`
-- Warning: `Stalled`, `SourceFailed`
-
-**RemoteAttributePolicy** (`internal/controller/policy_controller.go`):
-- Normal: `Synced`
-- Warning: `NoMatch`, `ListFailed`
+Each controller emits Kubernetes events on significant reconcile outcomes.
+The full per-controller table — Reason, EventType, Trigger — lives in
+[`docs/events.md`](docs/events.md) and is regenerated from controller source
+by `make docs`. Do not maintain the table by hand here.
 
 **View events:**
 ```bash
