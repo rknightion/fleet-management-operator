@@ -24,9 +24,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-logr/logr"
 	"github.com/grafana/fleet-management-operator/pkg/fleetclient"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // isTransientError determines if an error should be retried with exponential backoff
@@ -63,7 +61,7 @@ func shouldRetry(err error, reason string) bool {
 }
 
 // formatConditionMessage maps errors to user-friendly status condition messages with troubleshooting hints
-func formatConditionMessage(reason string, err error) string {
+func formatConditionMessage(_ string, err error) string {
 	// Check for specific wrapped error patterns first (before unwrapping with errors.As)
 	errMsg := err.Error()
 
@@ -106,12 +104,4 @@ func formatConditionMessage(reason string, err error) string {
 
 	// Generic fallback
 	return fmt.Sprintf("Sync failed: %v. Check controller logs for details.", err)
-}
-
-// loggerFor returns a resource-scoped logger with pipeline namespace and name
-func loggerFor(ctx context.Context, ns, name string) logr.Logger {
-	return logf.FromContext(ctx).WithValues(
-		"namespace", ns,
-		"name", name,
-	)
 }

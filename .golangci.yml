@@ -39,6 +39,12 @@ linters:
       - linters:
           - lll
         path: internal/*
+      # Test files in pkg/ contain connect-go handler signatures and
+      # table-driven test rows that are inherently long; breaking them
+      # hurts readability more than the cap helps.
+      - linters:
+          - lll
+        path: pkg/.*_test\.go
     paths:
       - third_party$
       - builtin$

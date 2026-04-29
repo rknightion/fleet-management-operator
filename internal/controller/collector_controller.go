@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"time"
@@ -97,7 +98,7 @@ func (r *CollectorReconciler) emitEvent(object runtime.Object, eventtype, reason
 	}
 }
 
-func (r *CollectorReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+func (r *CollectorReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
 		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
 	}
@@ -315,7 +316,7 @@ func (r *CollectorReconciler) policyLayerForCollector(
 		ref      *fleetmanagementv1alpha1.RemoteAttributePolicy
 		fullName string
 	}
-	var matches []matchedPolicy
+	matches := make([]matchedPolicy, 0, len(list.Items))
 	for i := range list.Items {
 		p := &list.Items[i]
 		sel := attributes.Selector{
@@ -692,7 +693,7 @@ func (r *CollectorReconciler) collectorsTouchedBySync(ctx context.Context, obj c
 		return nil
 	}
 
-	var requests []reconcile.Request
+	requests := make([]reconcile.Request, 0, len(collectors.Items))
 	for i := range collectors.Items {
 		c := &collectors.Items[i]
 		requests = append(requests, reconcile.Request{
@@ -725,7 +726,7 @@ func (r *CollectorReconciler) collectorsMatchedByPolicy(ctx context.Context, obj
 		CollectorIDs: policy.Spec.Selector.CollectorIDs,
 	}
 
-	var requests []reconcile.Request
+	requests := make([]reconcile.Request, 0, len(collectors.Items))
 	for i := range collectors.Items {
 		c := &collectors.Items[i]
 		if !sel.Match(c.Spec.ID, c.Status.LocalAttributes) {
@@ -775,9 +776,7 @@ func copyMap(m map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out
 }
 

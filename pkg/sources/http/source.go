@@ -159,7 +159,7 @@ func (s *Source) Fetch(ctx context.Context) ([]sources.Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("httpsource: %s %s: %w", s.cfg.Method, s.cfg.URL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		excerpt := readBodyExcerpt(resp.Body, bodyExcerptLimit)

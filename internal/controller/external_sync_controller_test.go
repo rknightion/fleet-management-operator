@@ -500,7 +500,7 @@ func buildMatchedCollectorList(ns string, n int) []*fleetmanagementv1alpha1.Coll
 // AttributeMapping expects.
 func buildRecordsForCollectors(n int) []sources.Record {
 	out := make([]sources.Record, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out = append(out, sources.Record{
 			"hostname": fmt.Sprintf("id-%05d", i),
 			"env":      "prod",

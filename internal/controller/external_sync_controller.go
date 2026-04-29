@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -145,7 +146,7 @@ func (r *ExternalAttributeSyncReconciler) emitEvent(object runtime.Object, event
 	}
 }
 
-func (r *ExternalAttributeSyncReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+func (r *ExternalAttributeSyncReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
 		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
 	}
@@ -511,9 +512,7 @@ func (r *ExternalAttributeSyncReconciler) matchedCollectors(ctx context.Context,
 	for i := range collectors.Items {
 		c := &collectors.Items[i]
 		attrs := make(map[string]string, len(c.Status.LocalAttributes)+1)
-		for k, v := range c.Status.LocalAttributes {
-			attrs[k] = v
-		}
+		maps.Copy(attrs, c.Status.LocalAttributes)
 		attrs["collector.id"] = c.Spec.ID
 		if sel.Match(c.Spec.ID, attrs) {
 			out[c.Spec.ID] = struct{}{}
@@ -741,7 +740,7 @@ func (r *ExternalAttributeSyncReconciler) syncsReferencingSecret(ctx context.Con
 		return nil
 	}
 
-	var out []reconcile.Request
+	out := make([]reconcile.Request, 0, len(list.Items))
 	for i := range list.Items {
 		s := &list.Items[i]
 		ref := s.Spec.Source.SecretRef

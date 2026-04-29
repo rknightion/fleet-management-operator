@@ -159,7 +159,7 @@ func (s *Source) Fetch(ctx context.Context) ([]sources.Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlsource: query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
 	if err != nil {

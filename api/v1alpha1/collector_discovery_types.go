@@ -73,6 +73,11 @@ const (
 	// than a condition) is used so the existing Collector reconciler
 	// — which manages the CR's conditions — does not fight us.
 	DiscoveryStaleAnnotation = "fleetmanagement.grafana.com/discovery-stale"
+
+	// DiscoveryStaleAnnotationValue is the literal value the controller
+	// writes when marking a Collector CR stale. Centralised so the
+	// reconciler, webhook, and tests can compare against it.
+	DiscoveryStaleAnnotationValue = "true"
 )
 
 // DiscoveryConflictReason enumerates the reasons a discovered CR could

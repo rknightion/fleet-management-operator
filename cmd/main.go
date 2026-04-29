@@ -45,7 +45,6 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 	corev1 "k8s.io/api/core/v1"
 
@@ -273,7 +272,11 @@ func main() {
 
 	// Refuse to run with no controllers enabled — that's almost certainly a
 	// configuration error and starting an idle manager would be confusing.
-	if !enablePipelineController && !enableCollectorController && !enablePolicyController && !enableExternalSyncController && !enableCollectorDiscoveryController {
+	if !enablePipelineController &&
+		!enableCollectorController &&
+		!enablePolicyController &&
+		!enableExternalSyncController &&
+		!enableCollectorDiscoveryController {
 		setupLog.Error(nil, "no controllers enabled; set at least one --enable-*-controller flag to true")
 		os.Exit(1)
 	}
@@ -291,7 +294,7 @@ func main() {
 	// OpenTelemetry tracing — noop by default, enabled when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 	// Setting up tracing here (after manager creation) so the manager shutdown hook can
 	// flush any pending spans before the process exits.
-	var tracer oteltrace.Tracer = noop.NewTracerProvider().Tracer("fleet-management-operator")
+	tracer := noop.NewTracerProvider().Tracer("fleet-management-operator")
 
 	if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); endpoint != "" {
 		// Construct the exporter without explicit options so the SDK can read

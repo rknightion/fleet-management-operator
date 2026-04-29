@@ -58,28 +58,26 @@ var _ admission.Validator[*RemoteAttributePolicy] = &remoteAttributePolicyValida
 // ValidateCreate implements admission.Validator.
 func (v *remoteAttributePolicyValidator) ValidateCreate(ctx context.Context, obj *RemoteAttributePolicy) (admission.Warnings, error) {
 	remoteattributepolicylog.Info("validate create", "name", obj.Name)
-	warnings, err := obj.validateRemoteAttributePolicy()
-	if err != nil {
-		return warnings, err
+	if err := obj.validateRemoteAttributePolicy(); err != nil {
+		return nil, err
 	}
 	if err := runTenantChecks(ctx, v.checker, obj.Namespace, obj.Spec.Selector.Matchers, obj.Spec.Selector.CollectorIDs); err != nil {
-		return warnings, err
+		return nil, err
 	}
-	return warnings, nil
+	return nil, nil
 }
 
 // ValidateUpdate implements admission.Validator.
 func (v *remoteAttributePolicyValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *RemoteAttributePolicy) (admission.Warnings, error) {
 	remoteattributepolicylog.Info("validate update", "name", newObj.Name)
 	// Priority and selector are mutable; re-run the full validation suite.
-	warnings, err := newObj.validateRemoteAttributePolicy()
-	if err != nil {
-		return warnings, err
+	if err := newObj.validateRemoteAttributePolicy(); err != nil {
+		return nil, err
 	}
 	if err := runTenantChecks(ctx, v.checker, newObj.Namespace, newObj.Spec.Selector.Matchers, newObj.Spec.Selector.CollectorIDs); err != nil {
-		return warnings, err
+		return nil, err
 	}
-	return warnings, nil
+	return nil, nil
 }
 
 // ValidateDelete implements admission.Validator.
@@ -89,21 +87,21 @@ func (v *remoteAttributePolicyValidator) ValidateDelete(ctx context.Context, obj
 
 // validateRemoteAttributePolicy performs comprehensive validation of the
 // RemoteAttributePolicy resource.
-func (r *RemoteAttributePolicy) validateRemoteAttributePolicy() (admission.Warnings, error) {
+func (r *RemoteAttributePolicy) validateRemoteAttributePolicy() error {
 	// 1. Attributes must be non-empty (a policy with no attributes is meaningless).
 	// 2. Reserved-prefix, empty-key, value length, defense-in-depth count.
 	if err := r.validateAttributes(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// 3. Selector must be non-empty (matchers OR collectorIDs must be set).
 	// 4. Matchers must satisfy Prometheus syntax + 200-char cap.
 	// 5. CollectorIDs entries must be non-empty.
 	if err := r.validateSelector(); err != nil {
-		return nil, err
+		return err
 	}
 
-	return nil, nil
+	return nil
 }
 
 // validateAttributes enforces:

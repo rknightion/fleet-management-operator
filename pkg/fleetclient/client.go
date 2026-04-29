@@ -169,8 +169,8 @@ func normalizeBaseURL(baseURL string) string {
 		collectorv1connect.CollectorServiceName,
 	} {
 		suffix := "/" + svc
-		if strings.HasSuffix(trimmed, suffix) {
-			trimmed = strings.TrimSuffix(trimmed, suffix)
+		if before, ok := strings.CutSuffix(trimmed, suffix); ok {
+			trimmed = before
 			break
 		}
 	}

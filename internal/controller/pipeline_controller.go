@@ -129,7 +129,7 @@ func (r *PipelineReconciler) emitEvent(object runtime.Object, eventtype, reason,
 }
 
 // emitEventf safely emits an event with formatting, checking if Recorder is not nil
-func (r *PipelineReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+func (r *PipelineReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
 		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
 	}

@@ -80,14 +80,14 @@ func TestNoCacheBypassingListCalls(t *testing.T) {
 // actually assigned at runtime.
 func TestReconcilerUsesManagerClient(t *testing.T) {
 	// Use reflection to verify PipelineReconciler has a Client field of type client.Client
-	reconcilerType := reflect.TypeOf(PipelineReconciler{})
+	reconcilerType := reflect.TypeFor[PipelineReconciler]()
 
 	// Find the Client field
 	clientField, found := reconcilerType.FieldByName("Client")
 	assert.True(t, found, "PipelineReconciler must have a Client field")
 
 	// Verify it's the client.Client interface type
-	expectedType := reflect.TypeOf((*client.Client)(nil)).Elem()
+	expectedType := reflect.TypeFor[client.Client]()
 	assert.Equal(t, expectedType, clientField.Type,
 		"PipelineReconciler.Client must be of type client.Client interface. "+
 			"This ensures the controller uses the cached client from mgr.GetClient().")

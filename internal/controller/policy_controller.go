@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
@@ -104,7 +105,7 @@ func (r *RemoteAttributePolicyReconciler) emitEvent(object runtime.Object, event
 	}
 }
 
-func (r *RemoteAttributePolicyReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+func (r *RemoteAttributePolicyReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
 		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
 	}
@@ -212,7 +213,7 @@ func policyMatchedOutcome(matchedCount int, truncated bool, result ctrl.Result, 
 	if err != nil {
 		return policyReasonListFailed
 	}
-	if result.Requeue {
+	if result.Requeue || result.RequeueAfter > 0 { //nolint:staticcheck // Requeue is deprecated but still produced by status-update conflict paths
 		return "NoOp"
 	}
 	if truncated {
@@ -277,9 +278,7 @@ func evaluatePolicySelector(
 // without using the explicit CollectorIDs list.
 func buildSelectorAttrs(c *fleetmanagementv1alpha1.Collector) map[string]string {
 	attrs := make(map[string]string, len(c.Status.LocalAttributes)+1)
-	for k, v := range c.Status.LocalAttributes {
-		attrs[k] = v
-	}
+	maps.Copy(attrs, c.Status.LocalAttributes)
 	attrs["collector.id"] = c.Spec.ID
 	return attrs
 }

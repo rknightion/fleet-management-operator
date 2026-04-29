@@ -283,7 +283,7 @@ func TestCollector_ValidateDelete(t *testing.T) {
 // the API server without going through the OpenAPI layer).
 func TestCollector_validateRemoteAttributes_DefenseInDepth(t *testing.T) {
 	attrs := make(map[string]string, collectorMaxRemoteAttributes+1)
-	for i := 0; i < collectorMaxRemoteAttributes+1; i++ {
+	for i := range collectorMaxRemoteAttributes + 1 {
 		// Use a non-reserved key namespace so the count check is what fails.
 		attrs[fmtKey(i)] = "v"
 	}

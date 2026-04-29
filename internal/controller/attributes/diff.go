@@ -43,7 +43,10 @@ import (
 // The returned slice is sorted by path so callers (and tests) can rely on
 // deterministic ordering.
 func Diff(desired, observed map[string]string, previouslyOwned []string) []*fleetclient.Operation {
-	var ops []*fleetclient.Operation
+	// Intentionally nil (not preallocated): callers and tests rely on
+	// a nil return when there is no work to do (e.g. equality checks
+	// against `nil`). Use `//nolint:prealloc` semantics by leaving as nil.
+	var ops []*fleetclient.Operation //nolint:prealloc
 
 	// ADD / REPLACE for keys we want to set.
 	for key, want := range desired {

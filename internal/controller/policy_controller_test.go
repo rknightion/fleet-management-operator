@@ -331,7 +331,7 @@ func findPolicyCondition(p *fleetmanagementv1alpha1.RemoteAttributePolicy, condT
 // non-degenerate (1000+ distinct IDs).
 func buildMatchingCollectorList(ns string, n int) []*fleetmanagementv1alpha1.Collector {
 	out := make([]*fleetmanagementv1alpha1.Collector, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out = append(out, &fleetmanagementv1alpha1.Collector{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      fmt.Sprintf("collector-%05d", i),

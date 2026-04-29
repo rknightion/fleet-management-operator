@@ -328,11 +328,9 @@ func TestHTTPSource_ContextCancellation(t *testing.T) {
 		fetchErr error
 		wg       sync.WaitGroup
 	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, fetchErr = src.Fetch(ctx)
-	}()
+	})
 
 	// Give the server enough time to enter the handler before we cancel.
 	time.Sleep(50 * time.Millisecond)

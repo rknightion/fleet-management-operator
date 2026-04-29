@@ -164,7 +164,7 @@ func (r *Pipeline) validateConfigType() (admission.Warnings, error) {
 
 	case ConfigTypeOpenTelemetryCollector:
 		// OTEL configs must be valid YAML
-		var config map[string]interface{}
+		var config map[string]any
 		if err := yaml.Unmarshal([]byte(contents), &config); err != nil {
 			return nil, fmt.Errorf(
 				"configType is 'OpenTelemetryCollector' but contents is not valid YAML: %w", err)

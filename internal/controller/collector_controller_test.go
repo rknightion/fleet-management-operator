@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"slices"
 	"sync"
@@ -154,9 +155,7 @@ func (m *mockFleetCollectorClient) GetCollector(_ context.Context, id string) (*
 	cp := *c
 	if c.RemoteAttributes != nil {
 		cp.RemoteAttributes = make(map[string]string, len(c.RemoteAttributes))
-		for k, v := range c.RemoteAttributes {
-			cp.RemoteAttributes[k] = v
-		}
+		maps.Copy(cp.RemoteAttributes, c.RemoteAttributes)
 	}
 	return &cp, nil
 }
@@ -216,15 +215,11 @@ func (m *mockFleetCollectorClient) ListCollectors(_ context.Context, matchers []
 		cp := *c
 		if c.RemoteAttributes != nil {
 			cp.RemoteAttributes = make(map[string]string, len(c.RemoteAttributes))
-			for k, v := range c.RemoteAttributes {
-				cp.RemoteAttributes[k] = v
-			}
+			maps.Copy(cp.RemoteAttributes, c.RemoteAttributes)
 		}
 		if c.LocalAttributes != nil {
 			cp.LocalAttributes = make(map[string]string, len(c.LocalAttributes))
-			for k, v := range c.LocalAttributes {
-				cp.LocalAttributes[k] = v
-			}
+			maps.Copy(cp.LocalAttributes, c.LocalAttributes)
 		}
 		out = append(out, &cp)
 	}

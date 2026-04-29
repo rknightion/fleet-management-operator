@@ -63,28 +63,26 @@ var _ admission.Validator[*ExternalAttributeSync] = &externalAttributeSyncValida
 // ValidateCreate implements admission.Validator.
 func (v *externalAttributeSyncValidator) ValidateCreate(ctx context.Context, obj *ExternalAttributeSync) (admission.Warnings, error) {
 	externalattributesynclog.Info("validate create", "name", obj.Name)
-	warnings, err := obj.validateExternalAttributeSync()
-	if err != nil {
-		return warnings, err
+	if err := obj.validateExternalAttributeSync(); err != nil {
+		return nil, err
 	}
 	if err := runTenantChecks(ctx, v.checker, obj.Namespace, obj.Spec.Selector.Matchers, obj.Spec.Selector.CollectorIDs); err != nil {
-		return warnings, err
+		return nil, err
 	}
-	return warnings, nil
+	return nil, nil
 }
 
 // ValidateUpdate implements admission.Validator.
 func (v *externalAttributeSyncValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *ExternalAttributeSync) (admission.Warnings, error) {
 	externalattributesynclog.Info("validate update", "name", newObj.Name)
 	// All fields are mutable; re-run the full validation suite.
-	warnings, err := newObj.validateExternalAttributeSync()
-	if err != nil {
-		return warnings, err
+	if err := newObj.validateExternalAttributeSync(); err != nil {
+		return nil, err
 	}
 	if err := runTenantChecks(ctx, v.checker, newObj.Namespace, newObj.Spec.Selector.Matchers, newObj.Spec.Selector.CollectorIDs); err != nil {
-		return warnings, err
+		return nil, err
 	}
-	return warnings, nil
+	return nil, nil
 }
 
 // ValidateDelete implements admission.Validator.
@@ -94,28 +92,28 @@ func (v *externalAttributeSyncValidator) ValidateDelete(ctx context.Context, obj
 
 // validateExternalAttributeSync performs comprehensive validation of the
 // ExternalAttributeSync resource.
-func (r *ExternalAttributeSync) validateExternalAttributeSync() (admission.Warnings, error) {
+func (r *ExternalAttributeSync) validateExternalAttributeSync() error {
 	// 1. Schedule is required and parses as duration or cron.
 	if err := r.validateSchedule(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// 2-5. Source kind / kind-spec consistency / HTTP URL / HTTP method.
 	if err := r.validateSource(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// 6-8. Mapping: collectorIDField, attributeFields non-empty, reserved-prefix.
 	if err := r.validateMapping(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// 9-11. Selector non-empty, matcher syntax+length, collectorIDs non-empty.
 	if err := r.validateExternalSyncSelector(); err != nil {
-		return nil, err
+		return err
 	}
 
-	return nil, nil
+	return nil
 }
 
 // validateSchedule enforces:

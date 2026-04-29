@@ -135,13 +135,7 @@ func (r *CollectorDiscoveryReconciler) now() time.Time {
 	return time.Now()
 }
 
-func (r *CollectorDiscoveryReconciler) emitEvent(object runtime.Object, eventtype, reason, message string) {
-	if r.Recorder != nil {
-		r.Recorder.Event(object, eventtype, reason, message)
-	}
-}
-
-func (r *CollectorDiscoveryReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+func (r *CollectorDiscoveryReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
 		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
 	}
@@ -527,14 +521,14 @@ func (r *CollectorDiscoveryReconciler) processStale(
 // merge patch on metadata.annotations. No-op if already set so repeated
 // reconciles are quiet.
 func (r *CollectorDiscoveryReconciler) setStaleAnnotation(ctx context.Context, cr *fleetmanagementv1alpha1.Collector) error {
-	if cr.Annotations[fleetmanagementv1alpha1.DiscoveryStaleAnnotation] == "true" {
+	if cr.Annotations[fleetmanagementv1alpha1.DiscoveryStaleAnnotation] == fleetmanagementv1alpha1.DiscoveryStaleAnnotationValue {
 		return nil
 	}
 	patch := client.MergeFrom(cr.DeepCopy())
 	if cr.Annotations == nil {
 		cr.Annotations = make(map[string]string)
 	}
-	cr.Annotations[fleetmanagementv1alpha1.DiscoveryStaleAnnotation] = "true"
+	cr.Annotations[fleetmanagementv1alpha1.DiscoveryStaleAnnotation] = fleetmanagementv1alpha1.DiscoveryStaleAnnotationValue
 	if err := r.Patch(ctx, cr, patch); err != nil {
 		return fmt.Errorf("set stale annotation on %s/%s: %w", cr.Namespace, cr.Name, err)
 	}

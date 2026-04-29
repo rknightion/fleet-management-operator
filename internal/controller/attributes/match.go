@@ -19,6 +19,7 @@ package attributes
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -43,10 +44,8 @@ type Selector struct {
 // the collector's ID directly; otherwise key lookups go through the supplied
 // attrs map.
 func (s Selector) Match(collectorID string, attrs map[string]string) bool {
-	for _, id := range s.CollectorIDs {
-		if id == collectorID {
-			return true
-		}
+	if slices.Contains(s.CollectorIDs, collectorID) {
+		return true
 	}
 
 	if len(s.Matchers) == 0 {

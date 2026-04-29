@@ -487,7 +487,7 @@ func TestRemoteAttributePolicy_ValidateDelete(t *testing.T) {
 // without going through the OpenAPI layer).
 func TestRemoteAttributePolicy_validateAttributes_DefenseInDepth(t *testing.T) {
 	attrs := make(map[string]string, collectorMaxRemoteAttributes+1)
-	for i := 0; i < collectorMaxRemoteAttributes+1; i++ {
+	for i := range collectorMaxRemoteAttributes + 1 {
 		// fmtKey/itoa are defined in collector_webhook_test.go (same package).
 		attrs[fmtKey(i)] = "v"
 	}
