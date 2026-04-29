@@ -24,13 +24,15 @@ import (
 	connect "connectrpc.com/connect"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // peerNameFromBaseURL extracts the host portion of the configured Fleet
-// Management base URL for use as the OTel net.peer.name attribute. If parsing
-// fails, the raw value is returned (with any scheme stripped) so the attribute
-// is never empty for a non-empty input.
+// Management base URL for use as the OTel server.address (and legacy
+// net.peer.name) span attribute. If parsing fails, the raw value is returned
+// (with any scheme stripped) so the attribute is never empty for a non-empty
+// input.
 func peerNameFromBaseURL(baseURL string) string {
 	if baseURL == "" {
 		return ""
@@ -72,8 +74,12 @@ func splitProcedure(procedure string) (service, method string) {
 // tracer is supplied (the default) the interceptor adds no overhead beyond a
 // nil-safe function call.
 //
-// peerName is attached as net.peer.name on every span and is computed once at
-// client construction so we do not re-parse the base URL on every call.
+// The peer host is computed once at client construction so we do not re-parse
+// the base URL on every call. It is attached as BOTH server.address (the
+// modern OTel semconv name, v1.21.0+) and net.peer.name (the legacy name).
+// Dual emission keeps modern dashboards (which filter on server.address)
+// working alongside any older dashboards that still query net.peer.name.
+// Drop net.peer.name once all consuming dashboards have migrated.
 func tracingInterceptor(tracer trace.Tracer, baseURL string) connect.UnaryInterceptorFunc {
 	peerName := peerNameFromBaseURL(baseURL)
 	return func(next connect.UnaryFunc) connect.UnaryFunc {
@@ -88,6 +94,10 @@ func tracingInterceptor(tracer trace.Tracer, baseURL string) connect.UnaryInterc
 				attribute.String("rpc.method", method),
 			}
 			if peerName != "" {
+				// Modern semconv name (v1.21.0+).
+				attrs = append(attrs, semconv.ServerAddress(peerName))
+				// Legacy semconv name retained for backward-compatible
+				// dashboards. Safe to remove once consumers migrate.
 				attrs = append(attrs, attribute.String("net.peer.name", peerName))
 			}
 			ctx, span := tracer.Start(ctx, procedure,
@@ -99,8 +109,10 @@ func tracingInterceptor(tracer trace.Tracer, baseURL string) connect.UnaryInterc
 			if err != nil {
 				// Mirror what metrics.go does: extract the connect status
 				// code (CodeOf returns CodeUnknown for non-connect errors,
-				// which is still useful information).
-				span.SetAttributes(attribute.String("rpc.connect.status_code", connect.CodeOf(err).String()))
+				// which is still useful information). The OTel semconv
+				// attribute key is rpc.connect_rpc.error_code (RPCConnectRPC
+				// ErrorCodeKey) — NOT "rpc.connect.status_code".
+				span.SetAttributes(semconv.RPCConnectRPCErrorCodeKey.String(connect.CodeOf(err).String()))
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 			}

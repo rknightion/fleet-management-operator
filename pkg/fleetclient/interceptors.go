@@ -30,14 +30,22 @@ import (
 // limiter before each outgoing call. When the limiter is shared across multiple
 // service clients (Pipeline + Collector), the 3 req/s budget is enforced as a
 // single global rate, not per-service.
+//
+// The wait-time histogram is observed unconditionally — using a snapshot of
+// time.Since(waitStart) taken immediately after Wait returns — so it fires on
+// BOTH the success and the error path. The error path covers ctx cancellation
+// during shutdown and deadline expiry; without this, long waits that get
+// cancelled would never be recorded, making the limiter appear free even
+// when it was the dominant cost during a Fleet API outage or starvation.
 func rateLimitInterceptor(limiter *rate.Limiter) connect.UnaryInterceptorFunc {
 	return func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 			waitStart := time.Now()
-			if err := limiter.Wait(ctx); err != nil {
+			err := limiter.Wait(ctx)
+			fleetAPIRateLimiterWait.Observe(time.Since(waitStart).Seconds())
+			if err != nil {
 				return nil, fmt.Errorf("rate limiter error: %w", err)
 			}
-			fleetAPIRateLimiterWait.Observe(time.Since(waitStart).Seconds())
 			return next(ctx, req)
 		}
 	}

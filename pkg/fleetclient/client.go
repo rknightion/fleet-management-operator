@@ -82,6 +82,13 @@ type Client struct {
 
 // Limiter returns the rate.Limiter used by this client. Exposed for
 // observability instrumentation (OBS category) and testing.
+//
+// The returned limiter is goroutine-safe for read operations (Wait, Allow,
+// Reserve, Burst, Limit). Calling SetLimit or SetBurst on it at runtime is
+// UNSUPPORTED and will silently break the configured rps budget — concurrent
+// callers may race with the configuration change, and the rate already used
+// to construct the client (e.g. the Helm chart's apiRatePerSecond) becomes
+// stale. To change the rate, construct a new Client instead.
 func (c *Client) Limiter() *rate.Limiter { return c.limiter }
 
 // NewClient creates a new Fleet Management API client.
