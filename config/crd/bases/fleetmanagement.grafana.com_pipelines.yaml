@@ -20,6 +20,9 @@ spec:
     - jsonPath: .spec.enabled
       name: Enabled
       type: boolean
+    - jsonPath: .spec.paused
+      name: Paused
+      type: boolean
     - jsonPath: .spec.configType
       name: Config Type
       type: string
@@ -94,6 +97,14 @@ spec:
                   Name of the pipeline (unique identifier in Fleet Management)
                   If not specified, uses metadata.name
                 type: string
+              paused:
+                default: false
+                description: |-
+                  Paused suspends reconciliation. When true, the Pipeline controller does not
+                  sync this resource to Fleet Management. Set by PipelineDiscovery when
+                  importMode=ReadOnly; users may set the import-mode annotation to "adopt" on
+                  individual Pipeline CRs to resume management without clearing this field.
+                type: boolean
               source:
                 description: |-
                   Source specifies the origin of the pipeline (Git, Terraform, Kubernetes, etc.)

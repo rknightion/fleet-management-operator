@@ -47,6 +47,12 @@ make lint-fix
 
 # End-to-end tests (requires Kind; creates cluster fm-crd-test-e2e automatically)
 make test-e2e
+
+# Regenerate docs/events.md and other generated docs
+make docs
+
+# Regenerate Helm chart README from README.md.gotmpl (requires helm-docs)
+helm-docs --chart-search-root charts/
 ```
 
 ## Code Style
@@ -266,17 +272,32 @@ env:
 ## Project Structure
 
 ```
-api/v1alpha1/                          # CRD types and webhooks
-internal/controller/                   # Reconciliation logic
+api/v1alpha1/                          # CRD types and webhooks (see api/v1alpha1/CLAUDE.md)
+cmd/                                   # main.go — flag wiring and controller registration
+internal/controller/                   # Reconciliation logic (see internal/controller/CLAUDE.md)
 internal/controller/attributes/        # Attribute diff/merge/match helpers
 internal/controller/discovery/         # CollectorDiscovery naming helpers
-pkg/fleetclient/                       # Fleet Management API client
+internal/tenant/                       # TenantPolicy subject-matcher checker
+pkg/fleetclient/                       # Fleet Management API client (see pkg/CLAUDE.md)
 pkg/sources/                           # External source plugins (HTTP, SQL)
-config/crd/                            # Generated CRD manifests
+config/crd/                            # Generated CRD manifests (not managed by Helm upgrade)
 config/rbac/                           # RBAC roles
 config/manager/                        # Controller deployment
 config/samples/                        # Example CRs
+charts/fleet-management-operator/      # Helm chart (see charts/fleet-management-operator/CLAUDE.md)
+docs/                                  # Runbooks, API reference, conditions, events, flags, metrics
 ```
+
+## Sub-directory CLAUDE.md Files
+
+Deeper context is in sub-directory files auto-discovered by Claude Code:
+
+| File | When to read |
+|------|-------------|
+| `api/v1alpha1/CLAUDE.md` | Adding/modifying CRD types or webhooks |
+| `internal/controller/CLAUDE.md` | Adding/modifying controllers or reconcile logic |
+| `pkg/CLAUDE.md` | Working on the Fleet API client or external source plugins |
+| `charts/fleet-management-operator/CLAUDE.md` | Helm chart values, templates, or release |
 
 ## Collector / RemoteAttributePolicy / ExternalAttributeSync
 
@@ -285,6 +306,7 @@ Three additional CRDs manage collector remote attributes. They are individually 
 - `controllers.remoteAttributePolicy.enabled` → `--enable-policy-controller`
 - `controllers.externalAttributeSync.enabled` → `--enable-external-sync-controller`
 - `controllers.collectorDiscovery.enabled` → `--enable-collector-discovery-controller`
+- `controllers.pipelineDiscovery.enabled` → `--enable-pipeline-discovery-controller`
 
 Default-off so existing chart installs see no behavior change. CRDs always install with the chart.
 

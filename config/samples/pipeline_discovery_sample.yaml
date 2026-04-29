@@ -1,0 +1,13 @@
+apiVersion: fleetmanagement.grafana.com/v1alpha1
+kind: PipelineDiscovery
+metadata:
+  name: import-alloy-pipelines
+  namespace: default
+spec:
+  pollInterval: 5m
+  importMode: ReadOnly
+  selector:
+    configType: Alloy
+    enabled: true
+  policy:
+    onPipelineRemoved: Keep

@@ -94,6 +94,7 @@ spec:
         - --enable-policy-controller={{ .Values.controllers.remoteAttributePolicy.enabled }}
         - --enable-external-sync-controller={{ .Values.controllers.externalAttributeSync.enabled }}
         - --enable-collector-discovery-controller={{ .Values.controllers.collectorDiscovery.enabled }}
+        - --enable-pipeline-discovery-controller={{ .Values.controllers.pipelineDiscovery.enabled }}
         - --enable-tenant-policy-enforcement={{ .Values.controllers.tenantPolicy.enabled }}
         - --fleet-api-rps={{ .Values.fleetManagement.apiRatePerSecond }}
         - --fleet-api-burst={{ .Values.fleetManagement.apiRateBurst }}

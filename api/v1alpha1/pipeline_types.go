@@ -41,6 +41,16 @@ const (
 	fleetAPIConfigTypeOTEL  = "CONFIG_TYPE_OTEL"
 )
 
+// Annotation keys used by PipelineDiscovery to control Pipeline reconciliation.
+// PipelineImportModeAnnotation is checked by the Pipeline controller: when
+// spec.paused=true and this annotation is "adopt", reconciliation proceeds
+// anyway, allowing per-pipeline promotion from ReadOnly to managed status.
+const (
+	PipelineImportModeAnnotation         = "fleetmanagement.grafana.com/import-mode"
+	PipelineImportModeAnnotationReadOnly = "read-only"
+	PipelineImportModeAnnotationAdopt    = "adopt"
+)
+
 // SourceType represents the origin source of the pipeline
 // +kubebuilder:validation:Enum=Git;Terraform;Kubernetes;Unspecified
 type SourceType string
@@ -176,6 +186,14 @@ type PipelineSpec struct {
 	// Used for tracking and grouping pipelines by their source
 	// +optional
 	Source *PipelineSource `json:"source,omitempty"`
+
+	// Paused suspends reconciliation. When true, the Pipeline controller does not
+	// sync this resource to Fleet Management. Set by PipelineDiscovery when
+	// importMode=ReadOnly; users may set the import-mode annotation to "adopt" on
+	// individual Pipeline CRs to resume management without clearing this field.
+	// +optional
+	// +kubebuilder:default=false
+	Paused bool `json:"paused,omitempty"`
 }
 
 // PipelineStatus defines the observed state of Pipeline.
@@ -217,6 +235,7 @@ type PipelineStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=fmp
 // +kubebuilder:printcolumn:name="Enabled",type="boolean",JSONPath=".spec.enabled"
+// +kubebuilder:printcolumn:name="Paused",type="boolean",JSONPath=".spec.paused"
 // +kubebuilder:printcolumn:name="Config Type",type="string",JSONPath=".spec.configType"
 // +kubebuilder:printcolumn:name="Fleet ID",type="string",JSONPath=".status.id"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"

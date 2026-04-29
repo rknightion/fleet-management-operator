@@ -87,6 +87,7 @@ func main() {
 	var enablePolicyController bool
 	var enableExternalSyncController bool
 	var enableCollectorDiscoveryController bool
+	var enablePipelineDiscoveryController bool
 	var enableTenantPolicyEnforcement bool
 	var fleetAPIRPS float64
 	var fleetAPIBurst int
@@ -124,6 +125,8 @@ func main() {
 		"Enable the ExternalAttributeSync reconciler and webhook (HTTP/SQL-backed scheduled attribute pulls).")
 	flag.BoolVar(&enableCollectorDiscoveryController, "enable-collector-discovery-controller", false,
 		"Enable the CollectorDiscovery reconciler and webhook (auto-mirrors Fleet Management collectors as Collector CRs).")
+	flag.BoolVar(&enablePipelineDiscoveryController, "enable-pipeline-discovery-controller", false,
+		"Enable the PipelineDiscovery controller (polls Fleet Management ListPipelines and creates Pipeline CRs).")
 	flag.BoolVar(&enableTenantPolicyEnforcement, "enable-tenant-policy-enforcement", false,
 		"Enable TenantPolicy CRD validation and enforcement. When set, validating webhooks for "+
 			"Pipeline, RemoteAttributePolicy, and ExternalAttributeSync require that K8s subjects "+
@@ -279,7 +282,8 @@ func main() {
 		!enableCollectorController &&
 		!enablePolicyController &&
 		!enableExternalSyncController &&
-		!enableCollectorDiscoveryController {
+		!enableCollectorDiscoveryController &&
+		!enablePipelineDiscoveryController {
 		setupLog.Error(nil, "no controllers enabled; set at least one --enable-*-controller flag to true")
 		os.Exit(1)
 	}
@@ -550,6 +554,23 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "CollectorDiscovery")
 			os.Exit(1)
 		}
+	}
+
+	if enablePipelineDiscoveryController {
+		if err = (&controller.PipelineDiscoveryReconciler{
+			Client:      mgr.GetClient(),
+			Scheme:      mgr.GetScheme(),
+			FleetClient: fleetClient,
+			Recorder:    mgr.GetEventRecorderFor("pipeline-discovery-controller"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "PipelineDiscovery")
+			os.Exit(1)
+		}
+	}
+
+	if err = (&fleetmanagementv1alpha1.PipelineDiscoveryValidator{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "PipelineDiscovery")
+		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
 

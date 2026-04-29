@@ -204,14 +204,19 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	// 4. Check if reconciliation is needed (observedGeneration pattern)
+	// 4. Check if reconciliation is paused
+	if isPaused(pipeline) {
+		return ctrl.Result{}, nil
+	}
+
+	// 5. Check if reconciliation is needed (observedGeneration pattern)
 	if pipeline.Status.ObservedGeneration == pipeline.Generation {
 		log.V(1).Info("pipeline already reconciled, skipping", "namespace", pipeline.Namespace, "name", pipeline.Name, "generation", pipeline.Generation)
 		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
-	// 5. Reconcile normal case. The inner helpers write to normalOutcome via
+	// 6. Reconcile normal case. The inner helpers write to normalOutcome via
 	// pointer so the deferred counter sees the precise reason (Synced,
 	// Recreated, RateLimited, ValidationError, SyncFailed) regardless of
 	// which exit path was taken.
@@ -613,6 +618,21 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	// Controller-runtime needs the original error for proper exponential backoff calculation
 	// Outcome counter (set above) is incremented by the deferred handler in Reconcile().
 	return ctrl.Result{}, originalErr
+}
+
+// isPaused reports whether the Pipeline's reconciliation is suspended.
+// spec.paused=true is overridden by the per-pipeline adopt annotation so
+// individual pipelines can be promoted from ReadOnly to managed status without
+// editing spec.
+func isPaused(pipeline *fleetmanagementv1alpha1.Pipeline) bool {
+	if !pipeline.Spec.Paused {
+		return false
+	}
+	annotations := pipeline.GetAnnotations()
+	if annotations != nil && annotations[fleetmanagementv1alpha1.PipelineImportModeAnnotation] == fleetmanagementv1alpha1.PipelineImportModeAnnotationAdopt {
+		return false
+	}
+	return true
 }
 
 // SetupWithManager sets up the controller with the Manager.

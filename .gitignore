@@ -32,3 +32,5 @@ go.work
 creds.*
 secrets.*
 *.secret.*
+# Root-level values.yaml contains local secrets — never commit it
+values.yaml

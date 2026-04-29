@@ -47,6 +47,12 @@ type UpsertPipelineRequest struct {
 	ValidateOnly bool      `json:"validateOnly,omitempty"`
 }
 
+// ListPipelinesRequest filters the ListPipelines call. Nil fields mean no filter.
+type ListPipelinesRequest struct {
+	ConfigType *string // "CONFIG_TYPE_ALLOY" or "CONFIG_TYPE_OTEL"; nil = all
+	Enabled    *bool   // nil = all
+}
+
 // FleetAPIError represents an error from the Fleet Management API
 type FleetAPIError struct {
 	StatusCode int

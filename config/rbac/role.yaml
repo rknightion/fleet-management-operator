@@ -19,6 +19,7 @@ rules:
   - collectordiscoveries
   - collectors
   - externalattributesyncs
+  - pipelinediscoveries
   - pipelines
   - remoteattributepolicies
   verbs:
@@ -35,6 +36,7 @@ rules:
   - collectordiscoveries/status
   - collectors/status
   - externalattributesyncs/status
+  - pipelinediscoveries/status
   - pipelines/status
   - remoteattributepolicies/status
   - tenantpolicies/status

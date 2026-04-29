@@ -2,12 +2,8 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/fleetmanagement.grafana.com_collectordiscoveries.yaml
-- bases/fleetmanagement.grafana.com_collectors.yaml
-- bases/fleetmanagement.grafana.com_externalattributesyncs.yaml
 - bases/fleetmanagement.grafana.com_pipelines.yaml
-- bases/fleetmanagement.grafana.com_remoteattributepolicies.yaml
-- bases/fleetmanagement.grafana.com_tenantpolicies.yaml
+- bases/fleetmanagement.grafana.com_pipelinediscoveries.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

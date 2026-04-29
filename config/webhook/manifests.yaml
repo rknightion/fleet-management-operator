@@ -94,6 +94,27 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-fleetmanagement-grafana-com-v1alpha1-pipelinediscovery
+  failurePolicy: Fail
+  name: vpipelinediscovery.kb.io
+  rules:
+  - apiGroups:
+    - fleetmanagement.grafana.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - pipelinediscoveries
+  sideEffects: None
+  timeoutSeconds: 5
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-fleetmanagement-grafana-com-v1alpha1-remoteattributepolicy
   failurePolicy: Fail
   name: vremoteattributepolicy.kb.io

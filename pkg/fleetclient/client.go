@@ -217,3 +217,27 @@ func (c *Client) DeletePipeline(ctx context.Context, id string) error {
 	}
 	return fleetErr
 }
+
+// ListPipelines returns all pipelines matching the supplied filters.
+// Pagination note: the Fleet SDK's ListPipelinesRequest does not yet expose
+// page_token / page_size; responses for broad selectors may be large.
+func (c *Client) ListPipelines(ctx context.Context, req *ListPipelinesRequest) ([]*Pipeline, error) {
+	protoReq := &pipelinev1.ListPipelinesRequest{}
+	if req != nil && req.ConfigType != nil {
+		ct := configTypeStringToProto(*req.ConfigType)
+		protoReq.ConfigType = &ct
+	}
+	if req != nil && req.Enabled != nil {
+		protoReq.Enabled = req.Enabled
+	}
+	resp, err := c.pipeline.ListPipelines(ctx, connect.NewRequest(protoReq))
+	if err != nil {
+		return nil, connectErrToFleetErr(err, "ListPipelines", "")
+	}
+	protoPipelines := resp.Msg.GetPipelines()
+	out := make([]*Pipeline, 0, len(protoPipelines))
+	for _, pp := range protoPipelines {
+		out = append(out, pipelineFromProto(pp))
+	}
+	return out, nil
+}

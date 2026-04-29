@@ -107,8 +107,9 @@ fleetManagement:
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
-  # controller-runtime in-cluster config reads from the mounted SA token; must be true.
-  automount: true
+  # automount: false — operator uses in-cluster kubeconfig via controller-runtime;
+  # mounting the SA token unnecessarily expands the blast radius of a container compromise.
+  automount: false
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -369,6 +370,15 @@ controllers:
     # -- Max concurrent reconciles for CollectorDiscovery. Keep at 1:
     # concurrency > 1 triggers multiple ListCollectors per poll cycle without
     # benefit.
+    maxConcurrent: 1
+  pipelineDiscovery:
+    # -- Enable the PipelineDiscovery reconciler and its admission webhook.
+    # Polls Fleet Management ListPipelines and creates Pipeline CRs for each
+    # discovered pipeline.
+    enabled: true
+    # -- Max concurrent reconciles for PipelineDiscovery. Keep at 1:
+    # concurrency > 1 triggers multiple ListPipelines calls per poll cycle
+    # without benefit.
     maxConcurrent: 1
   tenantPolicy:
     # -- Enable TenantPolicy enforcement. When set, validating webhooks for
