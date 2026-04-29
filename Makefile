@@ -102,6 +102,18 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+.PHONY: chart-docs
+chart-docs: helm-docs ## Regenerate the Helm chart README from values.yaml + README.md.gotmpl.
+	"$(HELM_DOCS)" --chart-search-root charts
+
+.PHONY: chart-docs-check
+chart-docs-check: helm-docs ## Verify the chart README is up to date with values.yaml.
+	@"$(HELM_DOCS)" --chart-search-root charts --dry-run > /tmp/helm-docs.expected
+	@diff -q /tmp/helm-docs.expected charts/fleet-management-operator/README.md > /dev/null 2>&1 || { \
+		echo "charts/fleet-management-operator/README.md is out of date. Run 'make chart-docs'."; \
+		exit 1; \
+	}
+
 ##@ Build
 
 .PHONY: build
@@ -216,10 +228,12 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+HELM_DOCS = $(LOCALBIN)/helm-docs
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.7.1
 CONTROLLER_TOOLS_VERSION ?= v0.20.0
+HELM_DOCS_VERSION ?= v1.14.2
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
@@ -259,6 +273,11 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: helm-docs
+helm-docs: $(HELM_DOCS) ## Download helm-docs locally if necessary.
+$(HELM_DOCS): $(LOCALBIN)
+	$(call go-install-tool,$(HELM_DOCS),github.com/norwoodj/helm-docs/cmd/helm-docs,$(HELM_DOCS_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

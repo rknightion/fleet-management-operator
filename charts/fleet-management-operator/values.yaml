@@ -25,40 +25,46 @@
 # chart will fail-fast on render if image.digest is set AND image.repository
 # already contains "@", to surface the conflict early.
 image:
+  # -- Container image repository.
   repository: fleet-management-operator
+  # -- Image pull policy.
   pullPolicy: IfNotPresent
+  # -- Image tag. Ignored when `image.digest` is set.
   tag: "dev-v1.0.0"
-  # digest: ""  # When set, overrides tag. Use sha256:<hex>.
+  # -- (string) Image digest pin (e.g. `sha256:<hex>`). Recommended for production.
+  # digest: ""
 
-# Image pull secrets for private / air-gapped registries.
+# -- Image pull secrets for private / air-gapped registries.
 imagePullSecrets: []
 # - name: regcred
 
-# Override the chart name
+# -- Override the chart name (defaults to "fleet-management-operator").
 nameOverride: ""
+# -- Override the chart fullname (defaults to "<release-name>-fleet-management-operator").
 fullnameOverride: ""
 
-# Number of operator replicas (only 1 should be active due to leader election)
+# -- Number of operator replicas. Only one is active at a time via leader election.
+# Set > 1 for HA — also see `podDisruptionBudget` and `affinity.podAntiAffinity`.
 replicaCount: 1
 
 # Fleet Management API credentials
 # These can be provided via values or existingSecret
 fleetManagement:
-  # Base URL for Fleet Management API
-  # Example: https://fleet-management-prod-us-central-0.grafana.net/pipeline.v1.PipelineService/
+  # -- Fleet Management API base URL. Required unless `existingSecret` is set.
+  # Example: `https://fleet-management-prod-us-central-0.grafana.net/pipeline.v1.PipelineService/`
   baseUrl: ""
 
-  # Grafana Cloud Stack ID
+  # -- Grafana Cloud Stack ID. Required unless `existingSecret` is set.
   username: ""
 
-  # Grafana Cloud API token
+  # -- Grafana Cloud API token. Required unless `existingSecret` is set.
   password: ""
 
-  # Use existing secret instead of creating one
-  # If set, baseUrl, username, and password are ignored
+  # -- Use a pre-existing Secret for credentials instead of creating one. When set,
+  # `baseUrl` / `username` / `password` are ignored.
   existingSecret: ""
 
-  # Keys in the existing secret
+  # -- Keys to read from `existingSecret`. Override only if your secret uses different keys.
   existingSecretKeys:
     baseUrl: base-url
     username: username
@@ -72,7 +78,12 @@ fleetManagement:
   # apiRateBurst: burst tokens available at startup/restart before the
   # sustained RPS ceiling applies. burst=1 causes livelock at scale (request
   # queue backs up until requests hit the 30s HTTP timeout).
+  # -- Sustained Fleet Management API rate limit in requests per second. Match
+  # this to your stack's server-side `api:` rate setting. Standard stacks: 3.
   apiRatePerSecond: 3
+  # -- Token bucket size for the Fleet API rate limiter. Absorbs startup /
+  # post-restart spikes without changing the sustained RPS ceiling. burst=1
+  # causes livelock at scale (request queue backs up to the 30s HTTP timeout).
   apiRateBurst: 50
 
 # Service Account configuration
@@ -119,6 +130,8 @@ securityContext:
 #            burst headroom for restarts, GC pause spikes, and large
 #            ListCollectors responses)
 # requests.memory stays at 512Mi: steady-state working set after warm-up.
+# -- Pod CPU/memory resource requests and limits. Defaults are tuned for the
+# 30k-Collector tier; see the inline sizing comment above for smaller fleets.
 resources:
   limits:
     cpu: 500m
@@ -235,78 +248,79 @@ rbac:
 # Default: controller-runtime auto-generates self-signed certs (dev/test only).
 # Production: enable cert-manager or provide manual certs to avoid cert mismatch on restart.
 webhook:
-  # Port the webhook server listens on. Must match service-webhook.yaml targetPort.
+  # -- Port the webhook server listens on inside the pod. Wired into both the
+  # `--webhook-port` flag and the Service `targetPort`.
   port: 9443
-  # cert-manager managed certificates (recommended for production HA).
-  # Requires cert-manager to be installed in the cluster.
   certManager:
+    # -- Use cert-manager to issue and rotate webhook TLS certs. Recommended
+    # for HA (replicas > 1) — controller-runtime's in-memory self-signed
+    # fallback regenerates per pod, breaking webhook calls under HA.
+    # Requires cert-manager to be installed in the cluster.
     enabled: false
-    # Reference to a cert-manager Issuer or ClusterIssuer.
-    # Create this Issuer/ClusterIssuer before enabling.
+    # -- Reference to an existing cert-manager `Issuer` or `ClusterIssuer`.
+    # Create the issuer before enabling.
     issuerRef:
       name: selfsigned-issuer
       kind: ClusterIssuer
-  # Directory containing webhook TLS cert files (tls.crt, tls.key).
-  # When set, passed as --webhook-cert-path to the manager.
-  # Leave empty to use controller-runtime's auto-generated self-signed certs.
+  # -- Directory containing webhook TLS cert files (tls.crt, tls.key). When
+  # set, passed as `--webhook-cert-path` to the manager. Leave empty to use
+  # controller-runtime's auto-generated self-signed certs (dev/test only).
+  # Mutually exclusive with `webhook.certManager.enabled`.
   certDir: ""
 
 # Controllers and webhooks are individually opt-in. New controllers default to
 # disabled so existing chart installs see no behavior change. Flip the
 # matching key to true to enable that controller, its webhook, and its RBAC.
 controllers:
-  # Pipeline reconciler. Existing behavior, default on.
   pipeline:
+    # -- Enable the Pipeline reconciler and its admission webhook. The core controller; default on.
     enabled: true
-  # Collector reconciler. Manages remote attributes on a registered collector.
   collector:
+    # -- Enable the Collector reconciler and its admission webhook. Manages
+    # remote attributes on a registered collector.
     enabled: false
-  # RemoteAttributePolicy reconciler. Bulk attribute assignment by selector.
-  # Reserved for a later phase; present here for forward-compatible values.
   remoteAttributePolicy:
+    # -- Enable the RemoteAttributePolicy reconciler and its admission webhook.
+    # Bulk attribute assignment by selector across many Collectors.
     enabled: false
-    # Max concurrent reconciles. Safe to increase: reconciles are pure K8s
-    # cache reads with no Fleet API calls. Pipeline and Collector always run
-    # at 1 because they share the Fleet API rate budget.
+    # -- Max concurrent reconciles for RemoteAttributePolicy. Safe to increase:
+    # reconciles are pure K8s cache reads with no Fleet API calls. Pipeline
+    # and Collector always run at 1 because they share the Fleet API rate budget.
     maxConcurrent: 4
-  # ExternalAttributeSync reconciler. Pulls attributes from CMDB / SQL / HTTP
-  # sources on a schedule. Reserved for a later phase.
   externalAttributeSync:
+    # -- Enable the ExternalAttributeSync reconciler and its admission webhook.
+    # Pulls attributes from CMDB / SQL / HTTP sources on a schedule.
     enabled: false
-    # Max concurrent reconciles. Safe to increase: Fetch calls are per-source.
+    # -- Max concurrent reconciles for ExternalAttributeSync. Safe to increase:
+    # Fetch calls are per-source.
     maxConcurrent: 4
-    # Per-target rate limit (tokens/sec). Two syncs that resolve to the same
-    # upstream (HTTP host or SQL secret) share a token bucket so a restart
-    # wave or batched spec edit cannot stampede a customer-owned source.
-    # 0 (default) disables per-target limiting; the operator controller-runtime
-    # workqueue and the reconciler's MaxConcurrentReconciles still apply.
-    # Set to 1 for one fetch/sec/upstream — typically plenty since sync
-    # schedules run every minute or longer.
+    # -- Per-target rate limit (tokens/sec). Two syncs that resolve to the same
+    # upstream share a token bucket so a restart wave cannot stampede a customer
+    # source. 0 (default) disables per-target limiting. Set to 1 for one
+    # fetch/sec/upstream — typically plenty since sync schedules run every
+    # minute or longer.
     sourceTargetRate: 0
-    # Token bucket size for the per-target limiter. Ignored when
-    # sourceTargetRate is 0. Default 4 = matches maxConcurrent so a single
-    # concurrency generation passes through immediately.
+    # -- Token bucket size for the per-target limiter. Ignored when
+    # `sourceTargetRate` is 0. Default 4 matches `maxConcurrent` so a single
+    # concurrency generation passes through immediately, then refills at
+    # `sourceTargetRate` per second.
     sourceTargetBurst: 4
-  # CollectorDiscovery reconciler. Periodically calls Fleet Management's
-  # ListCollectors and mirrors each result as a Collector CR. Requires
-  # controllers.collector.enabled=true (the manager startup will refuse
-  # to run otherwise — discovery without the Collector reconciler would
-  # create CRs that nobody acts on).
   collectorDiscovery:
-    # REQUIRES controllers.collector.enabled: true.
-    # The manager will refuse to start if collectorDiscovery is enabled without collector —
-    # discovery creates Collector CRs that nobody reconciles without the Collector controller.
+    # -- Enable the CollectorDiscovery reconciler and its admission webhook.
+    # **REQUIRES `controllers.collector.enabled: true`.** The manager refuses
+    # to start otherwise — discovery would create Collector CRs that no
+    # controller acts on.
     enabled: false
-    # Keep at 1: concurrency > 1 triggers multiple ListCollectors per poll cycle.
+    # -- Max concurrent reconciles for CollectorDiscovery. Keep at 1:
+    # concurrency > 1 triggers multiple ListCollectors per poll cycle without
+    # benefit.
     maxConcurrent: 1
-  # TenantPolicy enforcement. When enabled, the validating webhooks for
-  # Pipeline, RemoteAttributePolicy, and ExternalAttributeSync require K8s
-  # subjects matched by a TenantPolicy CR to include at least one of the
-  # policy's required matchers in their CR matcher set. Default-allow when
-  # no policy matches the request, so existing installs see no behavior
-  # change until at least one TenantPolicy is created. Cluster-scoped CRD;
-  # standard K8s RBAC controls who can create/edit policies.
   tenantPolicy:
+    # -- Enable TenantPolicy enforcement. When set, validating webhooks for
+    # Pipeline / RemoteAttributePolicy / ExternalAttributeSync require K8s
+    # subjects matched by a TenantPolicy CR to include at least one of the
+    # policy's required matchers. Default-allow when no policy matches; the
+    # CRD is always installed so policies can be authored ahead of enforcement.
     enabled: false
 
 # Grafana dashboard ConfigMap. Picked up automatically by the Grafana sidecar

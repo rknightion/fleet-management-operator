@@ -1,24 +1,17 @@
-# fleet-management-operator
+{{ template "chart.header" . }}
+{{ template "chart.deprecationWarning" . }}
 
-![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.1.0](https://img.shields.io/badge/AppVersion-v0.1.0-informational?style=flat-square)
+{{ template "chart.badgesSection" . }}
 
-A Kubernetes operator for managing Grafana Cloud Fleet Management Pipelines
+{{ template "chart.description" . }}
 
-**Homepage:** <https://github.com/grafana/fleet-management-operator>
+{{ template "chart.homepageLine" . }}
 
-## Maintainers
+{{ template "chart.maintainersSection" . }}
 
-| Name | Email | Url |
-| ---- | ------ | --- |
-| Grafana Labs | <platform-observability@grafana.com> |  |
+{{ template "chart.sourcesSection" . }}
 
-## Source Code
-
-* <https://github.com/grafana/fleet-management-operator>
-
-## Requirements
-
-Kubernetes: `>=1.23.0-0`
+{{ template "chart.requirementsSection" . }}
 
 ## Prerequisites
 
@@ -131,89 +124,7 @@ that enforces required-matcher constraints on Pipeline / RemoteAttributePolicy /
 ExternalAttributeSync. The TenantPolicy CRD is always installed; only enforcement
 is gated by the flag.
 
-## Values
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| affinity | object | `{}` |  |
-| alerts.enabled | bool | `false` |  |
-| alerts.labels | object | `{}` |  |
-| controllers.collector.enabled | bool | `false` | Enable the Collector reconciler and its admission webhook. Manages remote attributes on a registered collector. |
-| controllers.collectorDiscovery.enabled | bool | `false` | Enable the CollectorDiscovery reconciler and its admission webhook. **REQUIRES `controllers.collector.enabled: true`.** The manager refuses to start otherwise — discovery would create Collector CRs that no controller acts on. |
-| controllers.collectorDiscovery.maxConcurrent | int | `1` | Max concurrent reconciles for CollectorDiscovery. Keep at 1: concurrency > 1 triggers multiple ListCollectors per poll cycle without benefit. |
-| controllers.externalAttributeSync.enabled | bool | `false` | Enable the ExternalAttributeSync reconciler and its admission webhook. Pulls attributes from CMDB / SQL / HTTP sources on a schedule. |
-| controllers.externalAttributeSync.maxConcurrent | int | `4` | Max concurrent reconciles for ExternalAttributeSync. Safe to increase: Fetch calls are per-source. |
-| controllers.externalAttributeSync.sourceTargetBurst | int | `4` | Token bucket size for the per-target limiter. Ignored when `sourceTargetRate` is 0. Default 4 matches `maxConcurrent` so a single concurrency generation passes through immediately, then refills at `sourceTargetRate` per second. |
-| controllers.externalAttributeSync.sourceTargetRate | int | `0` | Per-target rate limit (tokens/sec). Two syncs that resolve to the same upstream share a token bucket so a restart wave cannot stampede a customer source. 0 (default) disables per-target limiting. Set to 1 for one fetch/sec/upstream — typically plenty since sync schedules run every minute or longer. |
-| controllers.pipeline.enabled | bool | `true` | Enable the Pipeline reconciler and its admission webhook. The core controller; default on. |
-| controllers.remoteAttributePolicy.enabled | bool | `false` | Enable the RemoteAttributePolicy reconciler and its admission webhook. Bulk attribute assignment by selector across many Collectors. |
-| controllers.remoteAttributePolicy.maxConcurrent | int | `4` | Max concurrent reconciles for RemoteAttributePolicy. Safe to increase: reconciles are pure K8s cache reads with no Fleet API calls. Pipeline and Collector always run at 1 because they share the Fleet API rate budget. |
-| controllers.tenantPolicy.enabled | bool | `false` | Enable TenantPolicy enforcement. When set, validating webhooks for Pipeline / RemoteAttributePolicy / ExternalAttributeSync require K8s subjects matched by a TenantPolicy CR to include at least one of the policy's required matchers. Default-allow when no policy matches; the CRD is always installed so policies can be authored ahead of enforcement. |
-| fleetManagement.apiRateBurst | int | `50` | Token bucket size for the Fleet API rate limiter. Absorbs startup / post-restart spikes without changing the sustained RPS ceiling. burst=1 causes livelock at scale (request queue backs up to the 30s HTTP timeout). |
-| fleetManagement.apiRatePerSecond | int | `3` | Sustained Fleet Management API rate limit in requests per second. Match this to your stack's server-side `api:` rate setting. Standard stacks: 3. |
-| fleetManagement.baseUrl | string | `""` | Fleet Management API base URL. Required unless `existingSecret` is set. Example: `https://fleet-management-prod-us-central-0.grafana.net/pipeline.v1.PipelineService/` |
-| fleetManagement.existingSecret | string | `""` | Use a pre-existing Secret for credentials instead of creating one. When set, `baseUrl` / `username` / `password` are ignored. |
-| fleetManagement.existingSecretKeys | object | `{"baseUrl":"base-url","password":"password","username":"username"}` | Keys to read from `existingSecret`. Override only if your secret uses different keys. |
-| fleetManagement.password | string | `""` | Grafana Cloud API token. Required unless `existingSecret` is set. |
-| fleetManagement.username | string | `""` | Grafana Cloud Stack ID. Required unless `existingSecret` is set. |
-| fullnameOverride | string | `""` | Override the chart fullname (defaults to "<release-name>-fleet-management-operator"). |
-| grafana.dashboards.enabled | bool | `false` |  |
-| healthProbe.liveness.failureThreshold | int | `3` |  |
-| healthProbe.liveness.initialDelaySeconds | int | `45` |  |
-| healthProbe.liveness.periodSeconds | int | `20` |  |
-| healthProbe.liveness.timeoutSeconds | int | `1` |  |
-| healthProbe.port | int | `8081` |  |
-| healthProbe.readiness.failureThreshold | int | `3` |  |
-| healthProbe.readiness.initialDelaySeconds | int | `5` |  |
-| healthProbe.readiness.periodSeconds | int | `10` |  |
-| healthProbe.readiness.timeoutSeconds | int | `1` |  |
-| image.pullPolicy | string | `"IfNotPresent"` | Image pull policy. |
-| image.repository | string | `"fleet-management-operator"` | Container image repository. |
-| image.tag | string | `"dev-v1.0.0"` | Image tag. Ignored when `image.digest` is set. |
-| imagePullSecrets | list | `[]` | Image pull secrets for private / air-gapped registries. |
-| leaderElection.enabled | bool | `true` |  |
-| leaderElection.leaseDuration | string | `"15s"` |  |
-| leaderElection.renewDeadline | string | `"10s"` |  |
-| leaderElection.retryPeriod | string | `"2s"` |  |
-| logging.level | string | `"info"` |  |
-| metrics.enabled | bool | `true` |  |
-| metrics.port | int | `8080` |  |
-| metrics.secure | bool | `false` |  |
-| metrics.service.annotations | object | `{}` |  |
-| metrics.service.port | int | `8080` |  |
-| metrics.service.serviceMonitor.additionalLabels | object | `{}` |  |
-| metrics.service.serviceMonitor.enabled | bool | `false` |  |
-| metrics.service.serviceMonitor.interval | string | `"30s"` |  |
-| metrics.service.serviceMonitor.scrapeTimeout | string | `"10s"` |  |
-| metrics.service.type | string | `"ClusterIP"` |  |
-| nameOverride | string | `""` | Override the chart name (defaults to "fleet-management-operator"). |
-| nodeSelector | object | `{}` |  |
-| podAnnotations | object | `{}` |  |
-| podDisruptionBudget.enabled | bool | `false` |  |
-| podDisruptionBudget.minAvailable | int | `1` |  |
-| podLabels | object | `{}` |  |
-| podSecurityContext.fsGroup | int | `65532` |  |
-| podSecurityContext.runAsNonRoot | bool | `true` |  |
-| podSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
-| priorityClassName | string | `""` |  |
-| rbac.create | bool | `true` |  |
-| replicaCount | int | `1` | Number of operator replicas. Only one is active at a time via leader election. Set > 1 for HA — also see `podDisruptionBudget` and `affinity.podAntiAffinity`. |
-| resources | object | `{"limits":{"cpu":"500m","memory":"2Gi"},"requests":{"cpu":"10m","memory":"512Mi"}}` | Pod CPU/memory resource requests and limits. Defaults are tuned for the 30k-Collector tier; see the inline sizing comment above for smaller fleets. |
-| securityContext.allowPrivilegeEscalation | bool | `false` |  |
-| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
-| securityContext.readOnlyRootFilesystem | bool | `true` |  |
-| securityContext.runAsGroup | int | `65532` |  |
-| securityContext.runAsUser | int | `65532` |  |
-| serviceAccount.annotations | object | `{}` |  |
-| serviceAccount.automount | bool | `false` |  |
-| serviceAccount.create | bool | `true` |  |
-| serviceAccount.name | string | `""` |  |
-| terminationGracePeriodSeconds | int | `30` |  |
-| tolerations | list | `[]` |  |
-| webhook.certDir | string | `""` | Directory containing webhook TLS cert files (tls.crt, tls.key). When set, passed as `--webhook-cert-path` to the manager. Leave empty to use controller-runtime's auto-generated self-signed certs (dev/test only). Mutually exclusive with `webhook.certManager.enabled`. |
-| webhook.certManager.enabled | bool | `false` | Use cert-manager to issue and rotate webhook TLS certs. Recommended for HA (replicas > 1) — controller-runtime's in-memory self-signed fallback regenerates per pod, breaking webhook calls under HA. Requires cert-manager to be installed in the cluster. |
-| webhook.certManager.issuerRef | object | `{"kind":"ClusterIssuer","name":"selfsigned-issuer"}` | Reference to an existing cert-manager `Issuer` or `ClusterIssuer`. Create the issuer before enabling. |
-| webhook.port | int | `9443` | Port the webhook server listens on inside the pod. Wired into both the `--webhook-port` flag and the Service `targetPort`. |
+{{ template "chart.valuesSection" . }}
 
 ## Upgrading
 
@@ -477,3 +388,4 @@ kubectl get service -n fleet-management-system -l app.kubernetes.io/name=fleet-m
 For deeper troubleshooting, see [docs/troubleshooting.md](../../docs/troubleshooting.md)
 and the per-alert runbooks in [docs/runbooks/](../../docs/runbooks/).
 
+{{ template "helm-docs.versionFooter" . }}
