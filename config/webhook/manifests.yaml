@@ -13,7 +13,6 @@ webhooks:
       path: /validate-fleetmanagement-grafana-com-v1alpha1-collector
   failurePolicy: Fail
   name: vcollector.kb.io
-  timeoutSeconds: 5
   rules:
   - apiGroups:
     - fleetmanagement.grafana.com
@@ -25,6 +24,7 @@ webhooks:
     resources:
     - collectors
   sideEffects: None
+  timeoutSeconds: 5
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -34,7 +34,6 @@ webhooks:
       path: /validate-fleetmanagement-grafana-com-v1alpha1-collectordiscovery
   failurePolicy: Fail
   name: vcollectordiscovery.kb.io
-  timeoutSeconds: 5
   rules:
   - apiGroups:
     - fleetmanagement.grafana.com
@@ -46,6 +45,7 @@ webhooks:
     resources:
     - collectordiscoveries
   sideEffects: None
+  timeoutSeconds: 5
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -55,7 +55,6 @@ webhooks:
       path: /validate-fleetmanagement-grafana-com-v1alpha1-externalattributesync
   failurePolicy: Fail
   name: vexternalattributesync.kb.io
-  timeoutSeconds: 5
   rules:
   - apiGroups:
     - fleetmanagement.grafana.com
@@ -67,6 +66,7 @@ webhooks:
     resources:
     - externalattributesyncs
   sideEffects: None
+  timeoutSeconds: 5
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -76,7 +76,6 @@ webhooks:
       path: /validate-fleetmanagement-grafana-com-v1alpha1-pipeline
   failurePolicy: Fail
   name: vpipeline.kb.io
-  timeoutSeconds: 5
   rules:
   - apiGroups:
     - fleetmanagement.grafana.com
@@ -88,6 +87,7 @@ webhooks:
     resources:
     - pipelines
   sideEffects: None
+  timeoutSeconds: 5
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -97,7 +97,6 @@ webhooks:
       path: /validate-fleetmanagement-grafana-com-v1alpha1-remoteattributepolicy
   failurePolicy: Fail
   name: vremoteattributepolicy.kb.io
-  timeoutSeconds: 5
   rules:
   - apiGroups:
     - fleetmanagement.grafana.com
@@ -109,6 +108,7 @@ webhooks:
     resources:
     - remoteattributepolicies
   sideEffects: None
+  timeoutSeconds: 5
 - admissionReviewVersions:
   - v1
   clientConfig:
@@ -118,7 +118,6 @@ webhooks:
       path: /validate-fleetmanagement-grafana-com-v1alpha1-tenantpolicy
   failurePolicy: Fail
   name: vtenantpolicy.kb.io
-  timeoutSeconds: 5
   rules:
   - apiGroups:
     - fleetmanagement.grafana.com
@@ -130,3 +129,4 @@ webhooks:
     resources:
     - tenantpolicies
   sideEffects: None
+  timeoutSeconds: 5
