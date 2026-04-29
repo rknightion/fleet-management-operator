@@ -1,4 +1,4 @@
-{{- if or .Values.controllers.pipeline.enabled .Values.controllers.collector.enabled .Values.controllers.collectorDiscovery.enabled .Values.controllers.externalAttributeSync.enabled .Values.controllers.remoteAttributePolicy.enabled .Values.controllers.tenantPolicy.enabled }}
+{{- if include "fleet-management-operator.webhooksEnabled" . }}
 apiVersion: v1
 kind: Service
 metadata:

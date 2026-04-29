@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mock-fleet-api-tls
+spec:
+  dnsNames:
+  - mock-fleet-api.fm-crd-system.svc
+  - mock-fleet-api.fm-crd-system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: mock-fleet-api-selfsigned-issuer
+  secretName: mock-fleet-api-tls
+

@@ -1,0 +1,11 @@
+namePrefix: fleet-management-
+namespace: fm-crd-system
+
+resources:
+- ../../webhook
+- issuer.yaml
+- certificate.yaml
+
+patches:
+- path: webhookcainjection_patch.yaml
+

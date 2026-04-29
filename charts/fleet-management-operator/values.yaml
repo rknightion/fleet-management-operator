@@ -107,9 +107,10 @@ fleetManagement:
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
-  # automount: false — operator uses in-cluster kubeconfig via controller-runtime;
-  # mounting the SA token unnecessarily expands the blast radius of a container compromise.
-  automount: false
+  # automount must stay true unless you provide another Kubernetes client
+  # credential path. controller-runtime's in-cluster config reads the mounted
+  # service account token.
+  automount: true
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -225,6 +226,82 @@ metrics:
       # Scrape timeout
       scrapeTimeout: 10s
 
+# Optional NetworkPolicy hardening.
+#
+# Disabled by default so existing clusters without NetworkPolicy enforcement
+# keep current behavior. When enabled, the policy selects the operator pods and
+# only allows the ingress/egress rules below. Native Kubernetes NetworkPolicy
+# cannot match DNS names, so restrict Fleet/external destinations with
+# cluster-specific `to` selectors or `ipBlock` CIDRs when your CNI supports it.
+networkPolicy:
+  # -- Create a NetworkPolicy for the operator pods. Disabled by default.
+  enabled: false
+  ingress:
+    webhook:
+      # -- Allow Kubernetes API server admission calls to the webhook port.
+      # Add `from` peers to restrict this to control-plane/API-server CIDRs.
+      enabled: true
+      # from:
+      # - ipBlock:
+      #     cidr: 10.0.0.0/8
+      from: []
+    metrics:
+      # -- Allow Prometheus scrapes to the metrics port when metrics are enabled.
+      # Add `from` peers for Prometheus namespace/pod selectors or CIDRs.
+      enabled: true
+      # from:
+      # - namespaceSelector:
+      #     matchLabels:
+      #       kubernetes.io/metadata.name: monitoring
+      from: []
+    # -- Additional ingress rules appended verbatim to the NetworkPolicy.
+    extra: []
+  egress:
+    dns:
+      # -- Allow DNS lookups. Adjust `to` if your cluster DNS pods use
+      # different labels or run outside kube-system.
+      enabled: true
+      to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+      ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+    kubeAPI:
+      # -- Allow Kubernetes API access for controller-runtime watches and writes.
+      # Empty `to` allows any destination on TCP/443; set control-plane CIDRs or
+      # selectors for stricter clusters.
+      enabled: true
+      to: []
+      ports:
+      - protocol: TCP
+        port: 443
+    fleetAPI:
+      # -- Allow Fleet Management API access. Empty `to` allows any destination
+      # on TCP/443; set Grafana Cloud/private endpoint CIDRs where available.
+      enabled: true
+      to: []
+      ports:
+      - protocol: TCP
+        port: 443
+    # -- Egress rules for ExternalAttributeSync HTTP/SQL sources. Populate with
+    # the approved CMDB/database destinations before enabling those syncs.
+    externalSources: []
+    # - to:
+    #   - ipBlock:
+    #       cidr: 203.0.113.10/32
+    #   ports:
+    #   - protocol: TCP
+    #     port: 5432
+    # -- Additional egress rules appended verbatim to the NetworkPolicy.
+    extra: []
+
 # Node selector
 nodeSelector: {}
 
@@ -275,9 +352,11 @@ rbac:
   create: true
 
 # Webhook TLS configuration.
-# See docs/webhook-setup.md for cert-manager, manual, and self-signed strategies.
-# Default: controller-runtime auto-generates self-signed certs (dev/test only).
-# Production: enable cert-manager or provide manual certs to avoid cert mismatch on restart.
+# Fail-closed validating webhooks require a CA trusted by the Kubernetes API
+# server. The production default uses cert-manager CA injection. To run without
+# cert-manager, set certManager.enabled=false and provide all of: certDir,
+# certSecretName, and caBundle. The chart fails rendering webhook resources
+# without one of those CA paths.
 webhook:
   # -- Port the webhook server listens on inside the pod. Wired into both the
   # `--webhook-port` flag and the Service `targetPort`.
@@ -287,7 +366,7 @@ webhook:
     # for HA (replicas > 1) — controller-runtime's in-memory self-signed
     # fallback regenerates per pod, breaking webhook calls under HA.
     # Requires cert-manager to be installed in the cluster.
-    enabled: false
+    enabled: true
     # -- Reference to an existing cert-manager `Issuer` or `ClusterIssuer`.
     # Create the issuer before enabling.
     issuerRef:
@@ -315,6 +394,10 @@ webhook:
   # external Secret writes a non-default key name. Default `tls.key`
   # matches cert-manager and standard Secret-as-volume conventions.
   certKey: tls.key
+  # -- Base64-encoded PEM CA bundle for manual webhook TLS. Required when
+  # `webhook.certManager.enabled=false` and validating webhooks are rendered.
+  # Must trust the serving certificate in `webhook.certSecretName`.
+  caBundle: ""
 
 # -- Enable HTTP/2 on the metrics and webhook servers. Default `false`
 # mitigates the HTTP/2 Stream Cancellation (CVE GHSA-qppj-fm5r-hxr3) and
@@ -409,4 +492,3 @@ alerts:
 #     hand. See README "Uninstalling the Chart" for the exact commands.
 # This chart therefore does not expose crds.install / crds.keep — they would
 # have no effect.
-

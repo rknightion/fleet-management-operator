@@ -22,15 +22,27 @@ spec:
       - name: mock-api
         image: mock-fleet-api:test
         imagePullPolicy: Never
+        env:
+        - name: PORT
+          value: "8443"
+        - name: TLS_CERT_FILE
+          value: /tls/tls.crt
+        - name: TLS_KEY_FILE
+          value: /tls/tls.key
         ports:
-        - containerPort: 8080
-          name: http
+        - containerPort: 8443
+          name: https
         readinessProbe:
           httpGet:
             path: /healthz
-            port: 8080
+            port: 8443
+            scheme: HTTPS
           initialDelaySeconds: 5
           periodSeconds: 10
+        volumeMounts:
+        - mountPath: /tls
+          name: mock-fleet-api-tls
+          readOnly: true
         securityContext:
           runAsNonRoot: true
           runAsUser: 65532
@@ -39,3 +51,7 @@ spec:
           capabilities:
             drop:
             - "ALL"
+      volumes:
+      - name: mock-fleet-api-tls
+        secret:
+          secretName: mock-fleet-api-tls

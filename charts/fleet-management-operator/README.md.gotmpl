@@ -17,6 +17,10 @@
 
 - Kubernetes 1.23+
 - Helm 3.8+
+- cert-manager installed, plus an `Issuer` or `ClusterIssuer` matching
+  `webhook.certManager.issuerRef` (default: `ClusterIssuer/selfsigned-issuer`),
+  unless you configure manual webhook TLS with `webhook.certManager.enabled=false`,
+  `webhook.certDir`, `webhook.certSecretName`, and `webhook.caBundle`
 - Grafana Cloud account with Fleet Management enabled
 - Fleet Management API credentials (Stack ID and Cloud API token)
 
@@ -119,10 +123,36 @@ controllers are themselves disabled.
 The manager refuses to start otherwise — discovery would create Collector CRs
 that no controller acts on.
 
+`controllers.pipelineDiscovery.enabled=true` enables PipelineDiscovery and its
+validating webhook. The chart renders the webhook Service, cert-manager
+Certificate, and ValidatingWebhookConfiguration for PipelineDiscovery even when
+the Pipeline controller is disabled.
+
 `controllers.tenantPolicy.enabled=true` enables the TenantPolicy admission webhook
 that enforces required-matcher constraints on Pipeline / RemoteAttributePolicy /
 ExternalAttributeSync. The TenantPolicy CRD is always installed; only enforcement
 is gated by the flag.
+
+## Webhook TLS
+
+The chart renders fail-closed validating webhooks, so the Kubernetes API server
+must trust the webhook serving certificate. The default path uses cert-manager CA
+injection. For manual TLS, disable cert-manager and set all of:
+`webhook.certDir`, `webhook.certSecretName`, and `webhook.caBundle`. Rendering
+fails if webhooks are enabled without either cert-manager injection or the full
+manual CA/certificate configuration.
+
+## NetworkPolicy
+
+`networkPolicy.enabled=false` by default. When enabled, the chart renders a
+single NetworkPolicy selecting the operator pods. It allows webhook ingress,
+metrics ingress, DNS egress, Kubernetes API egress, Fleet API egress, and any
+approved ExternalAttributeSync HTTP/SQL source egress described in values.
+
+Kubernetes NetworkPolicy cannot match DNS names, so set cluster-specific
+`networkPolicy.egress.*.to` peers or `ipBlock` CIDRs for the Kubernetes API,
+Grafana Cloud Fleet endpoint, private Fleet endpoints, and approved CMDB or SQL
+sources. Empty `to` lists allow the configured port to any destination.
 
 {{ template "chart.valuesSection" . }}
 
@@ -134,6 +164,9 @@ helm upgrade fleet-management-operator . \
   -f values-prod.yaml
 ```
 
+See [Upgrade Guide](../../docs/upgrade.md) for CRD, webhook, and rollback
+guidance.
+
 ## Uninstalling
 
 ```bash
@@ -144,6 +177,7 @@ This will NOT delete the CRDs. To delete CRDs:
 
 ```bash
 kubectl delete crd pipelines.fleetmanagement.grafana.com \
+                   pipelinediscoveries.fleetmanagement.grafana.com \
                    collectors.fleetmanagement.grafana.com \
                    collectordiscoveries.fleetmanagement.grafana.com \
                    externalattributesyncs.fleetmanagement.grafana.com \

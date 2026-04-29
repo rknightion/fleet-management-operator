@@ -124,14 +124,14 @@ var _ = BeforeSuite(func() {
 
 	By("waiting for webhook service to be ready")
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "service", "fm-crd-webhook-service", "-n", namespace)
+		cmd := exec.Command("kubectl", "get", "service", "fleet-management-webhook-service", "-n", namespace)
 		_, err := utils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Webhook service should exist")
 	}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 
 	By("waiting for webhook endpoint to be ready")
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "endpoints", "fm-crd-webhook-service", "-n", namespace,
+		cmd := exec.Command("kubectl", "get", "endpoints", "fleet-management-webhook-service", "-n", namespace,
 			"-o", "jsonpath={.subsets[0].addresses[0].ip}")
 		output, err := utils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get webhook endpoint")

@@ -40,6 +40,19 @@ metrics:
       additionalLabels:
         prometheus: kube-prometheus
 
+# Optional NetworkPolicy. Enable only after filling in cluster-specific
+# API server, Fleet API, Prometheus, and ExternalAttributeSync source peers.
+networkPolicy:
+  enabled: false
+  egress:
+    externalSources:
+    - to:
+      - ipBlock:
+          cidr: 203.0.113.10/32
+      ports:
+      - protocol: TCP
+        port: 5432
+
 # Leader Election (recommended for HA)
 leaderElection:
   enabled: true
@@ -68,6 +81,18 @@ controllers:
     enabled: false               # HTTP/SQL-backed scheduled attribute pulls
   collectorDiscovery:
     enabled: false               # auto-mirror Fleet collectors as Collector CRs
+  pipelineDiscovery:
+    enabled: true                # auto-mirror Fleet pipelines as Pipeline CRs
+
+# Webhook TLS. The default uses cert-manager CA injection for fail-closed
+# admission webhooks. For manual TLS, disable certManager and provide certDir,
+# certSecretName, and caBundle.
+webhook:
+  certManager:
+    enabled: true
+    issuerRef:
+      name: selfsigned-issuer
+      kind: ClusterIssuer
 
 # Optional: High Availability Configuration
 # replicaCount: 2

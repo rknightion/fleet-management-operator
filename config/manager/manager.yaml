@@ -63,7 +63,12 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: fleet-management-operator:dev-v1.0.1
+          - --enable-collector-controller=true
+          - --enable-policy-controller=true
+          - --enable-external-sync-controller=true
+          - --enable-collector-discovery-controller=true
+          - --enable-pipeline-discovery-controller=true
+        image: controller
         imagePullPolicy: IfNotPresent
         name: manager
         env:

@@ -6,6 +6,9 @@ ignored), so fail-fast on render to surface the conflict.
 {{- if and .Values.webhook.certManager.enabled .Values.webhook.certDir }}
 {{- fail "webhook.certManager.enabled and webhook.certDir are mutually exclusive — set exactly one" }}
 {{- end }}
+{{- if and (include "fleet-management-operator.webhooksEnabled" .) (not .Values.webhook.certManager.enabled) (not .Values.webhook.certDir) }}
+{{- fail "validating webhooks are enabled but webhook.certManager.enabled=false and webhook.certDir is empty — set webhook.certDir and webhook.certSecretName for manual serving certificates, or enable webhook.certManager" }}
+{{- end }}
 {{/*
 certDir mode requires a pre-existing Secret to source tls.crt and tls.key
 from. Without it the manager would CrashLoopBackOff trying to read TLS
@@ -13,6 +16,9 @@ material from an unmounted path.
 */}}
 {{- if and .Values.webhook.certDir (not .Values.webhook.certSecretName) }}
 {{- fail "webhook.certDir is set but webhook.certSecretName is empty — set webhook.certSecretName to the name of a Secret containing tls.crt and tls.key, or use webhook.certManager.enabled instead" }}
+{{- end }}
+{{- if and (include "fleet-management-operator.webhooksEnabled" .) (not .Values.webhook.certManager.enabled) (not .Values.webhook.caBundle) }}
+{{- fail "validating webhooks are enabled but neither cert-manager CA injection nor webhook.caBundle is configured — set webhook.caBundle to the base64 CA that trusts webhook.certSecretName, or enable webhook.certManager" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -103,6 +109,7 @@ spec:
         - --controller-sync-target-rate={{ .Values.controllers.externalAttributeSync.sourceTargetRate }}
         - --controller-sync-target-burst={{ .Values.controllers.externalAttributeSync.sourceTargetBurst }}
         - --controller-discovery-max-concurrent={{ .Values.controllers.collectorDiscovery.maxConcurrent }}
+        - --controller-pipeline-discovery-max-concurrent={{ .Values.controllers.pipelineDiscovery.maxConcurrent }}
         {{- if .Values.metrics.enabled }}
         - --metrics-bind-address=:{{ .Values.metrics.port }}
         {{- else }}
@@ -110,12 +117,12 @@ spec:
         {{- end }}
         - --metrics-secure={{ .Values.metrics.secure }}
         - --enable-http2={{ .Values.enableHTTP2 }}
-        {{- if .Values.webhook.certManager.enabled }}
+        {{- if and .Values.webhook.certManager.enabled (include "fleet-management-operator.webhooksEnabled" .) }}
         - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
         {{- else if .Values.webhook.certDir }}
         - --webhook-cert-path={{ .Values.webhook.certDir }}
         {{- end }}
-        {{- if or .Values.webhook.certManager.enabled .Values.webhook.certDir }}
+        {{- if or (and .Values.webhook.certManager.enabled (include "fleet-management-operator.webhooksEnabled" .)) .Values.webhook.certDir }}
         - --webhook-cert-name={{ .Values.webhook.certName }}
         - --webhook-cert-key={{ .Values.webhook.certKey }}
         {{- end }}
@@ -142,7 +149,7 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
-        {{- if .Values.webhook.certManager.enabled }}
+        {{- if and .Values.webhook.certManager.enabled (include "fleet-management-operator.webhooksEnabled" .) }}
         - name: webhook-certs
           mountPath: /tmp/k8s-webhook-server/serving-certs
           readOnly: true
@@ -204,7 +211,7 @@ spec:
       volumes:
       - name: tmp
         emptyDir: {}
-      {{- if .Values.webhook.certManager.enabled }}
+      {{- if and .Values.webhook.certManager.enabled (include "fleet-management-operator.webhooksEnabled" .) }}
       - name: webhook-certs
         secret:
           secretName: {{ include "fleet-management-operator.fullname" . }}-webhook-certs

@@ -7,18 +7,22 @@ namespace: fm-crd-system
 
 resources:
 - ../default
+- webhook
 
 # Override image for E2E tests with locally loaded image
 images:
-- name: fleet-management-operator
+- name: ghcr.io/rknightion/fleet-management-operator
   newName: example.com/fm-crd
   newTag: v1.0.0
 
 patches:
-# Enable webhook CA injection for E2E tests with cert-manager
-- path: webhookcainjection_patch.yaml
 # Set imagePullPolicy to Never for locally loaded images in Kind
 - path: manager_image_pull_patch.yaml
+  target:
+    kind: Deployment
+    name: fleet-management-operator
+# Mount cert-manager webhook serving certificates.
+- path: manager_webhook_cert_patch.yaml
   target:
     kind: Deployment
     name: fleet-management-operator

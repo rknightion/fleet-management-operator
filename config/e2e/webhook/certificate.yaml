@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: webhook-serving-cert
+spec:
+  dnsNames:
+  - fleet-management-webhook-service.fm-crd-system.svc
+  - fleet-management-webhook-service.fm-crd-system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: fleet-management-webhook-selfsigned-issuer
+  secretName: fleet-management-webhook-server-cert
+

@@ -70,3 +70,13 @@ Create the name of the secret to use for Fleet Management credentials
 {{- include "fleet-management-operator.fullname" . }}-credentials
 {{- end }}
 {{- end }}
+
+{{/*
+Whether the chart should render Kubernetes admission webhook resources.
+Keep this aligned with the chart-exposed controller/webhook toggles.
+*/}}
+{{- define "fleet-management-operator.webhooksEnabled" -}}
+{{- if or .Values.controllers.pipeline.enabled .Values.controllers.collector.enabled .Values.controllers.collectorDiscovery.enabled .Values.controllers.pipelineDiscovery.enabled .Values.controllers.externalAttributeSync.enabled .Values.controllers.remoteAttributePolicy.enabled .Values.controllers.tenantPolicy.enabled -}}
+true
+{{- end -}}
+{{- end }}

@@ -218,6 +218,17 @@ func main() {
 	log.Printf("  POST /pipeline.v1.PipelineService/DeletePipeline")
 	log.Printf("  GET  /healthz")
 
+	certFile := os.Getenv("TLS_CERT_FILE")
+	keyFile := os.Getenv("TLS_KEY_FILE")
+	if certFile != "" || keyFile != "" {
+		if certFile == "" || keyFile == "" {
+			log.Fatalf("TLS_CERT_FILE and TLS_KEY_FILE must both be set when enabling TLS")
+		}
+		if err := http.ListenAndServeTLS(addr, certFile, keyFile, api); err != nil {
+			log.Fatalf("Server failed: %v", err)
+		}
+		return
+	}
 	if err := http.ListenAndServe(addr, api); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}

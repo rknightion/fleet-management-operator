@@ -18,13 +18,9 @@ resources:
 - ../crd
 - ../rbac
 - ../manager
-- ../webhook
 - metrics_service.yaml
 
 patches:
 - path: manager_metrics_patch.yaml
   target:
     kind: Deployment
-
-# Uncomment the following line to enable webhooks with cert-manager
-# - path: webhookcainjection_patch.yaml

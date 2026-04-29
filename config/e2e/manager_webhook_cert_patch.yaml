@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-management-operator
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        env:
+        - name: SSL_CERT_FILE
+          value: /tmp/mock-fleet-api-ca/ca.crt
+        args:
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --enable-collector-controller=true
+        - --enable-policy-controller=true
+        - --enable-external-sync-controller=true
+        - --enable-collector-discovery-controller=true
+        - --enable-pipeline-discovery-controller=true
+        - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+        volumeMounts:
+        - mountPath: /tmp/mock-fleet-api-ca
+          name: mock-fleet-api-ca
+          readOnly: true
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: webhook-certs
+          readOnly: true
+      volumes:
+      - name: mock-fleet-api-ca
+        secret:
+          secretName: mock-fleet-api-tls
+          items:
+          - key: ca.crt
+            path: ca.crt
+      - name: webhook-certs
+        secret:
+          secretName: fleet-management-webhook-server-cert

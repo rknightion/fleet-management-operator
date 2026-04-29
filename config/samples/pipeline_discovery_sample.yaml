@@ -1,3 +1,4 @@
+# Description: PipelineDiscovery that imports enabled Alloy pipelines from Fleet Management as read-only Pipeline CRs.
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: PipelineDiscovery
 metadata:

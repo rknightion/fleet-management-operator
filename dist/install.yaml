@@ -125,6 +125,7 @@ spec:
                       OR'd with Matchers — a Collector matches if its ID appears here, even
                       if the Matchers would otherwise reject it.
                     items:
+                      minLength: 1
                       type: string
                     maxItems: 1000
                     type: array
@@ -139,6 +140,7 @@ spec:
                       double-checked by the validating webhook.
                     items:
                       maxLength: 200
+                      minLength: 1
                       type: string
                     maxItems: 100
                     type: array
@@ -391,8 +393,12 @@ spec:
                 maxProperties: 100
                 type: object
                 x-kubernetes-validations:
+                - message: keys must not be empty
+                  rule: self.all(k, k.size() > 0)
                 - message: keys must not use the reserved 'collector.' prefix
                   rule: self.all(k, !k.startsWith('collector.'))
+                - message: values must be 1024 characters or fewer
+                  rule: self.all(k, self[k].size() <= 1024)
             required:
             - id
             type: object
@@ -634,10 +640,17 @@ spec:
                       prefix are rejected by the API server (CEL) and the validating
                       webhook.
                     maxProperties: 100
+                    minProperties: 1
                     type: object
                     x-kubernetes-validations:
+                    - message: keys must not be empty
+                      rule: self.all(k, k.size() > 0)
                     - message: keys must not use the reserved 'collector.' prefix
                       rule: self.all(k, !k.startsWith('collector.'))
+                    - message: values must not be empty
+                      rule: self.all(k, self[k].size() > 0)
+                    - message: values must be 1024 characters or fewer
+                      rule: self.all(k, self[k].size() <= 1024)
                   collectorIDField:
                     description: |-
                       CollectorIDField is the source field whose value identifies the
@@ -650,6 +663,7 @@ spec:
                       record to be applied. A record missing any required key is skipped
                       (counted in RecordsSeen but not RecordsApplied).
                     items:
+                      minLength: 1
                       type: string
                     type: array
                 required:
@@ -673,6 +687,7 @@ spec:
                       OR'd with Matchers — a Collector matches if its ID appears here, even
                       if the Matchers would otherwise reject it.
                     items:
+                      minLength: 1
                       type: string
                     maxItems: 1000
                     type: array
@@ -687,10 +702,15 @@ spec:
                       double-checked by the validating webhook.
                     items:
                       maxLength: 200
+                      minLength: 1
                       type: string
                     maxItems: 100
                     type: array
                 type: object
+                x-kubernetes-validations:
+                - message: selector must specify at least one matcher or collectorID
+                  rule: (has(self.matchers) && self.matchers.size() > 0) || (has(self.collectorIDs)
+                    && self.collectorIDs.size() > 0)
               source:
                 description: Source identifies the kind and configuration of the external
                   system.
@@ -756,11 +776,20 @@ spec:
                         description: |-
                           Query is the SQL query to execute. Must SELECT at minimum the
                           CollectorIDField and every AttributeFields source column.
+                        minLength: 1
                         type: string
                     type: object
                 required:
                 - kind
                 type: object
+                x-kubernetes-validations:
+                - message: 'kind must match exactly one source config: HTTP requires
+                    http only, SQL requires sql only'
+                  rule: (self.kind == 'HTTP' && has(self.http) && !has(self.sql))
+                    || (self.kind == 'SQL' && has(self.sql) && !has(self.http))
+                - message: secretRef.name is required when secretRef is set
+                  rule: '!has(self.secretRef) || (has(self.secretRef.name) && self.secretRef.name.size()
+                    > 0)'
             required:
             - mapping
             - schedule
@@ -905,6 +934,266 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
+  name: pipelinediscoveries.fleetmanagement.grafana.com
+spec:
+  group: fleetmanagement.grafana.com
+  names:
+    kind: PipelineDiscovery
+    listKind: PipelineDiscoveryList
+    plural: pipelinediscoveries
+    shortNames:
+    - fmpd
+    singular: pipelinediscovery
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.pollInterval
+      name: Poll
+      type: string
+    - jsonPath: .spec.importMode
+      name: Mode
+      type: string
+    - jsonPath: .status.pipelinesObserved
+      name: Observed
+      type: integer
+    - jsonPath: .status.pipelinesManaged
+      name: Managed
+      type: integer
+    - jsonPath: .status.lastSyncTime
+      name: Last Sync
+      type: date
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PipelineDiscovery configures a periodic import of Fleet Management pipelines
+          into the cluster as Pipeline CRs.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state.
+            properties:
+              importMode:
+                default: Adopt
+                description: |-
+                  ImportMode controls whether discovered Pipeline CRs are immediately
+                  managed (Adopt) or held read-only (ReadOnly). Individual Pipeline CRs
+                  can override this via the fleetmanagement.grafana.com/import-mode=adopt
+                  annotation.
+                enum:
+                - Adopt
+                - ReadOnly
+                type: string
+              policy:
+                description: Policy controls lifecycle decisions.
+                properties:
+                  onPipelineRemoved:
+                    default: Keep
+                    description: |-
+                      OnPipelineRemoved chooses the response when a previously-discovered
+                      pipeline no longer appears in ListPipelines.
+                    enum:
+                    - Keep
+                    - Delete
+                    type: string
+                type: object
+              pollInterval:
+                default: 5m
+                description: |-
+                  PollInterval is how often the controller calls ListPipelines.
+                  Webhook-enforced minimum is 1 minute to protect the shared rate limiter.
+                type: string
+              selector:
+                description: |-
+                  Selector filters which Fleet pipelines are imported.
+                  An empty selector means "import every pipeline" (server-wide
+                  ListPipelines call) — accepted but expensive on large fleets.
+                properties:
+                  configType:
+                    description: ConfigType limits discovery to pipelines of this
+                      type.
+                    enum:
+                    - Alloy
+                    - OpenTelemetryCollector
+                    type: string
+                  enabled:
+                    description: |-
+                      Enabled limits discovery to enabled or disabled pipelines.
+                      Omit to discover both.
+                    type: boolean
+                type: object
+              targetNamespace:
+                description: |-
+                  TargetNamespace is the namespace where discovered Pipeline CRs are created.
+                  Defaults to this PipelineDiscovery's own namespace.
+                type: string
+            type: object
+          status:
+            description: status defines the observed state.
+            properties:
+              conditions:
+                description: Conditions represent the current state of the PipelineDiscovery.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              conflicts:
+                description: |-
+                  Conflicts records cases (up to 100) where a CR could not be created
+                  due to a name/ownership conflict. When the cap is hit, a TruncatedConflicts
+                  condition is set; check events for the full list.
+                items:
+                  description: |-
+                    PipelineDiscoveryConflict records a single conflict between the desired CR
+                    and an existing one with the same name.
+                  properties:
+                    crName:
+                      description: CRName is the metadata.name the controller computed.
+                      type: string
+                    pipelineID:
+                      description: PipelineID is the Fleet pipeline ID that could
+                        not be mirrored. List-map key.
+                      type: string
+                    reason:
+                      description: Reason classifies the conflict.
+                      enum:
+                      - NotOwnedByDiscovery
+                      - OwnedByOtherDiscovery
+                      - NameSanitizationFailed
+                      type: string
+                  required:
+                  - crName
+                  - pipelineID
+                  - reason
+                  type: object
+                maxItems: 100
+                type: array
+                x-kubernetes-list-map-keys:
+                - pipelineID
+                x-kubernetes-list-type: map
+              lastSuccessTime:
+                description: LastSuccessTime is the timestamp of the most recent successful
+                  poll.
+                format: date-time
+                type: string
+              lastSyncTime:
+                description: LastSyncTime is the timestamp of the most recent ListPipelines
+                  call.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the most recently observed
+                  spec generation.
+                format: int64
+                type: integer
+              pipelinesManaged:
+                description: |-
+                  PipelinesManaged is the count of Pipeline CRs labeled as managed by
+                  this discovery.
+                format: int32
+                type: integer
+              pipelinesObserved:
+                description: PipelinesObserved is the count returned by the last ListPipelines
+                  call.
+                format: int32
+                type: integer
+              stalePipelines:
+                description: |-
+                  StalePipelines lists pipeline IDs whose CR still exists but no longer
+                  appears in ListPipelines. Only populated when policy.onPipelineRemoved=Keep.
+                items:
+                  type: string
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
   name: pipelines.fleetmanagement.grafana.com
 spec:
   group: fleetmanagement.grafana.com
@@ -920,6 +1209,9 @@ spec:
   - additionalPrinterColumns:
     - jsonPath: .spec.enabled
       name: Enabled
+      type: boolean
+    - jsonPath: .spec.paused
+      name: Paused
       type: boolean
     - jsonPath: .spec.configType
       name: Config Type
@@ -987,6 +1279,7 @@ spec:
                   maxLength) and double-checked by the validating webhook.
                 items:
                   maxLength: 200
+                  minLength: 1
                   type: string
                 maxItems: 100
                 type: array
@@ -995,6 +1288,14 @@ spec:
                   Name of the pipeline (unique identifier in Fleet Management)
                   If not specified, uses metadata.name
                 type: string
+              paused:
+                default: false
+                description: |-
+                  Paused suspends reconciliation. When true, the Pipeline controller does not
+                  sync this resource to Fleet Management. Set by PipelineDiscovery when
+                  importMode=ReadOnly; users may set the import-mode annotation to "adopt" on
+                  individual Pipeline CRs to resume management without clearing this field.
+                type: boolean
               source:
                 description: |-
                   Source specifies the origin of the pipeline (Git, Terraform, Kubernetes, etc.)
@@ -1183,10 +1484,15 @@ spec:
                   ("collector.") are rejected by the API server (CEL) and the
                   validating webhook.
                 maxProperties: 100
+                minProperties: 1
                 type: object
                 x-kubernetes-validations:
+                - message: keys must not be empty
+                  rule: self.all(k, k.size() > 0)
                 - message: keys must not use the reserved 'collector.' prefix
                   rule: self.all(k, !k.startsWith('collector.'))
+                - message: values must be 1024 characters or fewer
+                  rule: self.all(k, self[k].size() <= 1024)
               priority:
                 default: 0
                 description: |-
@@ -1211,6 +1517,7 @@ spec:
                       OR'd with Matchers — a Collector matches if its ID appears here, even
                       if the Matchers would otherwise reject it.
                     items:
+                      minLength: 1
                       type: string
                     maxItems: 1000
                     type: array
@@ -1225,10 +1532,15 @@ spec:
                       double-checked by the validating webhook.
                     items:
                       maxLength: 200
+                      minLength: 1
                       type: string
                     maxItems: 100
                     type: array
                 type: object
+                x-kubernetes-validations:
+                - message: selector must specify at least one matcher or collectorID
+                  rule: (has(self.matchers) && self.matchers.size() > 0) || (has(self.collectorIDs)
+                    && self.collectorIDs.size() > 0)
             required:
             - attributes
             - selector
@@ -1652,6 +1964,7 @@ rules:
   - collectordiscoveries
   - collectors
   - externalattributesyncs
+  - pipelinediscoveries
   - pipelines
   - remoteattributepolicies
   verbs:
@@ -1668,6 +1981,7 @@ rules:
   - collectordiscoveries/status
   - collectors/status
   - externalattributesyncs/status
+  - pipelinediscoveries/status
   - pipelines/status
   - remoteattributepolicies/status
   - tenantpolicies/status
@@ -1743,19 +2057,6 @@ spec:
     app.kubernetes.io/name: fleet-management-operator
     control-plane: operator
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: fleet-management-webhook-service
-  namespace: fleet-management-system
-spec:
-  ports:
-  - port: 443
-    protocol: TCP
-    targetPort: 9443
-  selector:
-    control-plane: operator
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1785,6 +2086,11 @@ spec:
         - --metrics-secure=false
         - --leader-elect
         - --health-probe-bind-address=:8081
+        - --enable-collector-controller=true
+        - --enable-policy-controller=true
+        - --enable-external-sync-controller=true
+        - --enable-collector-discovery-controller=true
+        - --enable-pipeline-discovery-controller=true
         command:
         - /manager
         env:
@@ -1803,7 +2109,7 @@ spec:
             secretKeyRef:
               key: password
               name: fleet-management-credentials
-        image: fleet-management-operator:dev-v1.0.1
+        image: ghcr.io/rknightion/fleet-management-operator:dev
         imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:
@@ -1840,135 +2146,3 @@ spec:
       serviceAccountName: fleet-management-operator
       terminationGracePeriodSeconds: 10
       volumes: []
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: fleet-management-validating-webhook-configuration
-webhooks:
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: fleet-management-webhook-service
-      namespace: fleet-management-system
-      path: /validate-fleetmanagement-grafana-com-v1alpha1-collector
-  failurePolicy: Fail
-  name: vcollector.kb.io
-  rules:
-  - apiGroups:
-    - fleetmanagement.grafana.com
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - collectors
-  sideEffects: None
-  timeoutSeconds: 5
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: fleet-management-webhook-service
-      namespace: fleet-management-system
-      path: /validate-fleetmanagement-grafana-com-v1alpha1-collectordiscovery
-  failurePolicy: Fail
-  name: vcollectordiscovery.kb.io
-  rules:
-  - apiGroups:
-    - fleetmanagement.grafana.com
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - collectordiscoveries
-  sideEffects: None
-  timeoutSeconds: 5
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: fleet-management-webhook-service
-      namespace: fleet-management-system
-      path: /validate-fleetmanagement-grafana-com-v1alpha1-externalattributesync
-  failurePolicy: Fail
-  name: vexternalattributesync.kb.io
-  rules:
-  - apiGroups:
-    - fleetmanagement.grafana.com
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - externalattributesyncs
-  sideEffects: None
-  timeoutSeconds: 5
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: fleet-management-webhook-service
-      namespace: fleet-management-system
-      path: /validate-fleetmanagement-grafana-com-v1alpha1-pipeline
-  failurePolicy: Fail
-  name: vpipeline.kb.io
-  rules:
-  - apiGroups:
-    - fleetmanagement.grafana.com
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - pipelines
-  sideEffects: None
-  timeoutSeconds: 5
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: fleet-management-webhook-service
-      namespace: fleet-management-system
-      path: /validate-fleetmanagement-grafana-com-v1alpha1-remoteattributepolicy
-  failurePolicy: Fail
-  name: vremoteattributepolicy.kb.io
-  rules:
-  - apiGroups:
-    - fleetmanagement.grafana.com
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - remoteattributepolicies
-  sideEffects: None
-  timeoutSeconds: 5
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: fleet-management-webhook-service
-      namespace: fleet-management-system
-      path: /validate-fleetmanagement-grafana-com-v1alpha1-tenantpolicy
-  failurePolicy: Fail
-  name: vtenantpolicy.kb.io
-  rules:
-  - apiGroups:
-    - fleetmanagement.grafana.com
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - tenantpolicies
-  sideEffects: None
-  timeoutSeconds: 5
