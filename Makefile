@@ -114,6 +114,44 @@ chart-docs-check: helm-docs ## Verify the chart README is up to date with values
 		exit 1; \
 	}
 
+.PHONY: api-docs
+api-docs: crd-ref-docs ## Regenerate docs/api-reference.md from api/v1alpha1 godoc and CRD bases.
+	"$(CRD_REF_DOCS)" \
+		--source-path=api/v1alpha1 \
+		--config=.crd-ref-docs.yaml \
+		--renderer=markdown \
+		--output-path=docs/api-reference.md
+
+.PHONY: api-docs-check
+api-docs-check: crd-ref-docs ## Verify docs/api-reference.md is up to date with API types.
+	@tmp=$$(mktemp); \
+	"$(CRD_REF_DOCS)" \
+		--source-path=api/v1alpha1 \
+		--config=.crd-ref-docs.yaml \
+		--renderer=markdown \
+		--output-path="$$tmp" >/dev/null; \
+	diff -q "$$tmp" docs/api-reference.md > /dev/null 2>&1 || { \
+		echo "docs/api-reference.md is out of date. Run 'make api-docs'."; \
+		rm -f "$$tmp"; \
+		exit 1; \
+	}; \
+	rm -f "$$tmp"
+
+.PHONY: docs
+docs: api-docs chart-docs ## Regenerate all auto-generated documentation.
+	$(DOCGEN) flags    --out docs/flags.md
+	$(DOCGEN) metrics  --out docs/metrics.md
+	$(DOCGEN) events   --out docs/events.md
+	$(DOCGEN) samples  --out docs/samples.md
+
+.PHONY: docs-check
+docs-check: api-docs-check chart-docs-check ## Verify all auto-generated docs are up to date.
+	$(DOCGEN) flags    --out docs/flags.md     --check
+	$(DOCGEN) metrics  --out docs/metrics.md   --check
+	$(DOCGEN) events   --out docs/events.md    --check
+	$(DOCGEN) samples  --out docs/samples.md   --check
+	$(DOCGEN) verify-conditions docs/conditions.md
+
 ##@ Build
 
 .PHONY: build
@@ -229,11 +267,14 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 HELM_DOCS = $(LOCALBIN)/helm-docs
+CRD_REF_DOCS = $(LOCALBIN)/crd-ref-docs
+DOCGEN ?= go run ./hack/docgen
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.7.1
 CONTROLLER_TOOLS_VERSION ?= v0.20.0
 HELM_DOCS_VERSION ?= v1.14.2
+CRD_REF_DOCS_VERSION ?= v0.3.0
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
@@ -278,6 +319,11 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 helm-docs: $(HELM_DOCS) ## Download helm-docs locally if necessary.
 $(HELM_DOCS): $(LOCALBIN)
 	$(call go-install-tool,$(HELM_DOCS),github.com/norwoodj/helm-docs/cmd/helm-docs,$(HELM_DOCS_VERSION))
+
+.PHONY: crd-ref-docs
+crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary.
+$(CRD_REF_DOCS): $(LOCALBIN)
+	$(call go-install-tool,$(CRD_REF_DOCS),github.com/elastic/crd-ref-docs,$(CRD_REF_DOCS_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

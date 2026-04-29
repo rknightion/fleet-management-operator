@@ -1,0 +1,10 @@
+processor:
+  ignoreTypes:
+    - "(List)$"
+  ignoreFields:
+    - "TypeMeta$"
+
+render:
+  kubernetesVersion: "1.31"
+
+format: markdown
