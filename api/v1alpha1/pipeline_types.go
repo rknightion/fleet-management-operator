@@ -41,10 +41,10 @@ const (
 	fleetAPIConfigTypeOTEL  = "CONFIG_TYPE_OTEL"
 )
 
-// Annotation keys used by PipelineDiscovery to control Pipeline reconciliation.
-// PipelineImportModeAnnotation is checked by the Pipeline controller: when
-// spec.paused=true and this annotation is "adopt", reconciliation proceeds
-// anyway, allowing per-pipeline promotion from ReadOnly to managed status.
+// Annotation keys used by PipelineDiscovery to control Pipeline ownership.
+// PipelineImportModeAnnotation is checked by the Pipeline controller:
+// read-only skips Fleet create/update calls, while adopt allows discovered
+// non-Grafana pipelines to become operator-managed.
 const (
 	PipelineImportModeAnnotation         = "fleetmanagement.grafana.com/import-mode"
 	PipelineImportModeAnnotationReadOnly = "read-only"
@@ -52,7 +52,7 @@ const (
 )
 
 // SourceType represents the origin source of the pipeline
-// +kubebuilder:validation:Enum=Git;Terraform;Kubernetes;Unspecified
+// +kubebuilder:validation:Enum=Git;Terraform;Grafana;Kubernetes;Unspecified
 type SourceType string
 
 const (
@@ -62,7 +62,15 @@ const (
 	// SourceTypeTerraform indicates pipeline originated from Terraform
 	SourceTypeTerraform SourceType = "Terraform"
 
-	// SourceTypeKubernetes indicates pipeline originated from this Kubernetes operator
+	// SourceTypeGrafana indicates pipeline originated from an automated
+	// Grafana Cloud workflow, such as Instrumentation Hub. Grafana-sourced
+	// pipelines are read-only from this operator's perspective.
+	SourceTypeGrafana SourceType = "Grafana"
+
+	// SourceTypeKubernetes indicates pipeline originated from this Kubernetes
+	// operator. Deprecated: Fleet Management does not expose a Kubernetes
+	// source enum; this value is accepted for compatibility but is not sent to
+	// Fleet by new reconciles.
 	SourceTypeKubernetes SourceType = "Kubernetes"
 
 	// SourceTypeUnspecified indicates pipeline source is not specified
@@ -73,21 +81,21 @@ const (
 const (
 	fleetAPISourceTypeGit         = "SOURCE_TYPE_GIT"
 	fleetAPISourceTypeTerraform   = "SOURCE_TYPE_TERRAFORM"
-	fleetAPISourceTypeKubernetes  = "SOURCE_TYPE_KUBERNETES"
+	fleetAPISourceTypeGrafana     = "SOURCE_TYPE_GRAFANA"
 	fleetAPISourceTypeUnspecified = "SOURCE_TYPE_UNSPECIFIED"
 )
 
 // PipelineSource defines the origin source of the pipeline
 type PipelineSource struct {
-	// Type specifies the source type (Git, Terraform, Kubernetes, Unspecified)
+	// Type specifies the source type (Git, Terraform, Grafana, Kubernetes, Unspecified).
+	// Kubernetes is deprecated and kept only for backwards compatibility.
 	// +optional
-	// +kubebuilder:default=Kubernetes
 	Type SourceType `json:"type,omitempty"`
 
 	// Namespace provides additional context about the source
 	// For Git: repository name or URL
 	// For Terraform: workspace or module name
-	// For Kubernetes: cluster name or context
+	// For Grafana: automated workflow namespace
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -123,12 +131,12 @@ func (s SourceType) ToFleetAPI() string {
 		return fleetAPISourceTypeGit
 	case SourceTypeTerraform:
 		return fleetAPISourceTypeTerraform
-	case SourceTypeKubernetes:
-		return fleetAPISourceTypeKubernetes
+	case SourceTypeGrafana:
+		return fleetAPISourceTypeGrafana
 	case SourceTypeUnspecified:
 		return fleetAPISourceTypeUnspecified
 	default:
-		return fleetAPISourceTypeKubernetes
+		return fleetAPISourceTypeUnspecified
 	}
 }
 
@@ -139,6 +147,8 @@ func SourceTypeFromFleetAPI(apiType string) SourceType {
 		return SourceTypeGit
 	case "SOURCE_TYPE_TERRAFORM":
 		return SourceTypeTerraform
+	case "SOURCE_TYPE_GRAFANA":
+		return SourceTypeGrafana
 	case "SOURCE_TYPE_KUBERNETES":
 		return SourceTypeKubernetes
 	case "SOURCE_TYPE_UNSPECIFIED":
@@ -183,15 +193,15 @@ type PipelineSpec struct {
 	// +kubebuilder:default=Alloy
 	ConfigType ConfigType `json:"configType,omitempty"`
 
-	// Source specifies the origin of the pipeline (Git, Terraform, Kubernetes, etc.)
+	// Source specifies the origin of the pipeline (Git, Terraform, Grafana, etc.)
 	// Used for tracking and grouping pipelines by their source
 	// +optional
 	Source *PipelineSource `json:"source,omitempty"`
 
-	// Paused suspends reconciliation. When true, the Pipeline controller does not
-	// sync this resource to Fleet Management. Set by PipelineDiscovery when
-	// importMode=ReadOnly; users may set the import-mode annotation to "adopt" on
-	// individual Pipeline CRs to resume management without clearing this field.
+	// Paused suspends operator reconciliation. When true, the Pipeline
+	// controller does not create or update this resource in Fleet Management.
+	// Read-only ownership for discovered pipelines is represented by the
+	// fleetmanagement.grafana.com/import-mode annotation, not by this field.
 	// +optional
 	// +kubebuilder:default=false
 	Paused bool `json:"paused,omitempty"`
@@ -225,6 +235,10 @@ type PipelineStatus struct {
 	// +optional
 	UpdatedAt *metav1.Time `json:"updatedAt,omitempty"`
 
+	// Source is the source observed from Fleet Management.
+	// +optional
+	Source *PipelineSource `json:"source,omitempty"`
+
 	// RevisionID is the current revision ID from Fleet Management
 	// +optional
 	RevisionID string `json:"revisionId,omitempty"`
@@ -248,6 +262,7 @@ type PipelineStatus struct {
 // +kubebuilder:printcolumn:name="Enabled",type="boolean",JSONPath=".spec.enabled"
 // +kubebuilder:printcolumn:name="Paused",type="boolean",JSONPath=".spec.paused"
 // +kubebuilder:printcolumn:name="Config Type",type="string",JSONPath=".spec.configType"
+// +kubebuilder:printcolumn:name="Source",type="string",JSONPath=".spec.source.type"
 // +kubebuilder:printcolumn:name="Fleet ID",type="string",JSONPath=".status.id"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
