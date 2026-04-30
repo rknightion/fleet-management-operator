@@ -1,4 +1,11 @@
 ## Append samples of your project ##
 resources:
-- fleetmanagement_v1alpha1_pipeline.yaml
+- alloy_pipeline_sample.yaml
+- collector_discovery_sample.yaml
+- collector_sample.yaml
+- external_sync_sample.yaml
+- pipeline_discovery_sample.yaml
+- pipeline_otel_sample.yaml
+- policy_sample.yaml
+- tenant_policy_sample.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

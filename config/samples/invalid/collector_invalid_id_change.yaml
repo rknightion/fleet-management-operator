@@ -15,14 +15,14 @@
 #   spec.id: Invalid value: ...: spec.id is immutable
 #
 # Reproduction:
-#   kubectl apply -f config/samples/collector_sample.yaml
-#   kubectl apply -f config/samples/invalid/collector_invalid_id_change.yaml
+#   kubectl apply -n <namespace> -f config/samples/collector_sample.yaml
+#   kubectl apply -n <namespace> -f config/samples/invalid/collector_invalid_id_change.yaml
 apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: Collector
 metadata:
   # Name MUST match an existing Collector created from collector_sample.yaml
   # for this to exercise the update path.
-  name: collector-sample
+  name: edge-host-42
 spec:
   # Different from the sample's collector ID. The CEL rule rejects the change.
   id: collector-different-id

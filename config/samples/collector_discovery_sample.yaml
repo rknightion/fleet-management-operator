@@ -3,7 +3,6 @@ apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: CollectorDiscovery
 metadata:
   name: prod-linux
-  namespace: fleet-management-system
 spec:
   # How often to call Fleet's ListCollectors. Webhook-enforced minimum
   # is 1 minute to protect the shared 3 req/s rate limiter.

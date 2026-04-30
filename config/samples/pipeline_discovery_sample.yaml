@@ -3,12 +3,15 @@ apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: PipelineDiscovery
 metadata:
   name: import-alloy-pipelines
-  namespace: default
 spec:
   pollInterval: 5m
   importMode: ReadOnly
   selector:
     configType: Alloy
     enabled: true
+  # Omit targetNamespace to create Pipeline CRs in this
+  # PipelineDiscovery's own namespace. Set it only when intentionally
+  # mirroring into another namespace.
+  # targetNamespace: fleet-pipelines
   policy:
     onPipelineRemoved: Keep
