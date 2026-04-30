@@ -97,6 +97,22 @@ func (m *MockAPI) UpsertPipeline(
 	return connect.NewResponse(pipeline), nil
 }
 
+// GetPipeline returns a stored pipeline by ID.
+func (m *MockAPI) GetPipeline(
+	_ context.Context,
+	req *connect.Request[pipelinev1.GetPipelineRequest],
+) (*connect.Response[pipelinev1.Pipeline], error) {
+	if req.Msg.GetId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("missing id"))
+	}
+
+	value, ok := m.pipelines.Load(req.Msg.GetId())
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("pipeline not found"))
+	}
+	return connect.NewResponse(proto.Clone(value.(*pipelinev1.Pipeline)).(*pipelinev1.Pipeline)), nil
+}
+
 // DeletePipeline removes a pipeline by ID. It is idempotent.
 func (m *MockAPI) DeletePipeline(
 	_ context.Context,
@@ -150,6 +166,7 @@ func main() {
 	addr := fmt.Sprintf(":%s", port)
 	log.Printf("Mock Fleet Management API starting on %s", addr)
 	log.Printf("Endpoints:")
+	log.Printf("  %s", pipelinev1connect.PipelineServiceGetPipelineProcedure)
 	log.Printf("  %s", pipelinev1connect.PipelineServiceUpsertPipelineProcedure)
 	log.Printf("  %s", pipelinev1connect.PipelineServiceDeletePipelineProcedure)
 	log.Printf("  %s", pipelinev1connect.PipelineServiceListPipelinesProcedure)
