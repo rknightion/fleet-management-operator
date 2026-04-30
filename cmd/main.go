@@ -631,13 +631,13 @@ func validateFleetBaseURL(raw string) error {
 		return fmt.Errorf("parse Fleet Management base URL: %w", err)
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("Fleet Management base URL must include scheme and host")
+		return fmt.Errorf("fleet management base URL must include scheme and host")
 	}
 	switch u.Scheme {
 	case "https":
 		return nil
 	default:
-		return fmt.Errorf("Fleet Management base URL scheme %q is unsupported; use https", u.Scheme)
+		return fmt.Errorf("fleet management base URL scheme %q is unsupported; use https", u.Scheme)
 	}
 }
 
