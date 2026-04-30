@@ -278,6 +278,23 @@ func (in *CollectorStatus) DeepCopyInto(out *CollectorStatus) {
 		in, out := &in.LastPing, &out.LastPing
 		*out = (*in).DeepCopy()
 	}
+	if in.Enabled != nil {
+		in, out := &in.Enabled, &out.Enabled
+		*out = new(bool)
+		**out = **in
+	}
+	if in.CreatedAt != nil {
+		in, out := &in.CreatedAt, &out.CreatedAt
+		*out = (*in).DeepCopy()
+	}
+	if in.UpdatedAt != nil {
+		in, out := &in.UpdatedAt, &out.UpdatedAt
+		*out = (*in).DeepCopy()
+	}
+	if in.MarkedInactiveAt != nil {
+		in, out := &in.MarkedInactiveAt, &out.MarkedInactiveAt
+		*out = (*in).DeepCopy()
+	}
 	if in.LocalAttributes != nil {
 		in, out := &in.LocalAttributes, &out.LocalAttributes
 		*out = make(map[string]string, len(*in))
@@ -827,6 +844,11 @@ func (in *PipelineStatus) DeepCopyInto(out *PipelineStatus) {
 	if in.UpdatedAt != nil {
 		in, out := &in.UpdatedAt, &out.UpdatedAt
 		*out = (*in).DeepCopy()
+	}
+	if in.Source != nil {
+		in, out := &in.Source, &out.Source
+		*out = new(PipelineSource)
+		**out = **in
 	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
