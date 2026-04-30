@@ -77,7 +77,7 @@ make run
 In another terminal, create a test pipeline:
 
 ```bash
-kubectl apply -f config/samples/fleetmanagement_v1alpha1_pipeline.yaml
+kubectl apply -n <namespace> -f config/samples/alloy_pipeline_sample.yaml
 ```
 
 ### Run Tests
@@ -203,9 +203,9 @@ make test
 make run
 
 # In another terminal, test your changes
-kubectl apply -f config/samples/fleetmanagement_v1alpha1_pipeline.yaml
-kubectl get pipelines
-kubectl describe pipeline pipeline-sample
+kubectl apply -n <namespace> -f config/samples/alloy_pipeline_sample.yaml
+kubectl get pipelines -n <namespace>
+kubectl describe pipeline alloy-pipeline-sample -n <namespace>
 ```
 
 ### 5. Build and Test in Cluster

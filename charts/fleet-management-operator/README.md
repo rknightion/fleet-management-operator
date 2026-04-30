@@ -323,6 +323,12 @@ This chart relies on Helm 3 conventions for CRD installation:
 
 ## Examples
 
+The CR examples below are meant for application or tenant namespaces, not the
+operator release namespace. Apply namespaced CRs with `kubectl -n <namespace>`;
+`TenantPolicy` is cluster-scoped. The chart uses a `ClusterRole` for the
+manager so reconcilers can watch namespaced Fleet CRs across namespaces and, for
+discovery, optionally create child CRs in `spec.targetNamespace`.
+
 ### Pipeline
 
 ```yaml
@@ -330,7 +336,6 @@ apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: Pipeline
 metadata:
   name: prometheus-monitoring
-  namespace: fleet-management-system
 spec:
   contents: |
     prometheus.exporter.self "alloy" { }
@@ -447,14 +452,15 @@ apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: CollectorDiscovery
 metadata:
   name: prod-linux
-  namespace: fleet-management-system
 spec:
   pollInterval: 5m
   selector:
     matchers:
       - "collector.os=linux"
       - "env=prod"
-  targetNamespace: fleet-mirror
+  # Defaults to this CollectorDiscovery's namespace. Set only when
+  # intentionally mirroring into another namespace.
+  # targetNamespace: fleet-mirror
   policy:
     onCollectorRemoved: Keep
 ```
@@ -474,7 +480,7 @@ Deleting a `CollectorDiscovery` does NOT cascade-delete its mirrored CRs
 CRs of a discovery:
 
 ```bash
-kubectl delete collector -l fleetmanagement.grafana.com/discovery-name=prod-linux -n fleet-mirror
+kubectl delete collector -l fleetmanagement.grafana.com/discovery-name=prod-linux -n <namespace>
 ```
 
 **Pagination caveat:** the Fleet Management SDK's `ListCollectors` does not

@@ -95,20 +95,20 @@ See [Sample CRs](docs/samples.md) for full working examples of both Alloy and Op
 Apply a pipeline:
 
 ```bash
-kubectl apply -f pipeline.yaml
+kubectl apply -n <namespace> -f pipeline.yaml
 ```
 
 ### Check Pipeline Status
 
 ```bash
 # List all pipelines
-kubectl get pipelines
+kubectl get pipelines -n <namespace>
 
 # Get detailed status
-kubectl describe pipeline prometheus-metrics
+kubectl describe pipeline prometheus-metrics -n <namespace>
 
 # Watch for changes
-kubectl get pipelines -w
+kubectl get pipelines -n <namespace> -w
 ```
 
 The status shows the Fleet Management pipeline ID and sync state:
@@ -139,7 +139,7 @@ The operator automatically syncs changes to Fleet Management.
 ### Delete a Pipeline
 
 ```bash
-kubectl delete pipeline prometheus-metrics
+kubectl delete pipeline prometheus-metrics -n <namespace>
 ```
 
 The operator removes the pipeline from Fleet Management before deleting the Kubernetes resource.

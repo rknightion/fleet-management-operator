@@ -9,8 +9,13 @@ carry a leading "# Description: …" comment; the generator fails otherwise.
 Working examples of each CRD this operator manages. Apply with:
 
 ```
-kubectl apply -f config/samples/<file>.yaml
+kubectl apply -n <namespace> -f config/samples/<namespaced-file>.yaml
+kubectl apply -f config/samples/tenant_policy_sample.yaml
 ```
+
+Namespaced samples intentionally omit `metadata.namespace`. Apply them
+to the namespace that should own the CR. `TenantPolicy` is cluster-scoped
+and must not carry a namespace.
 
 For invalid-spec fixtures used by webhook tests, see
 [config/samples/invalid/README.md](../config/samples/invalid/README.md).
@@ -64,7 +69,6 @@ apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: CollectorDiscovery
 metadata:
   name: prod-linux
-  namespace: fleet-management-system
 spec:
   # How often to call Fleet's ListCollectors. Webhook-enforced minimum
   # is 1 minute to protect the shared 3 req/s rate limiter.
@@ -287,13 +291,16 @@ apiVersion: fleetmanagement.grafana.com/v1alpha1
 kind: PipelineDiscovery
 metadata:
   name: import-alloy-pipelines
-  namespace: default
 spec:
   pollInterval: 5m
   importMode: ReadOnly
   selector:
     configType: Alloy
     enabled: true
+  # Omit targetNamespace to create Pipeline CRs in this
+  # PipelineDiscovery's own namespace. Set it only when intentionally
+  # mirroring into another namespace.
+  # targetNamespace: fleet-pipelines
   policy:
     onPipelineRemoved: Keep
 ```

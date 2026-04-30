@@ -9,11 +9,11 @@ that rule (CEL on the API server, or Go-side webhook validator).
 **Do not** apply these in CI or production:
 
 ```bash
-# All of these will fail at admission. That is the point.
-kubectl apply -f config/samples/invalid/
+# Namespaced invalid samples fail at admission. That is the point.
+kubectl apply -n <namespace> -f config/samples/invalid/pipeline_invalid_matcher_syntax.yaml
 
-# Try one to see the error message:
-kubectl apply -f config/samples/invalid/pipeline_invalid_matcher_syntax.yaml
+# TenantPolicy is cluster-scoped, so apply that file without -n.
+kubectl apply -f config/samples/invalid/tenant_policy_invalid_matcher_syntax.yaml
 ```
 
 ## Files
@@ -30,9 +30,9 @@ kubectl apply -f config/samples/invalid/pipeline_invalid_matcher_syntax.yaml
 ## How to reproduce the immutability error (`collector_invalid_id_change.yaml`)
 
 ```bash
-kubectl apply -f config/samples/collector_sample.yaml
+kubectl apply -n <namespace> -f config/samples/collector_sample.yaml
 # Now edit the file: change spec.id, then apply:
-kubectl apply -f config/samples/invalid/collector_invalid_id_change.yaml
+kubectl apply -n <namespace> -f config/samples/invalid/collector_invalid_id_change.yaml
 # Expected: API server rejects with "spec.id is immutable" (CEL rule).
 ```
 
