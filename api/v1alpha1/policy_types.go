@@ -109,7 +109,7 @@ type RemoteAttributePolicyStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=fmrap
+// +kubebuilder:resource:scope=Namespaced,shortName=fmrap
 // +kubebuilder:printcolumn:name="Priority",type="integer",JSONPath=".spec.priority"
 // +kubebuilder:printcolumn:name="Matched",type="integer",JSONPath=".status.matchedCount"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

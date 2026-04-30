@@ -195,7 +195,7 @@ type ExternalAttributeSyncStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=fmeas
+// +kubebuilder:resource:scope=Namespaced,shortName=fmeas
 // +kubebuilder:printcolumn:name="Source",type="string",JSONPath=".spec.source.kind"
 // +kubebuilder:printcolumn:name="Schedule",type="string",JSONPath=".spec.schedule"
 // +kubebuilder:printcolumn:name="Last Sync",type="date",JSONPath=".status.lastSyncTime"

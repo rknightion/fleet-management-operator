@@ -215,7 +215,7 @@ type PipelineDiscoveryConflict struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=fmpd
+// +kubebuilder:resource:scope=Namespaced,shortName=fmpd
 // +kubebuilder:printcolumn:name="Poll",type="string",JSONPath=".spec.pollInterval"
 // +kubebuilder:printcolumn:name="Mode",type="string",JSONPath=".spec.importMode"
 // +kubebuilder:printcolumn:name="Observed",type="integer",JSONPath=".status.pipelinesObserved"

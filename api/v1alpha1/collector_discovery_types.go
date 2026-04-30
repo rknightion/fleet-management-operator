@@ -226,7 +226,7 @@ type DiscoveryConflict struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=fmcd
+// +kubebuilder:resource:scope=Namespaced,shortName=fmcd
 // +kubebuilder:printcolumn:name="Poll",type="string",JSONPath=".spec.pollInterval"
 // +kubebuilder:printcolumn:name="Observed",type="integer",JSONPath=".status.collectorsObserved"
 // +kubebuilder:printcolumn:name="Managed",type="integer",JSONPath=".status.collectorsManaged"

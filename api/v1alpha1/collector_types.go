@@ -158,7 +158,7 @@ type AttributeOwnership struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=fmcol
+// +kubebuilder:resource:scope=Namespaced,shortName=fmcol
 // +kubebuilder:printcolumn:name="ID",type="string",JSONPath=".spec.id"
 // +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".status.collectorType"
 // +kubebuilder:printcolumn:name="Registered",type="boolean",JSONPath=".status.registered"

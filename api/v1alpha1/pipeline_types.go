@@ -244,7 +244,7 @@ type PipelineStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=fmp
+// +kubebuilder:resource:scope=Namespaced,shortName=fmp
 // +kubebuilder:printcolumn:name="Enabled",type="boolean",JSONPath=".spec.enabled"
 // +kubebuilder:printcolumn:name="Paused",type="boolean",JSONPath=".spec.paused"
 // +kubebuilder:printcolumn:name="Config Type",type="string",JSONPath=".spec.configType"
