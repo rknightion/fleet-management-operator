@@ -31,16 +31,17 @@ limitations under the License.
 //
 // Reconcile Loop Audit:
 //
-// This controller makes exactly 5 Kubernetes API calls across all reconciliation paths:
+// This controller makes exactly 6 Kubernetes API call sites across all reconciliation paths:
 // - 1 Get() operation: Fetch the Pipeline resource that triggered reconciliation (cached read)
 // - 2 Update() operations: Add finalizer (spec change), remove finalizer (deletion complete)
-// - 2 Status().Update() operations: Record success state, record error state
+// - 3 Status().Update() operations: Record success, read-only, and error states
 //
 // Path breakdown:
 // - Happy path (create/update): 3 calls = Get + UpsertPipeline (Fleet API) + Status().Update()
+// - Read-only path: 3 calls = Get + GetPipeline (Fleet API) + Status().Update()
 // - Finalizer addition: 2 calls = Get + Update, then returns immediately for re-reconciliation
 // - Delete path: 3 calls = Get + DeletePipeline (Fleet API) + Update (finalizer removal)
-// - ObservedGeneration skip: 1 call = Get only, no further processing (spec unchanged)
+// - ObservedGeneration skip: 1 call = Get only, no further processing
 //
 // All API calls are justified and cannot be eliminated without breaking controller semantics.
 //
@@ -91,6 +92,7 @@ const (
 	reasonValidationError = "ValidationError"
 	reasonDeleting        = "Deleting"
 	reasonDeleteFailed    = "DeleteFailed"
+	reasonReadOnly        = "ReadOnly"
 
 	// Event reasons
 	eventReasonSynced         = "Synced"
@@ -102,10 +104,12 @@ const (
 	eventReasonValidationFail = "ValidationFailed"
 	eventReasonRateLimited    = "RateLimited"
 	eventReasonRecreated      = "Recreated"
+	eventReasonReadOnly       = "ReadOnly"
 )
 
 // FleetPipelineClient defines the interface for interacting with Fleet Management API
 type FleetPipelineClient interface {
+	GetPipeline(ctx context.Context, id string) (*fleetclient.Pipeline, error)
 	UpsertPipeline(ctx context.Context, req *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error)
 	DeletePipeline(ctx context.Context, id string) error
 }
@@ -206,14 +210,26 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// 4. Check if reconciliation is paused
 	if isPaused(pipeline) {
+		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
 	}
 
-	// 5. Check if reconciliation is needed (observedGeneration pattern)
-	if pipeline.Status.ObservedGeneration == pipeline.Generation {
+	readOnly := isReadOnly(pipeline)
+
+	// 5. Check if reconciliation is needed (observedGeneration pattern).
+	// import-mode is an annotation, so ownership-mode changes do not bump
+	// metadata.generation. Include the last observed mode in the skip decision.
+	if pipeline.Status.ObservedGeneration == pipeline.Generation && pipelineReconcileModeObserved(pipeline, readOnly) {
 		log.V(1).Info("pipeline already reconciled, skipping", "namespace", pipeline.Namespace, "name", pipeline.Name, "generation", pipeline.Generation)
 		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
+	}
+
+	if readOnly {
+		var readOnlyOutcome string
+		result, err := r.reconcileReadOnly(ctx, pipeline, &readOnlyOutcome)
+		outcome = readOnlyOutcome
+		return result, err
 	}
 
 	// 6. Reconcile normal case. The inner helpers write to normalOutcome via
@@ -244,6 +260,28 @@ func (r *PipelineReconciler) reconcileNormal(ctx context.Context, pipeline *flee
 	return r.updateStatusSuccess(ctx, pipeline, apiPipeline, outcome)
 }
 
+// reconcileReadOnly observes a Fleet pipeline without applying spec changes.
+// This is used for PipelineDiscovery read-only imports and Grafana automatic
+// pipelines, whose contents are owned outside this operator.
+func (r *PipelineReconciler) reconcileReadOnly(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, outcome *string) (ctrl.Result, error) {
+	id := readOnlyPipelineID(pipeline)
+	if id == "" {
+		err := fmt.Errorf("read-only pipeline %s/%s has no Fleet pipeline ID in status.id or %s annotation",
+			pipeline.Namespace, pipeline.Name, fleetmanagementv1alpha1.FleetPipelineIDAnnotation)
+		r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonReadOnly, "%v", err)
+		return r.updateStatusError(ctx, pipeline, reasonValidationError, err, outcome)
+	}
+
+	apiPipeline, err := r.FleetClient.GetPipeline(ctx, id)
+	if err != nil {
+		return r.handleReadOnlyAPIError(ctx, pipeline, err, outcome)
+	}
+	if apiPipeline.ID == "" {
+		apiPipeline.ID = id
+	}
+	return r.updateStatusReadOnly(ctx, pipeline, apiPipeline, outcome)
+}
+
 // reconcileDelete handles pipeline deletion. outcome is set to the metric
 // reason ("Deleted" on success, "DeleteFailed" / "SyncFailed" / status reason
 // on failure paths) so the Reconcile deferred counter records every outcome.
@@ -259,8 +297,9 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 	log.Info("deleting Pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", pipeline.Status.ID)
 
 	// Delete from Fleet Management if we have an ID
-	if pipeline.Status.ID != "" {
-		if err := r.FleetClient.DeletePipeline(ctx, pipeline.Status.ID); err != nil {
+	id := observedPipelineID(pipeline)
+	if id != "" {
+		if err := r.FleetClient.DeletePipeline(ctx, id); err != nil {
 			// Check if it's a 404 (already deleted)
 			if apiErr, ok := err.(*fleetclient.FleetAPIError); ok && apiErr.StatusCode == http.StatusNotFound {
 				log.Info("pipeline already deleted from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
@@ -275,7 +314,7 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 		} else {
 			log.Info("successfully deleted pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name)
 			r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonDeleted,
-				"Successfully deleted pipeline from Fleet Management (ID: %s)", pipeline.Status.ID)
+				"Successfully deleted pipeline from Fleet Management (ID: %s)", id)
 		}
 	}
 
@@ -312,18 +351,8 @@ func (r *PipelineReconciler) buildUpsertRequest(pipeline *fleetmanagementv1alpha
 		ConfigType: pipeline.Spec.ConfigType.ToFleetAPI(),
 	}
 
-	// Add source if specified, otherwise default to Kubernetes
-	if pipeline.Spec.Source != nil {
-		fleetPipeline.Source = &fleetclient.Source{
-			Type:      pipeline.Spec.Source.Type.ToFleetAPI(),
-			Namespace: pipeline.Spec.Source.Namespace,
-		}
-	} else {
-		// Default to Kubernetes source
-		fleetPipeline.Source = &fleetclient.Source{
-			Type:      fleetmanagementv1alpha1.SourceTypeKubernetes.ToFleetAPI(),
-			Namespace: fmt.Sprintf("%s/%s", pipeline.Namespace, pipeline.Name),
-		}
+	if source := fleetSourceFromSpec(pipeline.Spec.Source); source != nil {
+		fleetPipeline.Source = source
 	}
 
 	// Note: ID should NOT be included in UpsertPipeline requests.
@@ -422,6 +451,40 @@ func (r *PipelineReconciler) handleAPIError(ctx context.Context, pipeline *fleet
 	return r.updateStatusError(ctx, pipeline, reasonSyncFailed, err, outcome)
 }
 
+func (r *PipelineReconciler) handleReadOnlyAPIError(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, err error, outcome *string) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	var apiErr *fleetclient.FleetAPIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusTooManyRequests:
+			log.Info("rate limited while observing read-only pipeline, requeueing",
+				"namespace", pipeline.Namespace, "name", pipeline.Name)
+			r.emitEvent(pipeline, corev1.EventTypeWarning, eventReasonRateLimited,
+				"Rate limited by Fleet Management API while observing read-only pipeline, will retry in 10 seconds")
+			*outcome = outcomeRateLimited
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		case http.StatusBadRequest:
+			r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonReadOnly,
+				"Failed to observe read-only pipeline: %s", apiErr.Message)
+			return r.updateStatusError(ctx, pipeline, reasonValidationError, err, outcome)
+		default:
+			log.Error(err, "failed to observe read-only pipeline",
+				"namespace", pipeline.Namespace, "name", pipeline.Name,
+				"statusCode", apiErr.StatusCode, "message", apiErr.Message)
+			r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonReadOnly,
+				"Failed to observe read-only pipeline (HTTP %d): %s", apiErr.StatusCode, apiErr.Message)
+			return r.updateStatusError(ctx, pipeline, reasonReadOnly, err, outcome)
+		}
+	}
+
+	log.Error(err, "failed to observe read-only pipeline",
+		"namespace", pipeline.Namespace, "name", pipeline.Name)
+	r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonReadOnly,
+		"Failed to observe read-only pipeline: %v", err)
+	return r.updateStatusError(ctx, pipeline, reasonReadOnly, err, outcome)
+}
+
 // updateStatusSuccess updates the status after successful sync. outcome is
 // set to reasonSynced (or "NoOp" / "SyncFailed" on retryable conflict /
 // non-conflict status update failure paths) so the deferred Reconcile
@@ -449,6 +512,7 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 	if apiPipeline.UpdatedAt != nil {
 		pipeline.Status.UpdatedAt = &metav1.Time{Time: *apiPipeline.UpdatedAt}
 	}
+	pipeline.Status.Source = pipelineSourceFromFleet(apiPipeline.Source)
 
 	// Capture previous Ready condition state to detect transitions
 	oldCondition := meta.FindStatusCondition(pipeline.Status.Conditions, conditionTypeReady)
@@ -518,6 +582,53 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 
 	*outcome = reasonSynced
 	log.Info("successfully synced pipeline", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", apiPipeline.ID, "generation", pipeline.Generation)
+	return ctrl.Result{}, nil
+}
+
+func (r *PipelineReconciler) updateStatusReadOnly(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, apiPipeline *fleetclient.Pipeline, outcome *string) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	pipeline.Status.ID = apiPipeline.ID
+	pipeline.Status.ObservedGeneration = pipeline.Generation
+	if apiPipeline.CreatedAt != nil {
+		pipeline.Status.CreatedAt = &metav1.Time{Time: *apiPipeline.CreatedAt}
+	}
+	if apiPipeline.UpdatedAt != nil {
+		pipeline.Status.UpdatedAt = &metav1.Time{Time: *apiPipeline.UpdatedAt}
+	}
+	pipeline.Status.Source = pipelineSourceFromFleet(apiPipeline.Source)
+
+	meta.SetStatusCondition(&pipeline.Status.Conditions, metav1.Condition{
+		Type:               conditionTypeReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonReadOnly,
+		Message:            "Pipeline is read-only; observed Fleet Management state without applying spec changes",
+		ObservedGeneration: pipeline.Generation,
+	})
+	meta.SetStatusCondition(&pipeline.Status.Conditions, metav1.Condition{
+		Type:               conditionTypeSynced,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonReadOnly,
+		Message:            fmt.Sprintf("Observed read-only pipeline, ID: %s", apiPipeline.ID),
+		ObservedGeneration: pipeline.Generation,
+	})
+
+	if err := r.Status().Update(ctx, pipeline); err != nil {
+		if apierrors.IsConflict(err) {
+			log.V(1).Info("read-only status update conflict, requeueing",
+				"namespace", pipeline.Namespace, "name", pipeline.Name)
+			*outcome = outcomeNoOp
+			return ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(err, "failed to update read-only pipeline status",
+			"namespace", pipeline.Namespace, "name", pipeline.Name)
+		*outcome = reasonSyncFailed
+		return ctrl.Result{}, err
+	}
+
+	r.emitEvent(pipeline, corev1.EventTypeNormal, eventReasonReadOnly,
+		"Observed read-only pipeline from Fleet Management")
+	*outcome = reasonReadOnly
 	return ctrl.Result{}, nil
 }
 
@@ -622,19 +733,85 @@ func (r *PipelineReconciler) updateStatusError(ctx context.Context, pipeline *fl
 	return ctrl.Result{}, originalErr
 }
 
-// isPaused reports whether the Pipeline's reconciliation is suspended.
-// spec.paused=true is overridden by the per-pipeline adopt annotation so
-// individual pipelines can be promoted from ReadOnly to managed status without
-// editing spec.
+// isPaused reports whether the Pipeline's operator reconciliation is suspended.
 func isPaused(pipeline *fleetmanagementv1alpha1.Pipeline) bool {
-	if !pipeline.Spec.Paused {
-		return false
+	return pipeline.Spec.Paused
+}
+
+func isReadOnly(pipeline *fleetmanagementv1alpha1.Pipeline) bool {
+	if pipeline.Spec.Source != nil && pipeline.Spec.Source.Type == fleetmanagementv1alpha1.SourceTypeGrafana {
+		return true
 	}
 	annotations := pipeline.GetAnnotations()
-	if annotations != nil && annotations[fleetmanagementv1alpha1.PipelineImportModeAnnotation] == fleetmanagementv1alpha1.PipelineImportModeAnnotationAdopt {
+	if annotations == nil {
 		return false
 	}
-	return true
+	mode := annotations[fleetmanagementv1alpha1.PipelineImportModeAnnotation]
+	if mode == fleetmanagementv1alpha1.PipelineImportModeAnnotationAdopt {
+		return false
+	}
+	return mode == fleetmanagementv1alpha1.PipelineImportModeAnnotationReadOnly
+}
+
+func observedPipelineID(pipeline *fleetmanagementv1alpha1.Pipeline) string {
+	if pipeline.Status.ID != "" {
+		return pipeline.Status.ID
+	}
+	return pipeline.GetAnnotations()[fleetmanagementv1alpha1.FleetPipelineIDAnnotation]
+}
+
+func readOnlyPipelineID(pipeline *fleetmanagementv1alpha1.Pipeline) string {
+	if id := pipeline.GetAnnotations()[fleetmanagementv1alpha1.FleetPipelineIDAnnotation]; id != "" {
+		return id
+	}
+	return pipeline.Status.ID
+}
+
+func pipelineReconcileModeObserved(pipeline *fleetmanagementv1alpha1.Pipeline, readOnly bool) bool {
+	ready := meta.FindStatusCondition(pipeline.Status.Conditions, conditionTypeReady)
+	if ready == nil {
+		return false
+	}
+
+	if readOnly && readOnlyPipelineID(pipeline) != "" && pipeline.Status.ID != "" && pipeline.Status.ID != readOnlyPipelineID(pipeline) {
+		return false
+	}
+
+	switch ready.Reason {
+	case reasonReadOnly:
+		return readOnly
+	case reasonValidationError:
+		return !readOnly || readOnlyPipelineID(pipeline) == ""
+	default:
+		return !readOnly
+	}
+}
+
+func fleetSourceFromSpec(source *fleetmanagementv1alpha1.PipelineSource) *fleetclient.Source {
+	if source == nil {
+		return nil
+	}
+	switch source.Type {
+	case fleetmanagementv1alpha1.SourceTypeGit,
+		fleetmanagementv1alpha1.SourceTypeTerraform,
+		fleetmanagementv1alpha1.SourceTypeGrafana:
+		return &fleetclient.Source{
+			Type:      source.Type.ToFleetAPI(),
+			Namespace: source.Namespace,
+		}
+	default:
+		return nil
+	}
+}
+
+func pipelineSourceFromFleet(source *fleetclient.Source) *fleetmanagementv1alpha1.PipelineSource {
+	if source == nil {
+		return nil
+	}
+	return &fleetmanagementv1alpha1.PipelineSource{
+		Type:      fleetmanagementv1alpha1.SourceTypeFromFleetAPI(source.Type),
+		Namespace: source.Namespace,
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

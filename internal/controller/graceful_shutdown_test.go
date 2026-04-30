@@ -54,6 +54,12 @@ func (s *stallingFleetClient) markStarted() {
 	s.startedOnce.Do(func() { close(s.startedC) })
 }
 
+func (s *stallingFleetClient) GetPipeline(ctx context.Context, _ string) (*fleetclient.Pipeline, error) {
+	s.markStarted()
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (s *stallingFleetClient) UpsertPipeline(ctx context.Context, _ *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error) {
 	s.markStarted()
 	<-ctx.Done()
