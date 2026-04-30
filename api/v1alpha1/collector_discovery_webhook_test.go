@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCollectorDiscovery_validatePollInterval(t *testing.T) {
+func TestCollectorDiscovery_validatePollInterval(t *testing.T) { //nolint:dupl
 	tests := []struct {
 		name     string
 		interval string
@@ -155,7 +155,7 @@ func TestCollectorDiscovery_validateDiscoverySelector(t *testing.T) {
 	}
 }
 
-func TestCollectorDiscovery_validateTargetNamespace(t *testing.T) {
+func TestCollectorDiscovery_validateTargetNamespace(t *testing.T) { //nolint:dupl
 	tests := []struct {
 		name      string
 		namespace string
