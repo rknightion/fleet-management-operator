@@ -32,7 +32,7 @@ import (
 // and never r.Update() on status fields.
 //
 // This test parses pipeline_controller.go AST to ensure:
-// - Exactly 2 Status().Update() calls exist (success and error paths)
+// - Exactly 3 Status().Update() calls exist (success, read-only, and error paths)
 // - Exactly 2 r.Update() calls exist (finalizer add and remove only)
 // - No additional r.Update() calls that might incorrectly modify status
 func TestStatusUpdatesUseSubresource(t *testing.T) {
@@ -82,9 +82,9 @@ func TestStatusUpdatesUseSubresource(t *testing.T) {
 		return true
 	})
 
-	// Assert exactly 2 Status().Update() calls (success and error paths)
-	assert.Equal(t, 2, statusUpdateCount,
-		"RECON-02 violation: Expected exactly 2 Status().Update() calls (success and error paths), found %d. "+
+	// Assert exactly 3 Status().Update() calls (success, read-only, and error paths)
+	assert.Equal(t, 3, statusUpdateCount,
+		"RECON-02 violation: Expected exactly 3 Status().Update() calls (success, read-only, and error paths), found %d. "+
 			"All Update() calls: %v",
 		statusUpdateCount, updateCallPositions)
 
