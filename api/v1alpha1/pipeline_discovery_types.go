@@ -54,13 +54,14 @@ const (
 type PipelineDiscoveryImportMode string
 
 const (
-	// PipelineDiscoveryImportModeAdopt creates Pipeline CRs with spec.paused=false.
-	// The Pipeline controller will reconcile them to Fleet Management immediately.
+	// PipelineDiscoveryImportModeAdopt creates Pipeline CRs that the Pipeline
+	// controller reconciles to Fleet Management immediately, except for
+	// Grafana-sourced pipelines which are always read-only.
 	PipelineDiscoveryImportModeAdopt PipelineDiscoveryImportMode = "Adopt"
 
-	// PipelineDiscoveryImportModeReadOnly creates Pipeline CRs with spec.paused=true.
-	// The Pipeline controller skips reconciliation until the user opts in via
-	// the fleetmanagement.grafana.com/import-mode=adopt annotation.
+	// PipelineDiscoveryImportModeReadOnly creates Pipeline CRs annotated with
+	// fleetmanagement.grafana.com/import-mode=read-only. The Pipeline
+	// controller observes Fleet state without creating or updating the pipeline.
 	PipelineDiscoveryImportModeReadOnly PipelineDiscoveryImportMode = "ReadOnly"
 )
 
@@ -125,7 +126,7 @@ type PipelineDiscoverySpec struct {
 	// ImportMode controls whether discovered Pipeline CRs are immediately
 	// managed (Adopt) or held read-only (ReadOnly). Individual Pipeline CRs
 	// can override this via the fleetmanagement.grafana.com/import-mode=adopt
-	// annotation.
+	// annotation, except Grafana-sourced pipelines which remain read-only.
 	// +optional
 	// +kubebuilder:default=Adopt
 	ImportMode PipelineDiscoveryImportMode `json:"importMode,omitempty"`

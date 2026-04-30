@@ -207,7 +207,12 @@ _Appears in:_
 | `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently<br />observed Collector spec. |  | Optional: \{\} <br /> |
 | `registered` _boolean_ | Registered is true if the collector has been observed in Fleet<br />Management (i.e. it has called RegisterCollector at least once). |  | Optional: \{\} <br /> |
 | `lastPing` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | LastPing is the most recent ping timestamp as reported by Fleet<br />Management. May lag relative to actual collector activity. |  | Optional: \{\} <br /> |
+| `name` _string_ | Name is the display name observed from Fleet Management. |  | Optional: \{\} <br /> |
+| `enabled` _boolean_ | Enabled is the remote configuration enabled state observed from Fleet<br />Management. nil means Fleet did not return the field. |  | Optional: \{\} <br /> |
 | `collectorType` _[CollectorType](#collectortype)_ | CollectorType is the type the collector reported on registration. |  | Enum: [Alloy OpenTelemetryCollector Unspecified] <br />Optional: \{\} <br /> |
+| `createdAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | CreatedAt is the timestamp when the collector was created in Fleet<br />Management. |  | Optional: \{\} <br /> |
+| `updatedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | UpdatedAt is the timestamp when the collector was last updated in Fleet<br />Management. |  | Optional: \{\} <br /> |
+| `markedInactiveAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | MarkedInactiveAt is the timestamp when Fleet Management marked the<br />collector inactive. |  | Optional: \{\} <br /> |
 | `localAttributes` _object (keys:string, values:string)_ | LocalAttributes are the attributes the collector reports about itself<br />(e.g. collector.os=linux). Read-only — set by the collector, not the<br />operator. |  | Optional: \{\} <br /> |
 | `effectiveRemoteAttributes` _object (keys:string, values:string)_ | EffectiveRemoteAttributes is the merged set of remote attributes last<br />successfully written to Fleet Management for this collector. In Phase<br />1 this is exactly spec.remoteAttributes; later phases add policy and<br />external-sync layers. |  | Optional: \{\} <br /> |
 | `attributeOwners` _[AttributeOwnership](#attributeownership) array_ | AttributeOwners records which CR owns each remote-attribute key. Used<br />by the controller to detect and remove keys when their owner stops<br />claiming them. |  | Optional: \{\} <br /> |
@@ -590,8 +595,8 @@ _Appears in:_
 
 | Field | Description |
 | --- | --- |
-| `Adopt` | PipelineDiscoveryImportModeAdopt creates Pipeline CRs with spec.paused=false.<br />The Pipeline controller will reconcile them to Fleet Management immediately.<br /> |
-| `ReadOnly` | PipelineDiscoveryImportModeReadOnly creates Pipeline CRs with spec.paused=true.<br />The Pipeline controller skips reconciliation until the user opts in via<br />the fleetmanagement.grafana.com/import-mode=adopt annotation.<br /> |
+| `Adopt` | PipelineDiscoveryImportModeAdopt creates Pipeline CRs that the Pipeline<br />controller reconciles to Fleet Management immediately, except for<br />Grafana-sourced pipelines which are always read-only.<br /> |
+| `ReadOnly` | PipelineDiscoveryImportModeReadOnly creates Pipeline CRs annotated with<br />fleetmanagement.grafana.com/import-mode=read-only. The Pipeline<br />controller observes Fleet state without creating or updating the pipeline.<br /> |
 
 
 #### PipelineDiscoveryOnRemovedAction
@@ -664,7 +669,7 @@ _Appears in:_
 | `pollInterval` _string_ | PollInterval is how often the controller calls ListPipelines.<br />Webhook-enforced minimum is 1 minute to protect the shared rate limiter. | 5m | Optional: \{\} <br /> |
 | `selector` _[PipelineDiscoverySelector](#pipelinediscoveryselector)_ | Selector filters which Fleet pipelines are imported.<br />An empty selector means "import every pipeline" (server-wide<br />ListPipelines call) — accepted but expensive on large fleets. |  | Optional: \{\} <br /> |
 | `targetNamespace` _string_ | TargetNamespace is the namespace where discovered Pipeline CRs are created.<br />Defaults to this PipelineDiscovery's own namespace. |  | Optional: \{\} <br /> |
-| `importMode` _[PipelineDiscoveryImportMode](#pipelinediscoveryimportmode)_ | ImportMode controls whether discovered Pipeline CRs are immediately<br />managed (Adopt) or held read-only (ReadOnly). Individual Pipeline CRs<br />can override this via the fleetmanagement.grafana.com/import-mode=adopt<br />annotation. | Adopt | Enum: [Adopt ReadOnly] <br />Optional: \{\} <br /> |
+| `importMode` _[PipelineDiscoveryImportMode](#pipelinediscoveryimportmode)_ | ImportMode controls whether discovered Pipeline CRs are immediately<br />managed (Adopt) or held read-only (ReadOnly). Individual Pipeline CRs<br />can override this via the fleetmanagement.grafana.com/import-mode=adopt<br />annotation, except Grafana-sourced pipelines which remain read-only. | Adopt | Enum: [Adopt ReadOnly] <br />Optional: \{\} <br /> |
 | `policy` _[PipelineDiscoveryPolicy](#pipelinediscoverypolicy)_ | Policy controls lifecycle decisions. |  | Optional: \{\} <br /> |
 
 
@@ -703,11 +708,12 @@ PipelineSource defines the origin source of the pipeline
 
 _Appears in:_
 - [PipelineSpec](#pipelinespec)
+- [PipelineStatus](#pipelinestatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `type` _[SourceType](#sourcetype)_ | Type specifies the source type (Git, Terraform, Kubernetes, Unspecified) | Kubernetes | Enum: [Git Terraform Kubernetes Unspecified] <br />Optional: \{\} <br /> |
-| `namespace` _string_ | Namespace provides additional context about the source<br />For Git: repository name or URL<br />For Terraform: workspace or module name<br />For Kubernetes: cluster name or context |  | Optional: \{\} <br /> |
+| `type` _[SourceType](#sourcetype)_ | Type specifies the source type (Git, Terraform, Grafana, Kubernetes, Unspecified).<br />Kubernetes is deprecated and kept only for backwards compatibility. |  | Enum: [Git Terraform Grafana Kubernetes Unspecified] <br />Optional: \{\} <br /> |
+| `namespace` _string_ | Namespace provides additional context about the source<br />For Git: repository name or URL<br />For Terraform: workspace or module name<br />For Grafana: automated workflow namespace |  | Optional: \{\} <br /> |
 
 
 #### PipelineSpec
@@ -728,8 +734,8 @@ _Appears in:_
 | `matchers` _string array_ | Matchers to assign pipeline to collectors. Uses Prometheus Alertmanager<br />syntax: key=value, key!=value, key=~regex, key!~regex. A maximum of<br />100 matchers may be set per pipeline; the cap exists to bound<br />validation and matching cost across the fleet (Fleet Management<br />evaluates matchers on every collector poll). Each matcher is<br />independently capped at 200 characters by the API server (OpenAPI<br />maxLength) and double-checked by the validating webhook. |  | MaxItems: 100 <br />items:MaxLength: 200 <br />items:MinLength: 1 <br />Optional: \{\} <br /> |
 | `enabled` _boolean_ | Enabled indicates whether the pipeline is enabled for collectors | true | Optional: \{\} <br /> |
 | `configType` _[ConfigType](#configtype)_ | ConfigType specifies the type of configuration (Alloy or OpenTelemetryCollector) | Alloy | Enum: [Alloy OpenTelemetryCollector] <br />Optional: \{\} <br /> |
-| `source` _[PipelineSource](#pipelinesource)_ | Source specifies the origin of the pipeline (Git, Terraform, Kubernetes, etc.)<br />Used for tracking and grouping pipelines by their source |  | Optional: \{\} <br /> |
-| `paused` _boolean_ | Paused suspends reconciliation. When true, the Pipeline controller does not<br />sync this resource to Fleet Management. Set by PipelineDiscovery when<br />importMode=ReadOnly; users may set the import-mode annotation to "adopt" on<br />individual Pipeline CRs to resume management without clearing this field. | false | Optional: \{\} <br /> |
+| `source` _[PipelineSource](#pipelinesource)_ | Source specifies the origin of the pipeline (Git, Terraform, Grafana, etc.)<br />Used for tracking and grouping pipelines by their source |  | Optional: \{\} <br /> |
+| `paused` _boolean_ | Paused suspends operator reconciliation. When true, the Pipeline<br />controller does not create or update this resource in Fleet Management.<br />Read-only ownership for discovered pipelines is represented by the<br />fleetmanagement.grafana.com/import-mode annotation, not by this field. | false | Optional: \{\} <br /> |
 
 
 #### PipelineStatus
@@ -749,6 +755,7 @@ _Appears in:_
 | `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed Pipeline spec |  | Optional: \{\} <br /> |
 | `createdAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | CreatedAt is the timestamp when the pipeline was created in Fleet Management |  | Optional: \{\} <br /> |
 | `updatedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | UpdatedAt is the timestamp when the pipeline was last updated in Fleet Management |  | Optional: \{\} <br /> |
+| `source` _[PipelineSource](#pipelinesource)_ | Source is the source observed from Fleet Management. |  | Optional: \{\} <br /> |
 | `revisionId` _string_ | RevisionID is the current revision ID from Fleet Management |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#condition-v1-meta) array_ | Conditions represent the current state of the Pipeline resource.<br />Standard condition types:<br />- "Ready": Pipeline is successfully synced to Fleet Management<br />- "Synced": Last reconciliation succeeded<br />The status of each condition is one of True, False, or Unknown. |  | Optional: \{\} <br /> |
 
@@ -863,7 +870,7 @@ _Underlying type:_ _string_
 SourceType represents the origin source of the pipeline
 
 _Validation:_
-- Enum: [Git Terraform Kubernetes Unspecified]
+- Enum: [Git Terraform Grafana Kubernetes Unspecified]
 
 _Appears in:_
 - [PipelineSource](#pipelinesource)
@@ -872,7 +879,8 @@ _Appears in:_
 | --- | --- |
 | `Git` | SourceTypeGit indicates pipeline originated from Git repository<br /> |
 | `Terraform` | SourceTypeTerraform indicates pipeline originated from Terraform<br /> |
-| `Kubernetes` | SourceTypeKubernetes indicates pipeline originated from this Kubernetes operator<br /> |
+| `Grafana` | SourceTypeGrafana indicates pipeline originated from an automated<br />Grafana Cloud workflow, such as Instrumentation Hub. Grafana-sourced<br />pipelines are read-only from this operator's perspective.<br /> |
+| `Kubernetes` | SourceTypeKubernetes indicates pipeline originated from this Kubernetes<br />operator. Deprecated: Fleet Management does not expose a Kubernetes<br />source enum; this value is accepted for compatibility but is not sent to<br />Fleet by new reconciles.<br /> |
 | `Unspecified` | SourceTypeUnspecified indicates pipeline source is not specified<br /> |
 
 

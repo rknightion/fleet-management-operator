@@ -16,19 +16,21 @@ and creates `Pipeline` CRs for each discovered pipeline.
 ### ImportMode: Adopt vs ReadOnly
 
 - `Adopt` (default): discovered Pipeline CRs are immediately reconciled by the
-  Pipeline controller. Direct Fleet edits are overwritten on the next reconcile.
-- `ReadOnly`: discovered Pipeline CRs have `spec.paused=true`. The Pipeline controller
-  skips reconciliation. Users promote individual pipelines by adding the annotation
+  Pipeline controller, except Grafana-sourced pipelines which are always read-only.
+  Direct Fleet edits are overwritten on the next reconcile.
+- `ReadOnly`: discovered Pipeline CRs are annotated with
+  `fleetmanagement.grafana.com/import-mode=read-only`. The Pipeline controller
+  observes Fleet state but does not upsert spec changes. Users promote individual
+  non-Grafana pipelines by changing the annotation to
   `fleetmanagement.grafana.com/import-mode=adopt`.
 
 This allows bulk discovery with selective adoption rather than all-or-nothing.
 
 ### spec.paused on Pipeline CRD
 
-Added `spec.paused: bool` to Pipeline. When true, the Pipeline controller skips
-the reconcile loop (after finalizer handling), making the CR read-only from an
-operator perspective. The per-pipeline annotation overrides this for individual
-promotion without requiring a spec edit.
+Added `spec.paused: bool` to Pipeline for explicit reconciliation suspension.
+Read-only ownership is modeled separately with the import-mode annotation so a
+read-only but active Fleet pipeline is not misrepresented as paused.
 
 ### Selector
 

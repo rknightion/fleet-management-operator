@@ -12,7 +12,7 @@ This operator enables declarative management of Fleet Management configuration p
 
 - **Declarative Pipeline Management**: Define pipelines as Kubernetes resources
 - **Dual Config Support**: Both Grafana Alloy and OpenTelemetry Collector configurations
-- **Source Tracking**: Track pipeline origins (Git, Terraform, Kubernetes)
+- **Source Tracking**: Track pipeline origins (Git, Terraform, Grafana)
 - **GitOps Friendly**: Manage pipelines through version control
 - **Status Tracking**: Pipeline status reflects Fleet Management state with conditions
 - **High Availability**: Leader election support for multiple replicas
@@ -177,9 +177,13 @@ Track pipeline origins with the `source` field:
 ```yaml
 spec:
   source:
-    type: Git  # or Terraform, Kubernetes, Unspecified
+    type: Git  # or Terraform, Grafana, Unspecified
     namespace: github.com/myorg/configs
 ```
+
+Grafana-sourced pipelines are observed as read-only. For discovered pipelines,
+`fleetmanagement.grafana.com/import-mode=read-only` means the operator mirrors
+Fleet status without creating or updating the remote pipeline.
 
 ## Troubleshooting
 
