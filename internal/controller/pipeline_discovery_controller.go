@@ -305,8 +305,17 @@ func (r *PipelineDiscoveryReconciler) upsertPipelineCRs(
 
 		if apierrors.IsNotFound(err) {
 			// Create a new Pipeline CR.
-			paused := pd.Spec.ImportMode == v1alpha1.PipelineDiscoveryImportModeReadOnly
 			enabled := fp.Enabled
+			source := pipelineSourceFromFleet(fp.Source)
+			readOnly := pd.Spec.ImportMode == v1alpha1.PipelineDiscoveryImportModeReadOnly ||
+				(source != nil && source.Type == v1alpha1.SourceTypeGrafana)
+			annotations := map[string]string{
+				v1alpha1.PipelineDiscoveredByAnnotation: pipelineDiscoveryOwnerAnnotation(pd),
+				v1alpha1.FleetPipelineIDAnnotation:      fp.ID,
+			}
+			if readOnly {
+				annotations[v1alpha1.PipelineImportModeAnnotation] = v1alpha1.PipelineImportModeAnnotationReadOnly
+			}
 			pipeline := &v1alpha1.Pipeline{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      crName,
@@ -315,10 +324,7 @@ func (r *PipelineDiscoveryReconciler) upsertPipelineCRs(
 						v1alpha1.PipelineDiscoveryNameLabel:      pd.Name,
 						v1alpha1.PipelineDiscoveryNamespaceLabel: pd.Namespace,
 					},
-					Annotations: map[string]string{
-						v1alpha1.PipelineDiscoveredByAnnotation: pipelineDiscoveryOwnerAnnotation(pd),
-						v1alpha1.FleetPipelineIDAnnotation:      fp.ID,
-					},
+					Annotations: annotations,
 				},
 				Spec: v1alpha1.PipelineSpec{
 					Name:       fp.Name,
@@ -326,7 +332,7 @@ func (r *PipelineDiscoveryReconciler) upsertPipelineCRs(
 					Matchers:   fp.Matchers,
 					Enabled:    &enabled,
 					ConfigType: v1alpha1.ConfigTypeFromFleetAPI(fp.ConfigType),
-					Paused:     paused,
+					Source:     source,
 				},
 			}
 			if createErr := r.Create(ctx, pipeline); createErr != nil {
