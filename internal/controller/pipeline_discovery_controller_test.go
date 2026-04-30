@@ -100,6 +100,10 @@ func withPipelineMatchers(matchers []string) func(*fleetclient.Pipeline) {
 	return func(p *fleetclient.Pipeline) { p.Matchers = matchers }
 }
 
+func withPipelineSource(source *fleetclient.Source) func(*fleetclient.Pipeline) {
+	return func(p *fleetclient.Pipeline) { p.Source = source }
+}
+
 // newPipelineDiscoveryTestScheme builds a runtime.Scheme for use with the
 // fake client. Registers both the standard k8s types and the operator's CRDs.
 func newPipelineDiscoveryTestScheme(t *testing.T) *runtime.Scheme {
@@ -205,6 +209,7 @@ func TestPipelineDiscovery_CreatesPipelineCRs(t *testing.T) {
 	assert.Equal(t, "default", p1.Labels[v1alpha1.PipelineDiscoveryNamespaceLabel])
 	assert.Equal(t, "default/pd-test", p1.Annotations[v1alpha1.PipelineDiscoveredByAnnotation])
 	assert.Equal(t, "id-1", p1.Annotations[v1alpha1.FleetPipelineIDAnnotation])
+	assert.Empty(t, p1.Annotations[v1alpha1.PipelineImportModeAnnotation])
 	assert.False(t, p1.Spec.Paused, "Adopt mode should leave Paused=false")
 
 	p2, ok := byName["pipeline-two"]
@@ -212,8 +217,8 @@ func TestPipelineDiscovery_CreatesPipelineCRs(t *testing.T) {
 	assert.Equal(t, "id-2", p2.Annotations[v1alpha1.FleetPipelineIDAnnotation])
 }
 
-// TestPipelineDiscovery_ReadOnlyMode verifies that ImportMode=ReadOnly sets
-// spec.paused=true on created Pipeline CRs.
+// TestPipelineDiscovery_ReadOnlyMode verifies that ImportMode=ReadOnly marks
+// created Pipeline CRs read-only without conflating that with spec.paused.
 func TestPipelineDiscovery_ReadOnlyMode(t *testing.T) {
 	fakeFleet := &fakePipelineDiscoveryClient{
 		pipelines: []*fleetclient.Pipeline{
@@ -235,7 +240,9 @@ func TestPipelineDiscovery_ReadOnlyMode(t *testing.T) {
 		client.MatchingLabels{v1alpha1.PipelineDiscoveryNameLabel: "pd-readonly"},
 	))
 	require.Len(t, pipelines.Items, 1)
-	assert.True(t, pipelines.Items[0].Spec.Paused, "ReadOnly import mode must set Paused=true")
+	assert.False(t, pipelines.Items[0].Spec.Paused, "ReadOnly import mode must not set Paused=true")
+	assert.Equal(t, v1alpha1.PipelineImportModeAnnotationReadOnly,
+		pipelines.Items[0].Annotations[v1alpha1.PipelineImportModeAnnotation])
 }
 
 // TestPipelineDiscovery_AdoptMode verifies that ImportMode=Adopt sets
@@ -262,6 +269,42 @@ func TestPipelineDiscovery_AdoptMode(t *testing.T) {
 	))
 	require.Len(t, pipelines.Items, 1)
 	assert.False(t, pipelines.Items[0].Spec.Paused, "Adopt import mode must set Paused=false")
+	assert.Empty(t, pipelines.Items[0].Annotations[v1alpha1.PipelineImportModeAnnotation])
+}
+
+// TestPipelineDiscovery_GrafanaSourceIsReadOnly verifies that Grafana-owned
+// pipelines remain read-only even when the discovery's import mode is Adopt.
+func TestPipelineDiscovery_GrafanaSourceIsReadOnly(t *testing.T) {
+	fakeFleet := &fakePipelineDiscoveryClient{
+		pipelines: []*fleetclient.Pipeline{
+			fleetPipeline("id-grafana", "grafana-pipeline", "some.config {}",
+				withPipelineSource(&fleetclient.Source{
+					Type:      "SOURCE_TYPE_GRAFANA",
+					Namespace: "instrumentation-hub",
+				})),
+		},
+	}
+
+	pd := newPD("default", "pd-grafana", v1alpha1.PipelineDiscoverySpec{
+		PollInterval: "5m",
+		ImportMode:   v1alpha1.PipelineDiscoveryImportModeAdopt,
+	})
+	r, c := newPipelineDiscoveryReconciler(t, fakeFleet, pd)
+
+	reconcileN(t, r, pdKey("default", "pd-grafana"), 1)
+
+	var pipelines v1alpha1.PipelineList
+	require.NoError(t, c.List(context.Background(), &pipelines,
+		client.InNamespace("default"),
+		client.MatchingLabels{v1alpha1.PipelineDiscoveryNameLabel: "pd-grafana"},
+	))
+	require.Len(t, pipelines.Items, 1)
+	assert.False(t, pipelines.Items[0].Spec.Paused, "Grafana ownership must not be modeled as paused")
+	assert.Equal(t, v1alpha1.PipelineImportModeAnnotationReadOnly,
+		pipelines.Items[0].Annotations[v1alpha1.PipelineImportModeAnnotation])
+	require.NotNil(t, pipelines.Items[0].Spec.Source)
+	assert.Equal(t, v1alpha1.SourceTypeGrafana, pipelines.Items[0].Spec.Source.Type)
+	assert.Equal(t, "instrumentation-hub", pipelines.Items[0].Spec.Source.Namespace)
 }
 
 // TestPipelineDiscovery_ScheduleCheck verifies that a second reconcile within
