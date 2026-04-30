@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -98,7 +98,7 @@ type PipelineDiscoveryReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	FleetClient PipelineDiscoveryFleetClient
-	Recorder    record.EventRecorder
+	Recorder    events.EventRecorder
 
 	// MaxConcurrentReconciles controls controller-runtime worker concurrency.
 	// Zero defaults to 1.
@@ -119,7 +119,7 @@ func (r *PipelineDiscoveryReconciler) now() time.Time {
 
 func (r *PipelineDiscoveryReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
-		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+		r.Recorder.Eventf(object, nil, eventtype, reason, reason, messageFmt, args...)
 	}
 }
 

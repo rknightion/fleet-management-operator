@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -97,20 +97,20 @@ type CollectorReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	FleetClient FleetCollectorClient
-	Recorder    record.EventRecorder
+	Recorder    events.EventRecorder
 }
 
 var _ reconcile.Reconciler = &CollectorReconciler{}
 
 func (r *CollectorReconciler) emitEvent(object runtime.Object, eventtype, reason, message string) {
 	if r.Recorder != nil {
-		r.Recorder.Event(object, eventtype, reason, message)
+		r.Recorder.Eventf(object, nil, eventtype, reason, reason, message)
 	}
 }
 
 func (r *CollectorReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
-		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+		r.Recorder.Eventf(object, nil, eventtype, reason, reason, messageFmt, args...)
 	}
 }
 
@@ -596,8 +596,20 @@ func (r *CollectorReconciler) updateStatusNotRegistered(ctx context.Context, col
 	readyMessage := fmt.Sprintf("Collector %q has not yet registered with Fleet Management", collector.Spec.ID)
 	if collector.Status.ObservedGeneration == collector.Generation &&
 		!collector.Status.Registered &&
-		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, collectorReasonNotRegistered, readyMessage, collector.Generation) &&
-		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeSynced, metav1.ConditionFalse, collectorReasonNotRegistered, "Awaiting collector registration", collector.Generation) {
+		collectorStatusConditionMatches(
+			collector.Status.Conditions,
+			conditionTypeReady,
+			collectorReasonNotRegistered,
+			readyMessage,
+			collector.Generation,
+		) &&
+		collectorStatusConditionMatches(
+			collector.Status.Conditions,
+			conditionTypeSynced,
+			collectorReasonNotRegistered,
+			"Awaiting collector registration",
+			collector.Generation,
+		) {
 		log.V(1).Info("collector NotRegistered status unchanged, skipping write",
 			"namespace", collector.Namespace, "name", collector.Name)
 		return ctrl.Result{RequeueAfter: notRegisteredRequeueAfter}, nil
@@ -642,8 +654,20 @@ func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *
 
 	formatted := formatConditionMessage(reason, originalErr)
 	if collector.Status.ObservedGeneration == collector.Generation &&
-		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, formatted, collector.Generation) &&
-		collectorStatusConditionMatches(collector.Status.Conditions, conditionTypeSynced, metav1.ConditionFalse, reason, formatted, collector.Generation) {
+		collectorStatusConditionMatches(
+			collector.Status.Conditions,
+			conditionTypeReady,
+			reason,
+			formatted,
+			collector.Generation,
+		) &&
+		collectorStatusConditionMatches(
+			collector.Status.Conditions,
+			conditionTypeSynced,
+			reason,
+			formatted,
+			collector.Generation,
+		) {
 		log.V(1).Info("collector error status unchanged, skipping write",
 			"namespace", collector.Namespace, "name", collector.Name, "reason", reason)
 		if !shouldRetry(originalErr, reason) {
@@ -697,14 +721,13 @@ func (r *CollectorReconciler) updateStatusError(ctx context.Context, collector *
 func collectorStatusConditionMatches(
 	conditions []metav1.Condition,
 	condType string,
-	status metav1.ConditionStatus,
 	reason string,
 	message string,
 	observedGeneration int64,
 ) bool {
 	condition := meta.FindStatusCondition(conditions, condType)
 	return condition != nil &&
-		condition.Status == status &&
+		condition.Status == metav1.ConditionFalse &&
 		condition.Reason == reason &&
 		condition.Message == message &&
 		condition.ObservedGeneration == observedGeneration

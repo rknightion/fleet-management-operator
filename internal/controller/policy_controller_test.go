@@ -30,7 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -398,7 +398,7 @@ var _ = Describe("RemoteAttributePolicy Truncation", func() {
 				WithObjects(objs...).
 				Build()
 
-			fakeRecorder := record.NewFakeRecorder(64)
+			fakeRecorder := events.NewFakeRecorder(64)
 			r := &RemoteAttributePolicyReconciler{
 				Client:   fakeClient,
 				Scheme:   scheme.Scheme,
@@ -471,7 +471,7 @@ var _ = Describe("RemoteAttributePolicy Truncation", func() {
 			WithStatusSubresource(&fleetmanagementv1alpha1.RemoteAttributePolicy{}).
 			WithObjects(objs...).
 			Build()
-		fakeRecorder := record.NewFakeRecorder(64)
+		fakeRecorder := events.NewFakeRecorder(64)
 		r := &RemoteAttributePolicyReconciler{
 			Client:   fakeClient,
 			Scheme:   scheme.Scheme,
@@ -518,7 +518,7 @@ var _ = Describe("RemoteAttributePolicy Truncation", func() {
 // drainTruncatedEvents pulls events off a fake recorder's Events channel
 // without blocking and returns the count of Warning events whose message
 // contains "Truncated".
-func drainTruncatedEvents(rec *record.FakeRecorder) int {
+func drainTruncatedEvents(rec *events.FakeRecorder) int {
 	count := 0
 	for {
 		select {

@@ -119,14 +119,14 @@ var _ = BeforeSuite(func() {
 	err = (&RemoteAttributePolicyReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("policy-controller"),
+		Recorder: mgr.GetEventRecorder("policy-controller"),
 	}).SetupWithManager(ctx, mgr)
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&ExternalAttributeSyncReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("externalattributesync-controller"),
+		Recorder: mgr.GetEventRecorder("externalattributesync-controller"),
 		Factory: func(_ fleetmanagementv1alpha1.ExternalSource, _ *corev1.Secret) (sources.Source, error) {
 			if externalSyncFakeSource == nil {
 				return nil, fmt.Errorf("test did not set externalSyncFakeSource")
@@ -140,14 +140,14 @@ var _ = BeforeSuite(func() {
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
 		FleetClient: collectorMock,
-		Recorder:    mgr.GetEventRecorderFor("collectordiscovery-controller"),
+		Recorder:    mgr.GetEventRecorder("collectordiscovery-controller"),
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&TenantPolicyReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("tenantpolicy-controller"),
+		Recorder: mgr.GetEventRecorder("tenantpolicy-controller"),
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 

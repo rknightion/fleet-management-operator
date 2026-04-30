@@ -420,7 +420,7 @@ func main() {
 	if err := (&controller.TenantPolicyReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("tenantpolicy-controller"),
+		Recorder: mgr.GetEventRecorder("tenantpolicy-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantPolicy")
 		os.Exit(1)
@@ -481,7 +481,7 @@ func main() {
 			Client:      mgr.GetClient(),
 			Scheme:      mgr.GetScheme(),
 			FleetClient: fleetClient,
-			Recorder:    mgr.GetEventRecorderFor("pipeline-controller"),
+			Recorder:    mgr.GetEventRecorder("pipeline-controller"),
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Pipeline")
 			os.Exit(1)
@@ -498,7 +498,7 @@ func main() {
 			Client:      mgr.GetClient(),
 			Scheme:      mgr.GetScheme(),
 			FleetClient: fleetClient,
-			Recorder:    mgr.GetEventRecorderFor("collector-controller"),
+			Recorder:    mgr.GetEventRecorder("collector-controller"),
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Collector")
 			os.Exit(1)
@@ -514,7 +514,7 @@ func main() {
 		if err := (&controller.RemoteAttributePolicyReconciler{
 			Client:                  mgr.GetClient(),
 			Scheme:                  mgr.GetScheme(),
-			Recorder:                mgr.GetEventRecorderFor("policy-controller"),
+			Recorder:                mgr.GetEventRecorder("policy-controller"),
 			MaxConcurrentReconciles: policyMaxConcurrent,
 		}).SetupWithManager(context.Background(), mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "RemoteAttributePolicy")
@@ -531,7 +531,7 @@ func main() {
 		if err := (&controller.ExternalAttributeSyncReconciler{
 			Client:                  mgr.GetClient(),
 			Scheme:                  mgr.GetScheme(),
-			Recorder:                mgr.GetEventRecorderFor("externalattributesync-controller"),
+			Recorder:                mgr.GetEventRecorder("externalattributesync-controller"),
 			Factory:                 buildExternalSourceFactory(),
 			MaxConcurrentReconciles: syncMaxConcurrent,
 			SourceTargetRate:        syncSourceTargetRate,
@@ -552,7 +552,7 @@ func main() {
 			Client:                  mgr.GetClient(),
 			Scheme:                  mgr.GetScheme(),
 			FleetClient:             fleetClient,
-			Recorder:                mgr.GetEventRecorderFor("collectordiscovery-controller"),
+			Recorder:                mgr.GetEventRecorder("collectordiscovery-controller"),
 			MaxConcurrentReconciles: discoveryMaxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "CollectorDiscovery")
@@ -570,7 +570,7 @@ func main() {
 			Client:                  mgr.GetClient(),
 			Scheme:                  mgr.GetScheme(),
 			FleetClient:             fleetClient,
-			Recorder:                mgr.GetEventRecorderFor("pipeline-discovery-controller"),
+			Recorder:                mgr.GetEventRecorder("pipeline-discovery-controller"),
 			MaxConcurrentReconciles: pipelineDiscoveryMaxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "PipelineDiscovery")

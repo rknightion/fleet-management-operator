@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -93,7 +93,7 @@ const (
 type RemoteAttributePolicyReconciler struct {
 	client.Client
 	Scheme                  *runtime.Scheme
-	Recorder                record.EventRecorder
+	Recorder                events.EventRecorder
 	MaxConcurrentReconciles int
 }
 
@@ -101,13 +101,13 @@ var _ reconcile.Reconciler = &RemoteAttributePolicyReconciler{}
 
 func (r *RemoteAttributePolicyReconciler) emitEvent(object runtime.Object, eventtype, reason, message string) {
 	if r.Recorder != nil {
-		r.Recorder.Event(object, eventtype, reason, message)
+		r.Recorder.Eventf(object, nil, eventtype, reason, reason, message)
 	}
 }
 
 func (r *RemoteAttributePolicyReconciler) emitEventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	if r.Recorder != nil {
-		r.Recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+		r.Recorder.Eventf(object, nil, eventtype, reason, reason, messageFmt, args...)
 	}
 }
 

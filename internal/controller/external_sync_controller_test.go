@@ -33,7 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -613,7 +613,7 @@ func buildRecordsForCollectors(n int) []sources.Record {
 
 // drainExternalSyncCapExceededEvents pulls events off the recorder's channel
 // without blocking and returns the count whose reason is OwnedKeysExceeded.
-func drainExternalSyncCapExceededEvents(rec *record.FakeRecorder) int {
+func drainExternalSyncCapExceededEvents(rec *events.FakeRecorder) int {
 	count := 0
 	for {
 		select {
@@ -694,7 +694,7 @@ var _ = Describe("ExternalAttributeSync owned-key cap", func() {
 				WithStatusSubresource(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
 				WithObjects(objs...).
 				Build()
-			fakeRecorder := record.NewFakeRecorder(64)
+			fakeRecorder := events.NewFakeRecorder(64)
 			testSrc := &fakeSource{}
 			testSrc.setRecords(buildRecordsForCollectors(tt.n))
 
@@ -868,7 +868,7 @@ var _ = Describe("ExternalAttributeSync owned-key cap", func() {
 			WithStatusSubresource(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
 			WithObjects(objs...).
 			Build()
-		fakeRecorder := record.NewFakeRecorder(64)
+		fakeRecorder := events.NewFakeRecorder(64)
 		testSrc := &fakeSource{}
 		testSrc.setRecords(buildRecordsForCollectors(1500))
 
@@ -954,7 +954,7 @@ var _ = Describe("ExternalAttributeSync owned-key cap", func() {
 			WithStatusSubresource(&fleetmanagementv1alpha1.ExternalAttributeSync{}).
 			WithObjects(sync, collector).
 			Build()
-		fakeRecorder := record.NewFakeRecorder(64)
+		fakeRecorder := events.NewFakeRecorder(64)
 		testSrc := &fakeSource{}
 		testSrc.setRecords([]sources.Record{
 			{"hostname": "id-00000", "env": "prod"},
