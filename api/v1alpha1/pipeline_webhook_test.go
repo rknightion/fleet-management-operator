@@ -298,6 +298,104 @@ func TestPipeline_ValidateUpdate(t *testing.T) {
 	}
 }
 
+func TestPipeline_ValidateSource(t *testing.T) {
+	tests := []struct {
+		name         string
+		source       *PipelineSource
+		annotations  map[string]string
+		wantErr      bool
+		errMsg       string
+		wantWarnings int
+	}{
+		{
+			name:   "nil source is valid",
+			source: nil,
+		},
+		{
+			name: "Git requires namespace",
+			source: &PipelineSource{
+				Type: SourceTypeGit,
+			},
+			wantErr: true,
+			errMsg:  "spec.source.namespace is required",
+		},
+		{
+			name: "Grafana source is valid with namespace",
+			source: &PipelineSource{
+				Type:      SourceTypeGrafana,
+				Namespace: "instrumentation-hub",
+			},
+		},
+		{
+			name: "Grafana source cannot be adopted",
+			source: &PipelineSource{
+				Type:      SourceTypeGrafana,
+				Namespace: "instrumentation-hub",
+			},
+			annotations: map[string]string{
+				PipelineImportModeAnnotation: PipelineImportModeAnnotationAdopt,
+			},
+			wantErr: true,
+			errMsg:  "grafana-sourced pipelines are read-only",
+		},
+		{
+			name: "Unspecified source must not include namespace",
+			source: &PipelineSource{
+				Type:      SourceTypeUnspecified,
+				Namespace: "default",
+			},
+			wantErr: true,
+			errMsg:  "spec.source.namespace must be empty",
+		},
+		{
+			name: "Kubernetes source is accepted with warning",
+			source: &PipelineSource{
+				Type:      SourceTypeKubernetes,
+				Namespace: "cluster-a",
+			},
+			wantWarnings: 1,
+		},
+		{
+			name: "invalid source type is rejected",
+			source: &PipelineSource{
+				Type:      SourceType("Jenkins"),
+				Namespace: "ci",
+			},
+			wantErr: true,
+			errMsg:  "invalid source type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pipeline := &Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "source-test",
+					Namespace:   "default",
+					Annotations: tt.annotations,
+				},
+				Spec: PipelineSpec{
+					Contents:   "prometheus.scrape \"default\" { }",
+					ConfigType: ConfigTypeAlloy,
+					Source:     tt.source,
+				},
+			}
+
+			warnings, err := (&pipelineValidator{}).ValidateCreate(context.Background(), pipeline)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCreate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && err != nil && tt.errMsg != "" && !contains(err.Error(), tt.errMsg) {
+				t.Errorf("ValidateCreate() error = %v, should contain %v", err, tt.errMsg)
+			}
+			if len(warnings) != tt.wantWarnings {
+				t.Errorf("ValidateCreate() warnings = %v, want %d", warnings, tt.wantWarnings)
+			}
+		})
+	}
+}
+
 func TestValidateMatcherSyntax(t *testing.T) {
 	tests := []struct {
 		name    string
