@@ -124,6 +124,15 @@ func (m *mockFleetCollectorClient) register(c *fleetclient.Collector) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := *c
+	cp.Enabled = copyTestBoolPtr(c.Enabled)
+	if c.RemoteAttributes != nil {
+		cp.RemoteAttributes = make(map[string]string, len(c.RemoteAttributes))
+		maps.Copy(cp.RemoteAttributes, c.RemoteAttributes)
+	}
+	if c.LocalAttributes != nil {
+		cp.LocalAttributes = make(map[string]string, len(c.LocalAttributes))
+		maps.Copy(cp.LocalAttributes, c.LocalAttributes)
+	}
 	m.collectors[c.ID] = &cp
 }
 
@@ -159,9 +168,14 @@ func (m *mockFleetCollectorClient) GetCollector(_ context.Context, id string) (*
 	}
 
 	cp := *c
+	cp.Enabled = copyTestBoolPtr(c.Enabled)
 	if c.RemoteAttributes != nil {
 		cp.RemoteAttributes = make(map[string]string, len(c.RemoteAttributes))
 		maps.Copy(cp.RemoteAttributes, c.RemoteAttributes)
+	}
+	if c.LocalAttributes != nil {
+		cp.LocalAttributes = make(map[string]string, len(c.LocalAttributes))
+		maps.Copy(cp.LocalAttributes, c.LocalAttributes)
 	}
 	return &cp, nil
 }
@@ -249,6 +263,14 @@ func stripRemoteAttrPath(path string) string {
 		return path[len(prefix):]
 	}
 	return path
+}
+
+func copyTestBoolPtr(in *bool) *bool {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 type statusCountingClient struct {
@@ -358,6 +380,56 @@ var _ = Describe("Collector Controller", func() {
 		for _, op := range ops {
 			Expect(op.Op).To(Equal(fleetclient.OpAdd))
 		}
+	})
+
+	It("mirrors observed Fleet collector fields into status", func() {
+		ctx := context.Background()
+		enabled := false
+		createdAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+		updatedAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+		markedInactiveAt := time.Now().UTC().Truncate(time.Second)
+		collectorMock.register(&fleetclient.Collector{
+			ID:               collectorID,
+			Name:             "edge-host-42",
+			Enabled:          &enabled,
+			RemoteAttributes: map[string]string{},
+			LocalAttributes:  map[string]string{"collector.os": "linux"},
+			CollectorType:    "COLLECTOR_TYPE_ALLOY",
+			CreatedAt:        &createdAt,
+			UpdatedAt:        &updatedAt,
+			MarkedInactiveAt: &markedInactiveAt,
+		})
+
+		collector := &fleetmanagementv1alpha1.Collector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      collectorName,
+				Namespace: collectorNamespace,
+			},
+			Spec: fleetmanagementv1alpha1.CollectorSpec{
+				ID: collectorID,
+			},
+		}
+		Expect(k8sClient.Create(ctx, collector)).To(Succeed())
+
+		Eventually(func() bool {
+			err := k8sClient.Get(ctx, typeNamespacedName, collector)
+			if err != nil {
+				return false
+			}
+			return collector.Status.Registered
+		}, timeout, interval).Should(BeTrue())
+
+		Expect(collector.Status.Name).To(Equal("edge-host-42"))
+		Expect(collector.Status.Enabled).NotTo(BeNil())
+		Expect(*collector.Status.Enabled).To(BeFalse())
+		Expect(collector.Status.CreatedAt).NotTo(BeNil())
+		Expect(collector.Status.CreatedAt.Time.Equal(createdAt)).To(BeTrue())
+		Expect(collector.Status.UpdatedAt).NotTo(BeNil())
+		Expect(collector.Status.UpdatedAt.Time.Equal(updatedAt)).To(BeTrue())
+		Expect(collector.Status.MarkedInactiveAt).NotTo(BeNil())
+		Expect(collector.Status.MarkedInactiveAt.Time.Equal(markedInactiveAt)).To(BeTrue())
+		Expect(collector.Status.LastPing).NotTo(BeNil())
+		Expect(collector.Status.LastPing.Time.Equal(updatedAt)).To(BeTrue())
 	})
 
 	It("transitions to NotRegistered when the collector has no Fleet record", func() {
