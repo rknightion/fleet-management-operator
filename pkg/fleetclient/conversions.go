@@ -32,8 +32,15 @@ const (
 const (
 	sourceTypeGit         = "SOURCE_TYPE_GIT"
 	sourceTypeTerraform   = "SOURCE_TYPE_TERRAFORM"
+	sourceTypeGrafana     = "SOURCE_TYPE_GRAFANA"
 	sourceTypeUnspecified = "SOURCE_TYPE_UNSPECIFIED"
 )
+
+// The public Grafana HTTP API documents SOURCE_TYPE_GRAFANA for automatic
+// Grafana/Instrumentation Hub pipelines before fleet-management-api v1.2.0
+// exposes a named Go enum constant. Proto enum fields preserve unknown numeric
+// values, so value 3 is intentionally used here until the SDK names it.
+const sourceTypeGrafanaProto = pipelinev1.PipelineSource_SourceType(3)
 
 func pipelineToProto(p *Pipeline) *pipelinev1.Pipeline {
 	if p == nil {
@@ -118,16 +125,17 @@ func configTypeProtoToString(c pipelinev1.ConfigType) string {
 }
 
 // sourceTypeStringToProto maps the wire-public SourceType strings to the proto
-// enum. The proto enum has only UNSPECIFIED, GIT, and TERRAFORM, so the
-// historical "SOURCE_TYPE_KUBERNETES" string used by the operator's default
-// source falls through to UNSPECIFIED — matching the wire behavior the server
-// has always exhibited for unknown enum strings.
+// enum. Unsupported legacy strings, such as the operator's former
+// "SOURCE_TYPE_KUBERNETES" compatibility value, fall through to UNSPECIFIED
+// rather than inventing a Fleet source the SDK does not expose.
 func sourceTypeStringToProto(s string) pipelinev1.PipelineSource_SourceType {
 	switch s {
 	case sourceTypeGit:
 		return pipelinev1.PipelineSource_SOURCE_TYPE_GIT
 	case sourceTypeTerraform:
 		return pipelinev1.PipelineSource_SOURCE_TYPE_TERRAFORM
+	case sourceTypeGrafana:
+		return sourceTypeGrafanaProto
 	default:
 		return pipelinev1.PipelineSource_SOURCE_TYPE_UNSPECIFIED
 	}
@@ -139,6 +147,8 @@ func sourceTypeProtoToString(s pipelinev1.PipelineSource_SourceType) string {
 		return sourceTypeGit
 	case pipelinev1.PipelineSource_SOURCE_TYPE_TERRAFORM:
 		return sourceTypeTerraform
+	case sourceTypeGrafanaProto:
+		return sourceTypeGrafana
 	default:
 		return sourceTypeUnspecified
 	}

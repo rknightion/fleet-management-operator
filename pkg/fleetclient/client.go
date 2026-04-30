@@ -184,6 +184,18 @@ func normalizeBaseURL(baseURL string) string {
 	return trimmed
 }
 
+// GetPipeline retrieves a single pipeline by ID.
+func (c *Client) GetPipeline(ctx context.Context, id string) (*Pipeline, error) {
+	protoReq := &pipelinev1.GetPipelineRequest{Id: id}
+
+	resp, err := c.pipeline.GetPipeline(ctx, connect.NewRequest(protoReq))
+	if err != nil {
+		return nil, connectErrToFleetErr(err, "GetPipeline", id)
+	}
+
+	return pipelineFromProto(resp.Msg), nil
+}
+
 // UpsertPipeline creates a new pipeline or updates an existing one and returns
 // the server's view of the result.
 func (c *Client) UpsertPipeline(ctx context.Context, req *UpsertPipelineRequest) (*Pipeline, error) {
