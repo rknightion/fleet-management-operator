@@ -108,6 +108,13 @@ func (r *Pipeline) validatePipeline() (admission.Warnings, error) {
 		return nil, err
 	}
 
+	// 4. Validate source semantics.
+	warnings, err = r.validateSource()
+	if err != nil {
+		return nil, err
+	}
+	allWarnings = append(allWarnings, warnings...)
+
 	return allWarnings, nil
 }
 
@@ -210,6 +217,44 @@ func (r *Pipeline) validateMatchers() error {
 	}
 
 	return nil
+}
+
+// validateSource enforces Fleet source rules and keeps Grafana-owned
+// automatic pipelines read-only from this operator's perspective.
+func (r *Pipeline) validateSource() (admission.Warnings, error) {
+	if r.Spec.Source == nil {
+		return nil, nil
+	}
+
+	var warnings admission.Warnings
+	sourceType := r.Spec.Source.Type
+	namespace := strings.TrimSpace(r.Spec.Source.Namespace)
+
+	switch sourceType {
+	case "", SourceTypeUnspecified:
+		if namespace != "" {
+			return nil, fmt.Errorf("spec.source.namespace must be empty when spec.source.type is empty or 'Unspecified'")
+		}
+	case SourceTypeGit, SourceTypeTerraform, SourceTypeGrafana:
+		if namespace == "" {
+			return nil, fmt.Errorf("spec.source.namespace is required when spec.source.type is %q", sourceType)
+		}
+	case SourceTypeKubernetes:
+		warnings = append(warnings,
+			"spec.source.type=Kubernetes is deprecated and is not sent to Fleet Management; omit spec.source for operator-managed pipelines")
+	default:
+		return nil, fmt.Errorf("invalid source type: %s (must be 'Git', 'Terraform', 'Grafana', 'Kubernetes', or 'Unspecified')", sourceType)
+	}
+
+	if sourceType == SourceTypeGrafana {
+		annotations := r.GetAnnotations()
+		if annotations != nil && annotations[PipelineImportModeAnnotation] == PipelineImportModeAnnotationAdopt {
+			return nil, fmt.Errorf("grafana-sourced pipelines are read-only and cannot use %s=%s",
+				PipelineImportModeAnnotation, PipelineImportModeAnnotationAdopt)
+		}
+	}
+
+	return warnings, nil
 }
 
 // validateMatcherSyntax validates Prometheus Alertmanager matcher syntax
