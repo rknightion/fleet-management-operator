@@ -216,6 +216,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              createdAt:
+                description: |-
+                  CreatedAt is the timestamp when the collector was created in Fleet
+                  Management.
+                format: date-time
+                type: string
               effectiveRemoteAttributes:
                 additionalProperties:
                   type: string
@@ -225,6 +231,11 @@ spec:
                   1 this is exactly spec.remoteAttributes; later phases add policy and
                   external-sync layers.
                 type: object
+              enabled:
+                description: |-
+                  Enabled is the remote configuration enabled state observed from Fleet
+                  Management. nil means Fleet did not return the field.
+                type: boolean
               lastPing:
                 description: |-
                   LastPing is the most recent ping timestamp as reported by Fleet
@@ -239,6 +250,15 @@ spec:
                   (e.g. collector.os=linux). Read-only — set by the collector, not the
                   operator.
                 type: object
+              markedInactiveAt:
+                description: |-
+                  MarkedInactiveAt is the timestamp when Fleet Management marked the
+                  collector inactive.
+                format: date-time
+                type: string
+              name:
+                description: Name is the display name observed from Fleet Management.
+                type: string
               observedGeneration:
                 description: |-
                   ObservedGeneration reflects the generation of the most recently
@@ -250,6 +270,12 @@ spec:
                   Registered is true if the collector has been observed in Fleet
                   Management (i.e. it has called RegisterCollector at least once).
                 type: boolean
+              updatedAt:
+                description: |-
+                  UpdatedAt is the timestamp when the collector was last updated in Fleet
+                  Management.
+                format: date-time
+                type: string
             type: object
         required:
         - spec

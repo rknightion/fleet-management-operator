@@ -71,7 +71,7 @@ spec:
                   ImportMode controls whether discovered Pipeline CRs are immediately
                   managed (Adopt) or held read-only (ReadOnly). Individual Pipeline CRs
                   can override this via the fleetmanagement.grafana.com/import-mode=adopt
-                  annotation.
+                  annotation, except Grafana-sourced pipelines which remain read-only.
                 enum:
                 - Adopt
                 - ReadOnly
