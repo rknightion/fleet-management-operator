@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -53,6 +54,7 @@ type mockFleetClient struct {
 	mu sync.Mutex
 
 	pipelines               map[string]*fleetclient.Pipeline
+	getError                error
 	upsertError             error
 	deleteError             error
 	callCount               int
@@ -81,6 +83,7 @@ func (m *mockFleetClient) reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pipelines = make(map[string]*fleetclient.Pipeline)
+	m.getError = nil
 	m.upsertError = nil
 	m.deleteError = nil
 	m.callCount = 0
@@ -109,6 +112,31 @@ func (m *mockFleetClient) Has(id string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.pipelines[id]
 	return ok
+}
+
+func (m *mockFleetClient) GetPipeline(ctx context.Context, id string) (*fleetclient.Pipeline, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.shouldReturn404 {
+		return nil, &fleetclient.FleetAPIError{
+			StatusCode: http.StatusNotFound,
+			Operation:  "GetPipeline",
+			Message:    "pipeline not found",
+		}
+	}
+	if m.getError != nil {
+		return nil, m.getError
+	}
+	p, ok := m.pipelines[id]
+	if !ok {
+		return nil, &fleetclient.FleetAPIError{
+			StatusCode: http.StatusNotFound,
+			Operation:  "GetPipeline",
+			Message:    "pipeline not found",
+		}
+	}
+	cp := *p
+	return &cp, nil
 }
 
 func (m *mockFleetClient) UpsertPipeline(ctx context.Context, req *fleetclient.UpsertPipelineRequest) (*fleetclient.Pipeline, error) {
@@ -573,6 +601,56 @@ var _ = Describe("Pipeline Controller", func() {
 				Expect(req.Pipeline.Enabled).To(Equal(tc.want))
 			}
 		})
+
+		It("should omit source when spec.source is nil or legacy Kubernetes", func() {
+			reconciler := &PipelineReconciler{}
+
+			for _, source := range []*fleetmanagementv1alpha1.PipelineSource{
+				nil,
+				{
+					Type:      fleetmanagementv1alpha1.SourceTypeKubernetes,
+					Namespace: "cluster-a",
+				},
+			} {
+				pipeline := &fleetmanagementv1alpha1.Pipeline{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test",
+						Namespace: "default",
+					},
+					Spec: fleetmanagementv1alpha1.PipelineSpec{
+						Contents:   "test",
+						ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+						Source:     source,
+					},
+				}
+
+				req := reconciler.buildUpsertRequest(pipeline)
+				Expect(req.Pipeline.Source).To(BeNil())
+			}
+		})
+
+		It("should pass supported source values through to Fleet", func() {
+			reconciler := &PipelineReconciler{}
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "default",
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents:   "test",
+					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+					Source: &fleetmanagementv1alpha1.PipelineSource{
+						Type:      fleetmanagementv1alpha1.SourceTypeGrafana,
+						Namespace: "instrumentation-hub",
+					},
+				},
+			}
+
+			req := reconciler.buildUpsertRequest(pipeline)
+			Expect(req.Pipeline.Source).NotTo(BeNil())
+			Expect(req.Pipeline.Source.Type).To(Equal("SOURCE_TYPE_GRAFANA"))
+			Expect(req.Pipeline.Source.Namespace).To(Equal("instrumentation-hub"))
+		})
 	})
 
 	Context("Mock Fleet Client Tests", func() {
@@ -841,6 +919,126 @@ var _ = Describe("Pipeline Controller", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result).To(Equal(ctrl.Result{}))
 			Expect(outcome).To(Equal(reasonValidationError))
+		})
+
+		It("observes read-only pipelines without upserting", func() {
+			By("Setting up a read-only Pipeline with a Fleet ID annotation")
+			createdAt := time.Now().Add(-time.Hour)
+			updatedAt := time.Now()
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "readonly-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+					Finalizers: []string{pipelineFinalizer},
+					Annotations: map[string]string{
+						fleetmanagementv1alpha1.PipelineImportModeAnnotation: fleetmanagementv1alpha1.PipelineImportModeAnnotationReadOnly,
+						fleetmanagementv1alpha1.FleetPipelineIDAnnotation:    "fleet-readonly-1",
+					},
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents:   "local content should not be applied",
+					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			mock := newMockFleetClient()
+			mock.pipelines["fleet-readonly-1"] = &fleetclient.Pipeline{
+				ID:         "fleet-readonly-1",
+				Name:       "remote-readonly",
+				Contents:   "remote content",
+				Enabled:    true,
+				ConfigType: "CONFIG_TYPE_ALLOY",
+				Source: &fleetclient.Source{
+					Type:      "SOURCE_TYPE_GRAFANA",
+					Namespace: "instrumentation-hub",
+				},
+				CreatedAt: &createdAt,
+				UpdatedAt: &updatedAt,
+			}
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: mock,
+			}
+			key := types.NamespacedName{Namespace: pipeline.Namespace, Name: pipeline.Name}
+
+			result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(mock.CallCount()).To(Equal(0), "read-only pipelines must not call UpsertPipeline")
+
+			fresh := &fleetmanagementv1alpha1.Pipeline{}
+			Expect(fakeClient.Get(ctx, key, fresh)).To(Succeed())
+			Expect(fresh.Status.ID).To(Equal("fleet-readonly-1"))
+			Expect(fresh.Status.ObservedGeneration).To(Equal(fresh.Generation))
+			requireSource := fresh.Status.Source
+			Expect(requireSource).NotTo(BeNil())
+			Expect(requireSource.Type).To(Equal(fleetmanagementv1alpha1.SourceTypeGrafana))
+			Expect(requireSource.Namespace).To(Equal("instrumentation-hub"))
+
+			ready := meta.FindStatusCondition(fresh.Status.Conditions, conditionTypeReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+			Expect(ready.Reason).To(Equal(reasonReadOnly))
+		})
+
+		It("promotes read-only pipelines on annotation-only adopt changes", func() {
+			By("Setting up a previously observed read-only Pipeline with adopt annotation")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "adopt-pipeline",
+					Namespace:  "default",
+					Generation: 1,
+					Finalizers: []string{pipelineFinalizer},
+					Annotations: map[string]string{
+						fleetmanagementv1alpha1.PipelineImportModeAnnotation: fleetmanagementv1alpha1.PipelineImportModeAnnotationAdopt,
+						fleetmanagementv1alpha1.FleetPipelineIDAnnotation:    "fleet-adopt-1",
+					},
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents:   "prometheus.exporter.self \"alloy\" { }",
+					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
+				},
+				Status: fleetmanagementv1alpha1.PipelineStatus{
+					ID:                 "fleet-adopt-1",
+					ObservedGeneration: 1,
+					Conditions: []metav1.Condition{
+						{
+							Type:               conditionTypeReady,
+							Status:             metav1.ConditionTrue,
+							Reason:             reasonReadOnly,
+							ObservedGeneration: 1,
+						},
+					},
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			mock := newMockFleetClient()
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: mock,
+			}
+			key := types.NamespacedName{Namespace: pipeline.Namespace, Name: pipeline.Name}
+
+			result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(mock.CallCount()).To(Equal(1), "adopting a read-only Pipeline must not be skipped only because generation is unchanged")
 		})
 
 		It("should recreate pipeline inline when 404 with existing ID", func() {
