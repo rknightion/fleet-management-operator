@@ -17,190 +17,118 @@ limitations under the License.
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
-	"time"
+
+	"connectrpc.com/connect"
+	pipelinev1 "github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1"
+	"github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1/pipelinev1connect"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// Pipeline represents a Fleet Management pipeline
-type Pipeline struct {
-	Name       string     `json:"name"`
-	Contents   string     `json:"contents"`
-	Matchers   []string   `json:"matchers,omitempty"`
-	Enabled    bool       `json:"enabled"`
-	ID         string     `json:"id,omitempty"`
-	ConfigType string     `json:"configType,omitempty"`
-	Source     *Source    `json:"source,omitempty"`
-	CreatedAt  *time.Time `json:"createdAt,omitempty"`
-	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
-}
-
-// Source represents the origin of a pipeline
-type Source struct {
-	Type      string `json:"type,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-}
-
-// UpsertPipelineRequest is the request to create or update a pipeline
-type UpsertPipelineRequest struct {
-	Pipeline     *Pipeline `json:"pipeline"`
-	ValidateOnly bool      `json:"validateOnly,omitempty"`
-}
-
-// DeletePipelineRequest is the request to delete a pipeline
-type DeletePipelineRequest struct {
-	ID string `json:"id"`
-}
-
-// MockAPI is a mock Fleet Management API server
+// MockAPI is a connect-go compatible mock Fleet Management API server.
 type MockAPI struct {
+	pipelinev1connect.UnimplementedPipelineServiceHandler
+
 	pipelines sync.Map
 	idCounter atomic.Int64
 }
 
-// NewMockAPI creates a new mock API server
+// NewMockAPI creates a new mock API server.
 func NewMockAPI() *MockAPI {
 	m := &MockAPI{}
-	m.idCounter.Store(1000) // Start IDs at 1000
+	m.idCounter.Store(1000)
 	return m
 }
 
-func (m *MockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Log all requests
-	log.Printf("%s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-
-	// Health check endpoint
-	if r.Method == "GET" && r.URL.Path == "/healthz" {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-		return
+// UpsertPipeline creates or updates a pipeline by name and returns the server view.
+func (m *MockAPI) UpsertPipeline(
+	_ context.Context,
+	req *connect.Request[pipelinev1.UpsertPipelineRequest],
+) (*connect.Response[pipelinev1.Pipeline], error) {
+	in := req.Msg.GetPipeline()
+	if in == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("missing pipeline"))
 	}
 
-	// All other endpoints require basic auth
-	username, password, ok := r.BasicAuth()
-	if !ok || username == "" || password == "" {
-		log.Printf("Missing or invalid basic auth header")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
-		return
-	}
+	pipeline := proto.Clone(in).(*pipelinev1.Pipeline)
+	log.Printf("Upserting pipeline: name=%s, enabled=%v, configType=%s",
+		pipeline.GetName(), pipeline.GetEnabled(), pipeline.GetConfigType().String())
 
-	// Route based on path
-	switch r.URL.Path {
-	case "/pipeline.v1.PipelineService/UpsertPipeline":
-		m.handleUpsertPipeline(w, r)
-	case "/pipeline.v1.PipelineService/DeletePipeline":
-		m.handleDeletePipeline(w, r)
-	default:
-		log.Printf("Unknown path: %s", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"not found"}`))
-	}
-}
-
-func (m *MockAPI) handleUpsertPipeline(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req UpsertPipelineRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Failed to decode upsert request: %v", err)
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"invalid request: %v"}`, err)))
-		return
-	}
-
-	if req.Pipeline == nil {
-		log.Printf("Missing pipeline in request")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"missing pipeline"}`))
-		return
-	}
-
-	pipeline := req.Pipeline
-	log.Printf("Upserting pipeline: name=%s, enabled=%v, configType=%s", pipeline.Name, pipeline.Enabled, pipeline.ConfigType)
-
-	// Check if pipeline already exists by name
-	var existingID string
-	m.pipelines.Range(func(key, value interface{}) bool {
-		p := value.(*Pipeline)
-		if p.Name == pipeline.Name {
-			existingID = p.ID
-			return false // Stop iteration
+	var existing *pipelinev1.Pipeline
+	m.pipelines.Range(func(_, value any) bool {
+		p := value.(*pipelinev1.Pipeline)
+		if p.GetName() == pipeline.GetName() {
+			existing = p
+			return false
 		}
 		return true
 	})
 
-	// Generate or reuse ID
-	var id string
-	now := time.Now().UTC()
-	if existingID != "" {
-		// Update existing pipeline - reuse ID
-		id = existingID
-		pipeline.ID = id
-		pipeline.UpdatedAt = &now
-		// Preserve CreatedAt from existing
-		if existing, ok := m.pipelines.Load(id); ok {
-			pipeline.CreatedAt = existing.(*Pipeline).CreatedAt
+	now := timestamppb.Now()
+	if existing != nil {
+		id := existing.GetId()
+		pipeline.Id = &id
+		if existing.GetCreatedAt() != nil {
+			pipeline.CreatedAt = existing.GetCreatedAt()
+		} else {
+			pipeline.CreatedAt = now
 		}
+		pipeline.UpdatedAt = now
 		log.Printf("Updating existing pipeline with ID: %s", id)
 	} else {
-		// Create new pipeline - generate ID
-		id = fmt.Sprintf("%d", m.idCounter.Add(1))
-		pipeline.ID = id
-		pipeline.CreatedAt = &now
-		pipeline.UpdatedAt = &now
+		id := fmt.Sprintf("%d", m.idCounter.Add(1))
+		pipeline.Id = &id
+		pipeline.CreatedAt = now
+		pipeline.UpdatedAt = now
 		log.Printf("Creating new pipeline with ID: %s", id)
 	}
 
-	// Store pipeline
-	m.pipelines.Store(id, pipeline)
-
-	// Return pipeline
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(pipeline); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+	if !req.Msg.GetValidateOnly() {
+		m.pipelines.Store(pipeline.GetId(), proto.Clone(pipeline).(*pipelinev1.Pipeline))
 	}
+
+	return connect.NewResponse(pipeline), nil
 }
 
-func (m *MockAPI) handleDeletePipeline(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
+// DeletePipeline removes a pipeline by ID. It is idempotent.
+func (m *MockAPI) DeletePipeline(
+	_ context.Context,
+	req *connect.Request[pipelinev1.DeletePipelineRequest],
+) (*connect.Response[pipelinev1.DeletePipelineResponse], error) {
+	if req.Msg.GetId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("missing id"))
 	}
 
-	var req DeletePipelineRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Failed to decode delete request: %v", err)
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"invalid request: %v"}`, err)))
-		return
-	}
+	log.Printf("Deleting pipeline ID: %s", req.Msg.GetId())
+	m.pipelines.Delete(req.Msg.GetId())
+	return connect.NewResponse(&pipelinev1.DeletePipelineResponse{}), nil
+}
 
-	if req.ID == "" {
-		log.Printf("Missing ID in delete request")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"missing id"}`))
-		return
-	}
-
-	log.Printf("Deleting pipeline ID: %s", req.ID)
-
-	// Delete from store (idempotent - no error if not found)
-	m.pipelines.Delete(req.ID)
-
-	// Always return success (idempotent delete)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+// ListPipelines returns all stored pipelines, with the filters used by the operator.
+func (m *MockAPI) ListPipelines(
+	_ context.Context,
+	req *connect.Request[pipelinev1.ListPipelinesRequest],
+) (*connect.Response[pipelinev1.Pipelines], error) {
+	out := &pipelinev1.Pipelines{}
+	m.pipelines.Range(func(_, value any) bool {
+		p := value.(*pipelinev1.Pipeline)
+		if req.Msg.ConfigType != nil && p.GetConfigType() != req.Msg.GetConfigType() {
+			return true
+		}
+		if req.Msg.Enabled != nil && p.GetEnabled() != req.Msg.GetEnabled() {
+			return true
+		}
+		out.Pipelines = append(out.Pipelines, proto.Clone(p).(*pipelinev1.Pipeline))
+		return true
+	})
+	return connect.NewResponse(out), nil
 }
 
 func main() {
@@ -210,26 +138,41 @@ func main() {
 	}
 
 	api := NewMockAPI()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	path, handler := pipelinev1connect.NewPipelineServiceHandler(api)
+	mux.Handle(path, logRequests(handler))
 
 	addr := fmt.Sprintf(":%s", port)
 	log.Printf("Mock Fleet Management API starting on %s", addr)
 	log.Printf("Endpoints:")
-	log.Printf("  POST /pipeline.v1.PipelineService/UpsertPipeline")
-	log.Printf("  POST /pipeline.v1.PipelineService/DeletePipeline")
+	log.Printf("  %s", pipelinev1connect.PipelineServiceUpsertPipelineProcedure)
+	log.Printf("  %s", pipelinev1connect.PipelineServiceDeletePipelineProcedure)
+	log.Printf("  %s", pipelinev1connect.PipelineServiceListPipelinesProcedure)
 	log.Printf("  GET  /healthz")
 
 	certFile := os.Getenv("TLS_CERT_FILE")
 	keyFile := os.Getenv("TLS_KEY_FILE")
-	if certFile != "" || keyFile != "" {
-		if certFile == "" || keyFile == "" {
-			log.Fatalf("TLS_CERT_FILE and TLS_KEY_FILE must both be set when enabling TLS")
-		}
-		if err := http.ListenAndServeTLS(addr, certFile, keyFile, api); err != nil {
-			log.Fatalf("Server failed: %v", err)
+	if certFile != "" && keyFile != "" {
+		log.Printf("Starting HTTPS server with cert=%s key=%s", certFile, keyFile)
+		if err := http.ListenAndServeTLS(addr, certFile, keyFile, mux); err != nil {
+			log.Fatal(err)
 		}
 		return
 	}
-	if err := http.ListenAndServe(addr, api); err != nil {
-		log.Fatalf("Server failed: %v", err)
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Fatal(err)
 	}
+}
+
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		next.ServeHTTP(w, r)
+	})
 }
