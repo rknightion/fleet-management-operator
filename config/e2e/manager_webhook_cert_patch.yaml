@@ -11,6 +11,8 @@ spec:
         - name: SSL_CERT_FILE
           value: /tmp/mock-fleet-api-ca/ca.crt
         args:
+        - --metrics-bind-address=:8080
+        - --metrics-secure=false
         - --leader-elect
         - --health-probe-bind-address=:8081
         - --enable-collector-controller=true

@@ -122,6 +122,12 @@ var _ = BeforeSuite(func() {
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
+	By("waiting for controller-manager deployment to be available")
+	cmd = exec.Command("kubectl", "rollout", "status", "deployment/fleet-management-operator",
+		"-n", namespace, "--timeout=3m")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Controller manager deployment should become available")
+
 	By("waiting for webhook service to be ready")
 	Eventually(func(g Gomega) {
 		cmd := exec.Command("kubectl", "get", "service", "fleet-management-webhook-service", "-n", namespace)
@@ -142,6 +148,10 @@ var _ = BeforeSuite(func() {
 var _ = AfterSuite(func() {
 	By("cleaning up the curl pod for metrics")
 	cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found")
+	_, _ = utils.Run(cmd)
+
+	By("cleaning up the metrics ClusterRoleBinding")
+	cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
 	_, _ = utils.Run(cmd)
 
 	By("undeploying the controller-manager")

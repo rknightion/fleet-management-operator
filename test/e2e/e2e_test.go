@@ -126,9 +126,13 @@ var _ = Describe("Manager", Ordered, func() {
 
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
-			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=fm-crd-metrics-reader",
-				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
+			cmd := exec.Command("sh", "-c", fmt.Sprintf(
+				"kubectl create clusterrolebinding %s --clusterrole=fm-crd-metrics-reader "+
+					"--serviceaccount=%s:%s --dry-run=client -o yaml | kubectl apply -f -",
+				metricsRoleBindingName,
+				namespace,
+				serviceAccountName,
+			),
 			)
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create ClusterRoleBinding")
@@ -176,7 +180,7 @@ var _ = Describe("Manager", Ordered, func() {
 							"name": "curl",
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
-							"args": ["curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics"],
+							"args": ["curl -v -H 'Authorization: Bearer %s' http://%s.%s.svc.cluster.local:8080/metrics"],
 							"securityContext": {
 								"readOnlyRootFilesystem": true,
 								"allowPrivilegeEscalation": false,
