@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -157,9 +158,7 @@ func scanConditionCalls(root string) (triples []conditionTriple, unresolved []st
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse %s: %w", name, err)
 		}
-		for k, v := range collectStringConsts(f) {
-			pkgConsts[k] = v
-		}
+		maps.Copy(pkgConsts, collectStringConsts(f))
 		// Only controller files emit SetStatusCondition; helpers like
 		// metrics.go don't. We scan call sites only in *_controller.go to
 		// keep the CRD tagging tied to a specific reconciler.
@@ -171,10 +170,7 @@ func scanConditionCalls(root string) (triples []conditionTriple, unresolved []st
 	var pending []pendingParamReason
 	fileASTs := map[string]*ast.File{}
 	for _, pf := range files {
-		t, p, u, err := scanCallSites(root, pf.path, pf.fset, pf.file, pkgConsts)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", filepath.Base(pf.path), err)
-		}
+		t, p, u := scanCallSites(root, pf.path, pf.fset, pf.file, pkgConsts)
 		triples = append(triples, t...)
 		pending = append(pending, p...)
 		unresolved = append(unresolved, u...)
@@ -290,7 +286,11 @@ func scanConditionCalls(root string) (triples []conditionTriple, unresolved []st
 			}
 		}
 		if !anyHit {
-			unresolved = append(unresolved, fmt.Sprintf("%s Reason=%s (no call site provided a constant)", fr.SrcLoc, fr.ParamName))
+			unresolved = append(unresolved, fmt.Sprintf(
+				"%s Reason=%s (no call site provided a constant)",
+				fr.SrcLoc,
+				fr.ParamName,
+			))
 		}
 	}
 
@@ -335,7 +335,12 @@ type pendingParamReason struct {
 	SrcLoc    string // file:line of the SetStatusCondition call
 }
 
-func scanCallSites(root, path string, fset *token.FileSet, file *ast.File, consts map[string]string) ([]conditionTriple, []pendingParamReason, []string, error) {
+func scanCallSites(
+	root, path string,
+	fset *token.FileSet,
+	file *ast.File,
+	consts map[string]string,
+) ([]conditionTriple, []pendingParamReason, []string) {
 	relPath, err := filepath.Rel(root, path)
 	if err != nil {
 		relPath = path
@@ -437,11 +442,16 @@ func scanCallSites(root, path string, fset *token.FileSet, file *ast.File, const
 				return true
 			}
 			pos := fset.Position(call.Pos())
-			unresolved = append(unresolved, fmt.Sprintf("%s:%d Reason=%s (not a constant or parameter)", relPath, pos.Line, unresolvedReasonIdent))
+			unresolved = append(unresolved, fmt.Sprintf(
+				"%s:%d Reason=%s (not a constant or parameter)",
+				relPath,
+				pos.Line,
+				unresolvedReasonIdent,
+			))
 			return true
 		})
 	}
-	return triples, pending, unresolved, nil
+	return triples, pending, unresolved
 }
 
 // resolveLocalVarAssignments collects every distinct constant value assigned

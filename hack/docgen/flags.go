@@ -35,7 +35,13 @@ func generateFlags(root string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	chartCoverage, err := scanChartArgs(filepath.Join(root, "charts", "fleet-management-operator", "templates", "deployment.yaml"))
+	chartCoverage, err := scanChartArgs(filepath.Join(
+		root,
+		"charts",
+		"fleet-management-operator",
+		"templates",
+		"deployment.yaml",
+	))
 	if err != nil {
 		return nil, fmt.Errorf("scan chart deployment: %w", err)
 	}
@@ -82,7 +88,7 @@ where applicable. Defaults are conservative: every controller other than
 | Flag | Type | Default | Set by chart? | Description | Source |
 | --- | --- | --- | --- | --- | --- |
 {{- range .Flags }}
-| ` + "`--{{ .Name }}`" + ` | {{ .Type }} | {{ if .Default }}` + "`{{ .Default }}`" + `{{ else }}—{{ end }} | {{ .InChart }}{{ if .ChartLines }} ({{ .ChartLines }}){{ end }} | {{ .Usage }} | [{{ .Source }}](../{{ .Source }}) |
+` + flagsTemplateRow + `
 {{- end }}
 
 ## Chart coverage
@@ -99,6 +105,11 @@ flag to the manager binary today.
   workflows or out-of-tree integrations), or the chart is missing coverage.
   ` + "`no`" + ` rows are worth checking against new feature flags.
 `
+
+const flagsTemplateRow = "| `--{{ .Name }}` | {{ .Type }} | {{ if .Default }}`{{ .Default }}`" +
+	"{{ else }}—{{ end }} | " +
+	"{{ .InChart }}{{ if .ChartLines }} ({{ .ChartLines }}){{ end }} | " +
+	"{{ .Usage }} | [{{ .Source }}](../{{ .Source }}) |"
 
 func extractFlags(root, path string) ([]flagDecl, error) {
 	fset := token.NewFileSet()
@@ -253,9 +264,6 @@ func scanChartArgs(path string) (map[string]chartCoverage, error) {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "{{- if ") || strings.HasPrefix(trimmed, "{{ if ") {
 			depth++
-		}
-		if strings.HasPrefix(trimmed, "{{- else") || strings.HasPrefix(trimmed, "{{ else") {
-			// `else` does not change net depth.
 		}
 		if strings.HasPrefix(trimmed, "{{- end") || strings.HasPrefix(trimmed, "{{ end") {
 			if depth > 0 {

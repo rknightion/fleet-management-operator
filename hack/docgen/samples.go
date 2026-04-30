@@ -33,7 +33,7 @@ func generateSamples(root string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var samples []sampleDecl
+	samples := make([]sampleDecl, 0, len(entries))
 	for _, ent := range entries {
 		if ent.IsDir() || ent.Name() == "kustomization.yaml" || !strings.HasSuffix(ent.Name(), ".yaml") {
 			continue
@@ -76,8 +76,13 @@ carry a leading "# Description: …" comment; the generator fails otherwise.
 Working examples of each CRD this operator manages. Apply with:
 
 ` + "```" + `
-kubectl apply -f config/samples/<file>.yaml
+kubectl apply -n <namespace> -f config/samples/<namespaced-file>.yaml
+kubectl apply -f config/samples/tenant_policy_sample.yaml
 ` + "```" + `
+
+Namespaced samples intentionally omit ` + "`metadata.namespace`" + `. Apply them
+to the namespace that should own the CR. ` + "`TenantPolicy`" + ` is cluster-scoped
+and must not carry a namespace.
 
 For invalid-spec fixtures used by webhook tests, see
 [config/samples/invalid/README.md](../config/samples/invalid/README.md).
@@ -125,19 +130,21 @@ func readSample(root, path string) (sampleDecl, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if desc == "" && strings.HasPrefix(strings.TrimSpace(line), descPrefix) {
-			desc = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), descPrefix))
-			continue // drop description comment from rendered body
+		if desc == "" {
+			if after, ok := strings.CutPrefix(strings.TrimSpace(line), descPrefix); ok {
+				desc = strings.TrimSpace(after)
+				continue // drop description comment from rendered body
+			}
 		}
 		bodyLines = append(bodyLines, line)
-		if strings.HasPrefix(line, "kind:") {
-			kind = strings.TrimSpace(strings.TrimPrefix(line, "kind:"))
+		if after, ok := strings.CutPrefix(line, "kind:"); ok {
+			kind = strings.TrimSpace(after)
 		}
 		// metadata.name is the FIRST top-level `name:` after `metadata:`.
 		// We detect "indented `name:` after we've seen `metadata:`".
 		trimmed := strings.TrimLeft(line, " \t")
-		if !seenName && strings.HasPrefix(trimmed, "name:") && line != trimmed {
-			name = strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
+		if after, ok := strings.CutPrefix(trimmed, "name:"); !seenName && ok && line != trimmed {
+			name = strings.TrimSpace(after)
 			seenName = true
 		}
 	}

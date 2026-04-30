@@ -39,12 +39,14 @@ func generateMetrics(root string) ([]byte, error) {
 		{
 			Title: "Fleet API client",
 			Path:  filepath.Join("pkg", "fleetclient", "metrics.go"),
-			Intro: "Latency, error rate, and rate-limiter saturation for outbound calls to the Fleet Management API. Use these to alert on Fleet API regressions.",
+			Intro: "Latency, error rate, and rate-limiter saturation for outbound calls to the " +
+				"Fleet Management API. Use these to alert on Fleet API regressions.",
 		},
 		{
 			Title: "Controller reconciliation",
 			Path:  filepath.Join("internal", "controller", "metrics.go"),
-			Intro: "Per-CRD reconcile outcome counters and gauges that track owned attributes / discovered collectors. Use these to alert on reconciliation health.",
+			Intro: "Per-CRD reconcile outcome counters and gauges that track owned attributes / " +
+				"discovered collectors. Use these to alert on reconciliation health.",
 		},
 	}
 	type rendered struct {
@@ -52,7 +54,7 @@ func generateMetrics(root string) ([]byte, error) {
 		Intro   string
 		Metrics []metricDecl
 	}
-	var out []rendered
+	out := make([]rendered, 0, len(groups))
 	for _, g := range groups {
 		full := filepath.Join(root, g.Path)
 		metrics, err := extractMetrics(root, full)
@@ -99,10 +101,14 @@ slowness, both of which warrant paging.
 | Metric | Kind | Labels | Buckets | Description | Source |
 | --- | --- | --- | --- | --- | --- |
 {{- range .Metrics }}
-| ` + "`{{ .Name }}`" + ` | {{ .Kind }}{{ if .IsVec }}Vec{{ end }} | {{ if .Labels }}{{ range $i, $l := .Labels }}{{ if $i }}, {{ end }}` + "`{{ $l }}`" + `{{ end }}{{ else }}—{{ end }} | {{ if .Buckets }}` + "`{{ .Buckets }}`" + `{{ else }}—{{ end }} | {{ .Help }} | [{{ .Source }}](../{{ .Source }}) |
+` + metricsTemplateRow + `
 {{- end }}
 {{ end }}
 `
+
+const metricsTemplateRow = "| `{{ .Name }}` | {{ .Kind }}{{ if .IsVec }}Vec{{ end }} | " +
+	"{{ if .Labels }}{{ range $i, $l := .Labels }}{{ if $i }}, {{ end }}`{{ $l }}`{{ end }}{{ else }}—{{ end }} | " +
+	"{{ if .Buckets }}`{{ .Buckets }}`{{ else }}—{{ end }} | {{ .Help }} | [{{ .Source }}](../{{ .Source }}) |"
 
 // extractMetrics walks one Go source file for prometheus.New<Counter|Histogram|Gauge|Summary>[Vec]
 // calls. The current codebase consistently uses the literal-Opts-struct form,

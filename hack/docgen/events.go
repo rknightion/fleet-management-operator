@@ -41,7 +41,7 @@ func generateEvents(root string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var groups []eventGroup
+	groups := make([]eventGroup, 0, len(entries))
 	for _, ent := range entries {
 		name := ent.Name()
 		if ent.IsDir() || !strings.HasSuffix(name, "_controller.go") || strings.HasSuffix(name, "_test.go") {
