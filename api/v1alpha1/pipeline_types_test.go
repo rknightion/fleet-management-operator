@@ -82,9 +82,10 @@ func TestSourceType_ToFleetAPI(t *testing.T) {
 	}{
 		{"Git", SourceTypeGit, "SOURCE_TYPE_GIT"},
 		{"Terraform", SourceTypeTerraform, "SOURCE_TYPE_TERRAFORM"},
-		{"Kubernetes", SourceTypeKubernetes, "SOURCE_TYPE_KUBERNETES"},
+		{"Grafana", SourceTypeGrafana, "SOURCE_TYPE_GRAFANA"},
+		{"legacy Kubernetes maps to Unspecified", SourceTypeKubernetes, "SOURCE_TYPE_UNSPECIFIED"},
 		{"Unspecified", SourceTypeUnspecified, "SOURCE_TYPE_UNSPECIFIED"},
-		{"unknown defaults to Kubernetes", SourceType("Mystery"), "SOURCE_TYPE_KUBERNETES"},
+		{"unknown defaults to Unspecified", SourceType("Mystery"), "SOURCE_TYPE_UNSPECIFIED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,6 +102,7 @@ func TestSourceTypeFromFleetAPI(t *testing.T) {
 	}{
 		{"SOURCE_TYPE_GIT", "SOURCE_TYPE_GIT", SourceTypeGit},
 		{"SOURCE_TYPE_TERRAFORM", "SOURCE_TYPE_TERRAFORM", SourceTypeTerraform},
+		{"SOURCE_TYPE_GRAFANA", "SOURCE_TYPE_GRAFANA", SourceTypeGrafana},
 		{"SOURCE_TYPE_KUBERNETES", "SOURCE_TYPE_KUBERNETES", SourceTypeKubernetes},
 		{"SOURCE_TYPE_UNSPECIFIED", "SOURCE_TYPE_UNSPECIFIED", SourceTypeUnspecified},
 		{"empty string defaults to Unspecified", "", SourceTypeUnspecified},
@@ -114,11 +116,10 @@ func TestSourceTypeFromFleetAPI(t *testing.T) {
 }
 
 // TestSourceType_RoundTrip is the SourceType analogue of the ConfigType
-// round-trip. Note that SourceType has an asymmetry: the ToFleetAPI default
-// is Kubernetes, but FromFleetAPI default is Unspecified. This test only
-// covers the recognised values where round-tripping is meaningful.
+// round-trip. Kubernetes is intentionally excluded because it is a deprecated
+// CRD compatibility value with no Fleet API enum.
 func TestSourceType_RoundTrip(t *testing.T) {
-	for _, st := range []SourceType{SourceTypeGit, SourceTypeTerraform, SourceTypeKubernetes, SourceTypeUnspecified} {
+	for _, st := range []SourceType{SourceTypeGit, SourceTypeTerraform, SourceTypeGrafana, SourceTypeUnspecified} {
 		t.Run(string(st), func(t *testing.T) {
 			assert.Equal(t, st, SourceTypeFromFleetAPI(st.ToFleetAPI()))
 		})
