@@ -102,9 +102,33 @@ type CollectorStatus struct {
 	// +optional
 	LastPing *metav1.Time `json:"lastPing,omitempty"`
 
+	// Name is the display name observed from Fleet Management.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Enabled is the remote configuration enabled state observed from Fleet
+	// Management. nil means Fleet did not return the field.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
 	// CollectorType is the type the collector reported on registration.
 	// +optional
 	CollectorType CollectorType `json:"collectorType,omitempty"`
+
+	// CreatedAt is the timestamp when the collector was created in Fleet
+	// Management.
+	// +optional
+	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
+
+	// UpdatedAt is the timestamp when the collector was last updated in Fleet
+	// Management.
+	// +optional
+	UpdatedAt *metav1.Time `json:"updatedAt,omitempty"`
+
+	// MarkedInactiveAt is the timestamp when Fleet Management marked the
+	// collector inactive.
+	// +optional
+	MarkedInactiveAt *metav1.Time `json:"markedInactiveAt,omitempty"`
 
 	// LocalAttributes are the attributes the collector reports about itself
 	// (e.g. collector.os=linux). Read-only — set by the collector, not the
