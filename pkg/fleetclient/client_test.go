@@ -29,6 +29,7 @@ import (
 	pipelinev1 "github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1"
 	"github.com/grafana/fleet-management-api/api/gen/proto/go/pipeline/v1/pipelinev1connect"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestFleetAPIError_IsTransient tests the transient error classification logic
@@ -255,10 +256,21 @@ func TestFleetAPIError_ErrorsIs(t *testing.T) {
 // drive client tests through the real wire protocol.
 type fakePipelineHandler struct {
 	pipelinev1connect.UnimplementedPipelineServiceHandler
+	getResponse    *pipelinev1.Pipeline
+	getErr         error
 	upsertResponse *pipelinev1.Pipeline
 	upsertErr      error
 	deleteErr      error
+	captureGet     *pipelinev1.GetPipelineRequest
 	captureRequest *pipelinev1.UpsertPipelineRequest
+}
+
+func (h *fakePipelineHandler) GetPipeline(_ context.Context, req *connect.Request[pipelinev1.GetPipelineRequest]) (*connect.Response[pipelinev1.Pipeline], error) {
+	h.captureGet = req.Msg
+	if h.getErr != nil {
+		return nil, h.getErr
+	}
+	return connect.NewResponse(h.getResponse), nil
 }
 
 func (h *fakePipelineHandler) UpsertPipeline(_ context.Context, req *connect.Request[pipelinev1.UpsertPipelineRequest]) (*connect.Response[pipelinev1.Pipeline], error) {
@@ -377,6 +389,77 @@ func TestUpsertPipeline_Success(t *testing.T) {
 	assert.NotNil(t, handler.captureRequest)
 	assert.Equal(t, "test-pipeline", handler.captureRequest.GetPipeline().GetName())
 	assert.Equal(t, pipelinev1.ConfigType_CONFIG_TYPE_ALLOY, handler.captureRequest.GetPipeline().GetConfigType())
+}
+
+func TestGetPipeline_GrafanaSourceUnknownEnumRoundTrip(t *testing.T) {
+	id := "pipeline-456"
+	enabled := true
+	protoPipeline := &pipelinev1.Pipeline{
+		Name:     "grafana-auto",
+		Contents: "prometheus.scrape \"auto\" {}",
+		Enabled:  &enabled,
+		Id:       &id,
+		Source: &pipelinev1.PipelineSource{
+			Type:      pipelinev1.PipelineSource_SourceType(3),
+			Namespace: "instrumentation-hub",
+		},
+		ConfigType: pipelinev1.ConfigType_CONFIG_TYPE_ALLOY,
+	}
+
+	wire, err := proto.Marshal(protoPipeline)
+	assert.NoError(t, err)
+	var decoded pipelinev1.Pipeline
+	assert.NoError(t, proto.Unmarshal(wire, &decoded))
+	assert.Equal(t, pipelinev1.PipelineSource_SourceType(3), decoded.GetSource().GetType())
+
+	handler := &fakePipelineHandler{getResponse: &decoded}
+	client, cleanup := newConnectTestServer(t, handler)
+	defer cleanup()
+
+	got, err := client.GetPipeline(context.Background(), id)
+	assert.NoError(t, err)
+	assert.NotNil(t, got)
+	assert.NotNil(t, got.Source)
+	assert.Equal(t, sourceTypeGrafana, got.Source.Type)
+	assert.Equal(t, "instrumentation-hub", got.Source.Namespace)
+	assert.NotNil(t, handler.captureGet)
+	assert.Equal(t, id, handler.captureGet.GetId())
+}
+
+func TestUpsertPipeline_GrafanaSourceUsesUnknownEnumValue(t *testing.T) {
+	id := "pipeline-789"
+	enabled := true
+	handler := &fakePipelineHandler{upsertResponse: &pipelinev1.Pipeline{
+		Name:     "grafana-auto",
+		Contents: "prometheus.scrape \"auto\" {}",
+		Enabled:  &enabled,
+		Id:       &id,
+		Source: &pipelinev1.PipelineSource{
+			Type:      pipelinev1.PipelineSource_SourceType(3),
+			Namespace: "instrumentation-hub",
+		},
+		ConfigType: pipelinev1.ConfigType_CONFIG_TYPE_ALLOY,
+	}}
+	client, cleanup := newConnectTestServer(t, handler)
+	defer cleanup()
+
+	got, err := client.UpsertPipeline(context.Background(), &UpsertPipelineRequest{
+		Pipeline: &Pipeline{
+			Name:       "grafana-auto",
+			Contents:   "prometheus.scrape \"auto\" {}",
+			Enabled:    true,
+			ConfigType: configTypeAlloy,
+			Source: &Source{
+				Type:      sourceTypeGrafana,
+				Namespace: "instrumentation-hub",
+			},
+		},
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, got)
+	assert.Equal(t, sourceTypeGrafana, got.Source.Type)
+	assert.NotNil(t, handler.captureRequest)
+	assert.Equal(t, pipelinev1.PipelineSource_SourceType(3), handler.captureRequest.GetPipeline().GetSource().GetType())
 }
 
 // TestDeletePipeline_404IsSuccess preserves the historical contract that a
