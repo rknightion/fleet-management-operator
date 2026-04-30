@@ -502,6 +502,14 @@ func (r *CollectorReconciler) updateStatusSuccess(
 
 	newOwners := ownersFromMerge(owners)
 	newCollectorType := fleetmanagementv1alpha1.CollectorTypeFromFleetAPI(live.CollectorType)
+	newEnabled := copyBoolPtr(live.Enabled)
+	newCreatedAt := metaTimeFromTime(live.CreatedAt)
+	newUpdatedAt := metaTimeFromTime(live.UpdatedAt)
+	newMarkedInactiveAt := metaTimeFromTime(live.MarkedInactiveAt)
+	newLastPing := collector.Status.LastPing
+	if live.UpdatedAt != nil {
+		newLastPing = &metav1.Time{Time: *live.UpdatedAt}
+	}
 
 	// Idempotency: skip the Status write entirely when nothing observable
 	// has changed AND the Ready condition already reflects success at the
@@ -516,7 +524,13 @@ func (r *CollectorReconciler) updateStatusSuccess(
 	noopStatus := readyAtCurrentGen &&
 		collector.Status.ObservedGeneration == collector.Generation &&
 		collector.Status.Registered &&
+		collector.Status.Name == live.Name &&
+		boolPtrsEqual(collector.Status.Enabled, newEnabled) &&
 		collector.Status.CollectorType == newCollectorType &&
+		timePtrsEqual(collector.Status.CreatedAt, newCreatedAt) &&
+		timePtrsEqual(collector.Status.UpdatedAt, newUpdatedAt) &&
+		timePtrsEqual(collector.Status.MarkedInactiveAt, newMarkedInactiveAt) &&
+		timePtrsEqual(collector.Status.LastPing, newLastPing) &&
 		mapsEqual(collector.Status.LocalAttributes, live.LocalAttributes) &&
 		mapsEqual(collector.Status.EffectiveRemoteAttributes, desired) &&
 		ownerSlicesEqual(collector.Status.AttributeOwners, newOwners)
@@ -538,7 +552,12 @@ func (r *CollectorReconciler) updateStatusSuccess(
 
 	collector.Status.ObservedGeneration = collector.Generation
 	collector.Status.Registered = true
+	collector.Status.Name = live.Name
+	collector.Status.Enabled = newEnabled
 	collector.Status.CollectorType = newCollectorType
+	collector.Status.CreatedAt = newCreatedAt
+	collector.Status.UpdatedAt = newUpdatedAt
+	collector.Status.MarkedInactiveAt = newMarkedInactiveAt
 	collector.Status.LocalAttributes = live.LocalAttributes
 	collector.Status.EffectiveRemoteAttributes = copyMap(desired)
 	collector.Status.AttributeOwners = newOwners
@@ -546,9 +565,7 @@ func (r *CollectorReconciler) updateStatusSuccess(
 	// LastPing is the closest proxy Fleet Management exposes for collector
 	// activity (it does not publish a true last-ping timestamp). UpdatedAt
 	// advances on every collector check-in, so we surface it here.
-	if live.UpdatedAt != nil {
-		collector.Status.LastPing = &metav1.Time{Time: *live.UpdatedAt}
-	}
+	collector.Status.LastPing = newLastPing
 
 	meta.SetStatusCondition(&collector.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
@@ -933,6 +950,35 @@ func mapsEqual(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func copyBoolPtr(in *bool) *bool {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+func boolPtrsEqual(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func metaTimeFromTime(in *time.Time) *metav1.Time {
+	if in == nil {
+		return nil
+	}
+	return &metav1.Time{Time: *in}
+}
+
+func timePtrsEqual(a, b *metav1.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Time.Equal(b.Time)
 }
 
 // ownerSlicesEqual compares two AttributeOwnership slices treating them as
