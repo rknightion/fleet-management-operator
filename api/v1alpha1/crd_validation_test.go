@@ -69,6 +69,91 @@ func firstServedSchema(t *testing.T, crd *apiextensionsv1.CustomResourceDefiniti
 	return v.Schema.OpenAPIV3Schema
 }
 
+func TestFleetCRDScopeContract(t *testing.T) {
+	cases := []struct {
+		filename string
+		want     apiextensionsv1.ResourceScope
+	}{
+		{filename: "fleetmanagement.grafana.com_collectors.yaml", want: apiextensionsv1.NamespaceScoped},
+		{filename: "fleetmanagement.grafana.com_collectordiscoveries.yaml", want: apiextensionsv1.NamespaceScoped},
+		{filename: "fleetmanagement.grafana.com_externalattributesyncs.yaml", want: apiextensionsv1.NamespaceScoped},
+		{filename: "fleetmanagement.grafana.com_pipelinediscoveries.yaml", want: apiextensionsv1.NamespaceScoped},
+		{filename: "fleetmanagement.grafana.com_pipelines.yaml", want: apiextensionsv1.NamespaceScoped},
+		{filename: "fleetmanagement.grafana.com_remoteattributepolicies.yaml", want: apiextensionsv1.NamespaceScoped},
+		{filename: "fleetmanagement.grafana.com_tenantpolicies.yaml", want: apiextensionsv1.ClusterScoped},
+	}
+	for _, tc := range cases {
+		t.Run(tc.filename, func(t *testing.T) {
+			crd := loadCRD(t, tc.filename)
+			assert.Equal(t, tc.want, crd.Spec.Scope)
+		})
+	}
+}
+
+func TestSamplesAreNamespaceNeutral(t *testing.T) {
+	type sampleManifest struct {
+		Kind     string `json:"kind"`
+		Metadata struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace,omitempty"`
+		} `json:"metadata"`
+	}
+
+	samplesDir := filepath.Join("..", "..", "config", "samples")
+	entries, err := os.ReadDir(samplesDir)
+	require.NoError(t, err)
+
+	for _, ent := range entries {
+		if ent.IsDir() || ent.Name() == "kustomization.yaml" || filepath.Ext(ent.Name()) != ".yaml" {
+			continue
+		}
+
+		t.Run(ent.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(samplesDir, ent.Name()))
+			require.NoError(t, err)
+
+			var manifest sampleManifest
+			require.NoError(t, yaml.Unmarshal(data, &manifest))
+			require.NotEmpty(t, manifest.Kind)
+			require.NotEmpty(t, manifest.Metadata.Name)
+			assert.Empty(t, manifest.Metadata.Namespace,
+				"samples must not pin metadata.namespace; apply namespaced CRs with kubectl -n <namespace>. TenantPolicy is cluster-scoped.")
+		})
+	}
+}
+
+func TestSamplesKustomizationIncludesValidSamples(t *testing.T) {
+	type samplesKustomization struct {
+		Namespace string   `json:"namespace,omitempty"`
+		Resources []string `json:"resources,omitempty"`
+	}
+
+	samplesDir := filepath.Join("..", "..", "config", "samples")
+	data, err := os.ReadFile(filepath.Join(samplesDir, "kustomization.yaml"))
+	require.NoError(t, err)
+
+	var k samplesKustomization
+	require.NoError(t, yaml.Unmarshal(data, &k))
+	assert.Empty(t, k.Namespace, "sample kustomization must stay namespace-neutral because TenantPolicy is cluster-scoped")
+
+	want := map[string]struct{}{}
+	entries, err := os.ReadDir(samplesDir)
+	require.NoError(t, err)
+	for _, ent := range entries {
+		if ent.IsDir() || ent.Name() == "kustomization.yaml" || filepath.Ext(ent.Name()) != ".yaml" {
+			continue
+		}
+		want[ent.Name()] = struct{}{}
+	}
+
+	got := map[string]struct{}{}
+	for _, resource := range k.Resources {
+		require.FileExists(t, filepath.Join(samplesDir, resource))
+		got[resource] = struct{}{}
+	}
+	assert.Equal(t, want, got)
+}
+
 // hasCELRule returns true if any x-kubernetes-validations entry on the
 // node matches the supplied rule string.
 func hasCELRule(props *apiextensionsv1.JSONSchemaProps, rule string) bool {
