@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"sync"
@@ -1212,6 +1213,54 @@ var _ = Describe("Pipeline Controller", func() {
 				Expect(apierrors.IsNotFound(err)).To(BeTrue(),
 					"expected NotFound after finalizer removal, got %v", err)
 			}
+		})
+
+		It("does not delete Fleet pipeline for read-only Grafana resources", func() {
+			By("Setting up a read-only Grafana pipeline with finalizer and Fleet ID annotation")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "grafana-readonly",
+					Namespace:  "default",
+					Generation: 1,
+					Finalizers: []string{pipelineFinalizer},
+					Annotations: map[string]string{
+						fleetmanagementv1alpha1.FleetPipelineIDAnnotation:   "fleet-id-readonly",
+						fleetmanagementv1alpha1.PipelineImportModeAnnotation: fleetmanagementv1alpha1.PipelineImportModeAnnotationReadOnly,
+					},
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "prometheus.exporter.self \"alloy\" { }",
+					Enabled:  boolPtr(true),
+					Source: &fleetmanagementv1alpha1.PipelineSource{
+						Type: fleetmanagementv1alpha1.SourceTypeGrafana,
+					},
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			By("Configuring the mock to fail if DeletePipeline is called")
+			deleteMock := newMockFleetClient()
+			deleteMock.deleteError = fmt.Errorf("DeletePipeline must not be called for read-only resources")
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: deleteMock,
+			}
+
+			By("Calling reconcileDelete directly")
+			var outcome string
+			result, err := reconciler.reconcileDelete(context.Background(), pipeline, &outcome)
+
+			By("Verifying finalizer removal succeeds without calling DeletePipeline")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(slices.Contains(pipeline.Finalizers, pipelineFinalizer)).To(BeFalse())
 		})
 	})
 })

@@ -296,9 +296,15 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 
 	log.Info("deleting Pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", pipeline.Status.ID)
 
+	// Read-only/Grafana pipelines are owned outside this operator and must never
+	// be deleted from Fleet Management during CR finalization.
+	if isReadOnly(pipeline) {
+		log.Info("skipping Fleet Management delete for read-only pipeline", "namespace", pipeline.Namespace, "name", pipeline.Name)
+	}
+
 	// Delete from Fleet Management if we have an ID
 	id := observedPipelineID(pipeline)
-	if id != "" {
+	if id != "" && !isReadOnly(pipeline) {
 		if err := r.FleetClient.DeletePipeline(ctx, id); err != nil {
 			// Check if it's a 404 (already deleted)
 			if apiErr, ok := err.(*fleetclient.FleetAPIError); ok && apiErr.StatusCode == http.StatusNotFound {
