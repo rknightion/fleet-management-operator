@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // validPipelineDiscovery is a minimum-viable spec that passes every
@@ -31,6 +32,9 @@ import (
 func validPipelineDiscovery() *PipelineDiscovery {
 	ct := ConfigTypeAlloy
 	return &PipelineDiscovery{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "fleet-pipelines",
+		},
 		Spec: PipelineDiscoverySpec{
 			PollInterval: "5m",
 			Selector: PipelineDiscoverySelector{
@@ -158,8 +162,9 @@ func TestPipelineDiscovery_validateTargetNamespace(t *testing.T) { //nolint:dupl
 		wantErr   bool
 	}{
 		{name: "empty (default)", namespace: "", wantErr: false},
-		{name: "valid", namespace: "fleet-pipelines", wantErr: false},
-		{name: "single char", namespace: "a", wantErr: false},
+		{name: "same namespace allowed", namespace: "default", wantErr: false},
+		{name: "cross namespace rejected", namespace: "fleet-pipelines", wantErr: true},
+		{name: "single char cross namespace rejected", namespace: "a", wantErr: true},
 		{name: "uppercase rejected", namespace: "Fleet", wantErr: true},
 		{name: "underscore rejected", namespace: "fleet_pipelines", wantErr: true},
 		{name: "leading hyphen rejected", namespace: "-fleet", wantErr: true},
@@ -170,6 +175,9 @@ func TestPipelineDiscovery_validateTargetNamespace(t *testing.T) { //nolint:dupl
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pd := &PipelineDiscovery{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+				},
 				Spec: PipelineDiscoverySpec{
 					TargetNamespace: tt.namespace,
 				},
@@ -247,6 +255,9 @@ func TestPipelineDiscovery_validatePolicy(t *testing.T) {
 func TestPipelineDiscovery_validatePipelineDiscovery_endToEnd(t *testing.T) {
 	ct := ConfigTypeAlloy
 	pd := &PipelineDiscovery{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "fleet-pipelines",
+		},
 		Spec: PipelineDiscoverySpec{
 			PollInterval: "5m",
 			Selector: PipelineDiscoverySelector{

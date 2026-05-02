@@ -173,6 +173,16 @@ func (r *PipelineDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if targetNS == "" {
 		targetNS = pd.Namespace
 	}
+	if targetNS != pd.Namespace {
+		err := fmt.Errorf("target namespace %q must match discovery namespace %q", targetNS, pd.Namespace)
+		log.Error(err, "invalid target namespace", "namespace", pd.Namespace, "name", pd.Name)
+		r.emitEventf(pd, corev1.EventTypeWarning, pipelineDiscoveryEventReasonFailed, "Invalid targetNamespace: %v", err)
+		result, updateErr := r.updateStatusError(ctx, pd, pipelineDiscoveryReasonInvalidConfig, err)
+		if updateErr != nil {
+			return ctrl.Result{}, updateErr
+		}
+		return result, err
+	}
 
 	// Step 3: Build ListPipelinesRequest from selector.
 	listReq := r.buildListRequest(pd)
