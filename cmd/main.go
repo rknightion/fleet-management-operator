@@ -520,7 +520,9 @@ func main() {
 			setupLog.Error(err, "unable to create controller", "controller", "RemoteAttributePolicy")
 			os.Exit(1)
 		}
+	}
 
+	if enablePolicyController || enableCollectorController {
 		if err := fleetmanagementv1alpha1.SetupRemoteAttributePolicyWebhookWithManager(mgr, tenantChecker); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteAttributePolicy")
 			os.Exit(1)
