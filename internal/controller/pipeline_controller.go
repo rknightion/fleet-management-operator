@@ -336,11 +336,10 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 
 // buildUpsertRequest builds an UpsertPipelineRequest from a Pipeline CRD
 func (r *PipelineReconciler) buildUpsertRequest(pipeline *fleetmanagementv1alpha1.Pipeline) *fleetclient.UpsertPipelineRequest {
-	// Determine pipeline name
-	pipelineName := pipeline.Spec.Name
-	if pipelineName == "" {
-		pipelineName = pipeline.Name
-	}
+	// Always scope Fleet pipeline names to the Kubernetes object identity.
+	// This prevents cross-namespace name collisions/takeovers when the Fleet
+	// API uses name-based upsert idempotency.
+	pipelineName := fmt.Sprintf("%s.%s", pipeline.Namespace, pipeline.Name)
 
 	// Build the pipeline object
 	fleetPipeline := &fleetclient.Pipeline{

@@ -516,7 +516,7 @@ var _ = Describe("Pipeline Controller", func() {
 	})
 
 	Context("When building UpsertPipelineRequest", func() {
-		It("should use metadata.name when spec.name is empty", func() {
+		It("should use a namespace-scoped Fleet name", func() {
 			reconciler := &PipelineReconciler{}
 			pipeline := &fleetmanagementv1alpha1.Pipeline{
 				ObjectMeta: metav1.ObjectMeta{
@@ -531,10 +531,10 @@ var _ = Describe("Pipeline Controller", func() {
 			}
 
 			req := reconciler.buildUpsertRequest(pipeline)
-			Expect(req.Pipeline.Name).To(Equal("test-pipeline"))
+			Expect(req.Pipeline.Name).To(Equal("default.test-pipeline"))
 		})
 
-		It("should use spec.name when provided", func() {
+		It("should ignore spec.name and keep namespace-scoped Fleet name", func() {
 			reconciler := &PipelineReconciler{}
 			pipeline := &fleetmanagementv1alpha1.Pipeline{
 				ObjectMeta: metav1.ObjectMeta{
@@ -550,7 +550,7 @@ var _ = Describe("Pipeline Controller", func() {
 			}
 
 			req := reconciler.buildUpsertRequest(pipeline)
-			Expect(req.Pipeline.Name).To(Equal("custom-pipeline-name"))
+			Expect(req.Pipeline.Name).To(Equal("default.k8s-pipeline"))
 		})
 
 		It("should convert ConfigType to Fleet API format", func() {
