@@ -162,8 +162,9 @@ func (r *PipelineDiscovery) validatePipelineDiscoverySelector() error {
 }
 
 // validatePipelineDiscoveryTargetNamespace enforces that, when set, the
-// namespace is a valid DNS-1123 label (k8s namespace name format). Empty
-// means "use this PipelineDiscovery's own namespace" and is always allowed.
+// namespace is a valid DNS-1123 label (k8s namespace name format) and equals
+// this PipelineDiscovery's own namespace. Empty means "use this
+// PipelineDiscovery's own namespace" and is always allowed.
 func (r *PipelineDiscovery) validatePipelineDiscoveryTargetNamespace() error {
 	ns := strings.TrimSpace(r.Spec.TargetNamespace)
 	if ns == "" {
@@ -172,6 +173,9 @@ func (r *PipelineDiscovery) validatePipelineDiscoveryTargetNamespace() error {
 
 	if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
 		return fmt.Errorf("spec.targetNamespace %q is not a valid Kubernetes namespace name: %s", ns, strings.Join(errs, "; "))
+	}
+	if ns != r.Namespace {
+		return fmt.Errorf("spec.targetNamespace %q is not allowed; it must match metadata.namespace %q", ns, r.Namespace)
 	}
 
 	return nil
