@@ -18,6 +18,8 @@ resources:
 - ../crd
 - ../rbac
 - ../manager
+- ../webhook
+- ../certmanager
 - metrics_service.yaml
 
 patches:
