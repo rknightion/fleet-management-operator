@@ -297,7 +297,7 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 	log.Info("deleting Pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", pipeline.Status.ID)
 
 	// Delete from Fleet Management if we have an ID
-	id := observedPipelineID(pipeline)
+	id := pipeline.Status.ID
 	if id != "" {
 		if err := r.FleetClient.DeletePipeline(ctx, id); err != nil {
 			// Check if it's a 404 (already deleted)
@@ -753,12 +753,6 @@ func isReadOnly(pipeline *fleetmanagementv1alpha1.Pipeline) bool {
 	return mode == fleetmanagementv1alpha1.PipelineImportModeAnnotationReadOnly
 }
 
-func observedPipelineID(pipeline *fleetmanagementv1alpha1.Pipeline) string {
-	if pipeline.Status.ID != "" {
-		return pipeline.Status.ID
-	}
-	return pipeline.GetAnnotations()[fleetmanagementv1alpha1.FleetPipelineIDAnnotation]
-}
 
 func readOnlyPipelineID(pipeline *fleetmanagementv1alpha1.Pipeline) string {
 	if id := pipeline.GetAnnotations()[fleetmanagementv1alpha1.FleetPipelineIDAnnotation]; id != "" {
