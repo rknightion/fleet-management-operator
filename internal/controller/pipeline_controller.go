@@ -296,9 +296,23 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 
 	log.Info("deleting Pipeline from Fleet Management", "namespace", pipeline.Namespace, "name", pipeline.Name, "id", pipeline.Status.ID)
 
-	// Delete from Fleet Management if we have an ID
-	id := observedPipelineID(pipeline)
-	if id != "" {
+	// Decide whether to delete the backing Fleet Management pipeline.
+	//
+	// Read-only / Grafana pipelines (PipelineDiscovery read-only imports and
+	// Grafana automatic pipelines) are owned outside this operator. Even though
+	// the operator holds credentials that could delete them, finalization must
+	// never do so.
+	//
+	// For operator-managed pipelines, delete only by the controller-populated
+	// status.ID. The fleet-pipeline-id annotation is user-settable and is NOT a
+	// trusted source for deletion: honoring it would let a low-privileged actor
+	// craft a CR that deletes an arbitrary Fleet pipeline (confused deputy).
+	switch {
+	case isReadOnly(pipeline):
+		log.Info("skipping Fleet Management delete for read-only pipeline",
+			"namespace", pipeline.Namespace, "name", pipeline.Name, "id", readOnlyPipelineID(pipeline))
+	case pipeline.Status.ID != "":
+		id := pipeline.Status.ID
 		if err := r.FleetClient.DeletePipeline(ctx, id); err != nil {
 			// Check if it's a 404 (already deleted)
 			if apiErr, ok := err.(*fleetclient.FleetAPIError); ok && apiErr.StatusCode == http.StatusNotFound {
@@ -751,13 +765,6 @@ func isReadOnly(pipeline *fleetmanagementv1alpha1.Pipeline) bool {
 		return false
 	}
 	return mode == fleetmanagementv1alpha1.PipelineImportModeAnnotationReadOnly
-}
-
-func observedPipelineID(pipeline *fleetmanagementv1alpha1.Pipeline) string {
-	if pipeline.Status.ID != "" {
-		return pipeline.Status.ID
-	}
-	return pipeline.GetAnnotations()[fleetmanagementv1alpha1.FleetPipelineIDAnnotation]
 }
 
 func readOnlyPipelineID(pipeline *fleetmanagementv1alpha1.Pipeline) string {
