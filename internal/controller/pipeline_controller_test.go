@@ -1213,5 +1213,108 @@ var _ = Describe("Pipeline Controller", func() {
 					"expected NotFound after finalizer removal, got %v", err)
 			}
 		})
+
+		It("does not delete the Fleet pipeline for read-only Grafana resources", func() {
+			// Read-only / Grafana pipelines are owned outside this operator and
+			// must never be deleted from Fleet Management on CR finalization,
+			// even when status.ID is populated.
+			By("Setting up a read-only Grafana pipeline with finalizer and Fleet ID")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "grafana-readonly",
+					Namespace:  "default",
+					Generation: 1,
+					Finalizers: []string{pipelineFinalizer},
+					Annotations: map[string]string{
+						fleetmanagementv1alpha1.FleetPipelineIDAnnotation: "fleet-id-readonly",
+					},
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "prometheus.exporter.self \"alloy\" { }",
+					Enabled:  boolPtr(true),
+					Source: &fleetmanagementv1alpha1.PipelineSource{
+						Type: fleetmanagementv1alpha1.SourceTypeGrafana,
+					},
+				},
+				Status: fleetmanagementv1alpha1.PipelineStatus{
+					ID: "fleet-id-readonly",
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			By("Configuring the mock to fail if DeletePipeline is called")
+			deleteMock := newMockFleetClient()
+			deleteMock.deleteError = errors.New("DeletePipeline must not be called for read-only resources")
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: deleteMock,
+			}
+
+			By("Calling reconcileDelete directly")
+			var outcome string
+			result, err := reconciler.reconcileDelete(context.Background(), pipeline, &outcome)
+
+			By("Verifying finalizer removal succeeds without calling DeletePipeline")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(slices.Contains(pipeline.Finalizers, pipelineFinalizer)).To(BeFalse())
+		})
+
+		It("does not delete a Fleet pipeline named only by the user-settable annotation", func() {
+			// Confused-deputy guard: a non-read-only Pipeline whose status.ID was
+			// never populated by the controller, but which carries an
+			// attacker-supplied fleet-pipeline-id annotation, must NOT trigger a
+			// Fleet delete. Deletion is authorized only by controller-written
+			// status.ID.
+			By("Setting up a normal pipeline with a forged Fleet ID annotation and empty status.ID")
+			pipeline := &fleetmanagementv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "forged-id",
+					Namespace:  "default",
+					Generation: 1,
+					Finalizers: []string{pipelineFinalizer},
+					Annotations: map[string]string{
+						fleetmanagementv1alpha1.FleetPipelineIDAnnotation: "victim-fleet-id",
+					},
+				},
+				Spec: fleetmanagementv1alpha1.PipelineSpec{
+					Contents: "prometheus.exporter.self \"alloy\" { }",
+					Enabled:  boolPtr(true),
+				},
+				// Status.ID intentionally empty: the controller never observed this pipeline.
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithStatusSubresource(&fleetmanagementv1alpha1.Pipeline{}).
+				WithObjects(pipeline).
+				Build()
+
+			By("Configuring the mock to fail if DeletePipeline is called")
+			deleteMock := newMockFleetClient()
+			deleteMock.deleteError = errors.New("DeletePipeline must not be called when status.ID is empty")
+
+			reconciler := &PipelineReconciler{
+				Client:      fakeClient,
+				Scheme:      scheme.Scheme,
+				FleetClient: deleteMock,
+			}
+
+			By("Calling reconcileDelete directly")
+			var outcome string
+			result, err := reconciler.reconcileDelete(context.Background(), pipeline, &outcome)
+
+			By("Verifying finalizer removal succeeds without calling DeletePipeline")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+			Expect(slices.Contains(pipeline.Finalizers, pipelineFinalizer)).To(BeFalse())
+		})
 	})
 })
