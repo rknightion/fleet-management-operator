@@ -23,13 +23,16 @@ package httpsource
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/grafana/fleet-management-operator/pkg/netguard"
 	"github.com/grafana/fleet-management-operator/pkg/sources"
 )
 
@@ -47,6 +50,12 @@ const bodyExcerptLimit = 200
 // reconciler from large-response memory pressure while preserving the existing
 // non-2xx excerpt behavior.
 const successfulBodyLimit int64 = 10 * 1024 * 1024
+
+// maxRedirects caps the number of 3xx hops the client will follow. Each hop is
+// independently re-validated by netguard.ValidateHostname (see New); the cap
+// just bounds an otherwise-unbounded redirect chain. Matches the historical
+// net/http default of 10.
+const maxRedirects = 10
 
 // Config is the typed construction input for an HTTP/JSON Source.
 //
@@ -132,12 +141,41 @@ func New(cfg Config) (*Source, error) {
 		cfg.Timeout = defaultTimeout
 	}
 
+	// GuardedDialContext installs a post-resolution Control hook on the dialer
+	// so EVERY dial — the initial request, any DNS-rebound re-resolution, and
+	// every redirect target — is checked against the SSRF denylist with the
+	// concrete IP it would actually connect to. The Timeout/KeepAlive mirror
+	// net/http.DefaultTransport so connection-establishment behavior and the
+	// idle-connection pool are unchanged; only the Control guard is added.
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
 	httpClient := &http.Client{
 		Timeout: cfg.Timeout,
 		Transport: &http.Transport{
+			DialContext:         netguard.GuardedDialContext(dialer),
 			MaxIdleConns:        100,
 			IdleConnTimeout:     90 * time.Second,
 			TLSHandshakeTimeout: 10 * time.Second,
+		},
+		// CheckRedirect re-validates the host of every redirect target before
+		// the client follows it, and caps the chain length. The dialer guard
+		// above already refuses a redirect to a disallowed IP at connect time;
+		// this is defense-in-depth that also rejects internal *names* (e.g. a
+		// redirect to http://metadata.local/) before any dial is attempted.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("httpsource: stopped after %d redirects", maxRedirects)
+			}
+			if err := netguard.ValidateHostname(req.URL.Hostname()); err != nil {
+				if errors.Is(err, netguard.ErrDisallowedDestination) {
+					return fmt.Errorf("httpsource: refusing redirect to %q: destination is not allowed", req.URL.Hostname())
+				}
+				return fmt.Errorf("httpsource: refusing redirect to %q: %w", req.URL.Hostname(), err)
+			}
+			return nil
 		},
 	}
 

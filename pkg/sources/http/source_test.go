@@ -18,6 +18,7 @@ package httpsource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/fleet-management-operator/pkg/netguard"
 	"github.com/grafana/fleet-management-operator/pkg/sources"
 )
 
@@ -547,6 +549,103 @@ func TestHTTPSource_Close(t *testing.T) {
 	assert.NoError(t, src.Close())
 	// Idempotent: a second Close must also succeed.
 	assert.NoError(t, src.Close())
+}
+
+// TestHTTPSource_RedirectToPrivateRefused is SSRF hole #2: a permitted public
+// URL must not be able to 3xx-redirect the fetch to an internal address.
+// CheckRedirect re-validates each hop's host via netguard before the client
+// follows it. We point the Source at the httptest server (loopback) but keep
+// the Source's own guarded client (only swapping its Transport so the initial
+// loopback dial succeeds) so the CheckRedirect hook under test still fires on
+// the redirect.
+func TestHTTPSource_RedirectToPrivateRefused(t *testing.T) {
+	cases := []struct {
+		name     string
+		location string
+	}{
+		{name: "cloud metadata", location: "http://169.254.169.254/latest/meta-data/"},
+		{name: "rfc1918", location: "http://10.0.0.10/records"},
+		{name: "loopback", location: "http://127.0.0.1:9/records"},
+		{name: "internal name", location: "http://cmdb.default.svc/records"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Redirect(w, &http.Request{}, tc.location, http.StatusFound)
+			}))
+			defer srv.Close()
+
+			src, err := New(Config{URL: srv.URL})
+			require.NoError(t, err)
+			// Swap only the Transport so the initial dial to the loopback test
+			// server is allowed; CheckRedirect (the code under test) stays on
+			// src.httpClient and fires before the redirect target is dialed.
+			src.httpClient.Transport = srv.Client().Transport
+
+			_, err = src.Fetch(context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "redirect",
+				"error should explain the refused redirect, got %q", err.Error())
+		})
+	}
+}
+
+// TestHTTPSource_RedirectAllowedToPublic is the positive control for the
+// CheckRedirect guard: a redirect to another public-looking host must still be
+// followed. We can't reach the public internet in a unit test, so we assert
+// the redirect was NOT rejected by CheckRedirect — i.e. the resulting error,
+// if any, is a dial/connect error rather than our "refusing redirect" message.
+func TestHTTPSource_RedirectAllowedToPublic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// example.com is public; CheckRedirect must permit it. The dialer
+		// guard will then allow the (public) resolved IP. The connect itself
+		// may fail in CI with no egress, which is fine — we only assert the
+		// redirect was not refused by our guard.
+		http.Redirect(w, &http.Request{}, "http://example.com/records", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	src, err := New(Config{URL: srv.URL})
+	require.NoError(t, err)
+	src.httpClient.Transport = srv.Client().Transport
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = src.Fetch(ctx)
+	if err != nil {
+		assert.NotContains(t, err.Error(), "refusing redirect",
+			"public redirect must not be rejected by CheckRedirect, got %q", err.Error())
+	}
+}
+
+// TestHTTPSource_GuardRefusesPrivateDial is SSRF hole #1 (DNS rebinding) and
+// the direct-literal case: the guarded dialer must refuse to connect to a
+// loopback/private destination even when the initial URL points straight at
+// one. This exercises the real (unswapped) guarded client built by New.
+func TestHTTPSource_GuardRefusesPrivateDial(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{name: "loopback literal", url: "http://127.0.0.1:9/records"},
+		{name: "rfc1918 literal", url: "http://10.0.0.10/records"},
+		{name: "metadata literal", url: "http://169.254.169.254/latest/meta-data/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src, err := New(Config{URL: tc.url})
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			_, err = src.Fetch(ctx)
+			require.Error(t, err)
+			assert.True(t,
+				errors.Is(err, netguard.ErrDisallowedDestination),
+				"dial guard must wrap ErrDisallowedDestination, got %q", err.Error())
+		})
+	}
 }
 
 // Compile-time verification: ensure assert/require imports are not

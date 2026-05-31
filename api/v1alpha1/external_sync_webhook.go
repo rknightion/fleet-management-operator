@@ -18,8 +18,8 @@ package v1alpha1
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -30,6 +30,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"github.com/grafana/fleet-management-operator/pkg/netguard"
 )
 
 // log is for logging in this package.
@@ -252,28 +254,28 @@ func validateHTTPSource(http *HTTPSourceSpec, hasSecretRef bool) error {
 	return nil
 }
 
+// validateHTTPDestination delegates the SSRF denylist to pkg/netguard so the
+// admission webhook and the runtime dialer (pkg/sources/http) enforce the same
+// rules from one implementation. netguard's sentinel error is translated back
+// into the established webhook error text so existing callers and tests see no
+// behavior change.
+//
+// This is an admission-time check only: a hostname that passes here can still
+// resolve to a disallowed IP at fetch time (DNS rebinding) or 3xx-redirect to
+// one. Those gaps are closed unconditionally by netguard.GuardedDialContext on
+// the source's HTTP client.
 func validateHTTPDestination(u *url.URL) error {
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	if host == "" {
 		return fmt.Errorf("spec.source.http.url %q is missing a host component", u.String())
 	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
-			addr.IsLinkLocalMulticast() || addr.IsUnspecified() {
+	if err := netguard.ValidateHostname(host); err != nil {
+		if errors.Is(err, netguard.ErrDisallowedDestination) {
 			return fmt.Errorf("spec.source.http.url host %q is not allowed; use a public, explicitly approved external source endpoint", host)
 		}
-		return nil
+		return fmt.Errorf("spec.source.http.url host %q is invalid: %w", host, err)
 	}
-	switch {
-	case host == "localhost",
-		strings.HasSuffix(host, ".localhost"),
-		strings.HasSuffix(host, ".local"),
-		strings.HasSuffix(host, ".svc"),
-		strings.HasSuffix(host, ".cluster.local"):
-		return fmt.Errorf("spec.source.http.url host %q is not allowed; use a public, explicitly approved external source endpoint", host)
-	default:
-		return nil
-	}
+	return nil
 }
 
 func validateSQLSource(sql *SQLSourceSpec) error {
