@@ -140,7 +140,7 @@ webhooks:
     - pipelinediscoveries
   sideEffects: None
 {{- end }}
-{{- if .Values.controllers.remoteAttributePolicy.enabled }}
+{{- if or .Values.controllers.remoteAttributePolicy.enabled .Values.controllers.collector.enabled }}
 - admissionReviewVersions:
   - v1
   clientConfig:
