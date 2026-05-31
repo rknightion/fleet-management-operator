@@ -261,6 +261,7 @@ limitations under the License.
 - [Metrics Reference](docs/metrics.md) — Prometheus metric names, labels, and bucket boundaries
 - [Event Reference](docs/events.md) — per-controller event reasons and their triggers
 - [Status Conditions](docs/conditions.md) — condition types and reasons emitted by each CRD
+- [Security Model & Hardening](docs/security.md) — trust boundaries, privileged-CR delegation, cross-namespace authority, and the hardening checklist
 - [Sample CRs](docs/samples.md) — runnable examples for every CRD
 - [Upgrade Guide](docs/upgrade.md) — CRD, webhook, and rollback guidance for production releases
 - [Contributor Guide](CLAUDE.md) — architecture notes, gotchas, and patterns

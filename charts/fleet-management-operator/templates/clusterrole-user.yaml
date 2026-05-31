@@ -1,0 +1,93 @@
+{{- if and .Values.rbac.create .Values.rbac.userRoles.create -}}
+{{/*
+Opt-in, unbound user-facing roles for delegating custom-resource management.
+See the rbac.userRoles block in values.yaml and docs/security.md for the full
+security model. The chart binds these to no one — create your own RoleBinding
+(single namespace) or ClusterRoleBinding (all namespaces).
+
+These are intentionally NOT aggregated into the built-in admin/edit/view
+ClusterRoles unless rbac.userRoles.aggregateToDefaultRoles is set, because
+doing so grants every namespace admin in the cluster the ability to create
+these effectively-privileged resources (see docs/security.md, "confused
+deputy").
+
+tenantpolicies are deliberately EXCLUDED from both roles: TenantPolicy is the
+cluster-admin tenancy control, and letting an editor modify it would let a
+tenant grant itself matchers — a privilege escalation. Manage TenantPolicy
+with explicit admin RBAC only.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "fleet-management-operator.fullname" . }}-editor
+  labels:
+    {{- include "fleet-management-operator.labels" . | nindent 4 }}
+    {{- if .Values.rbac.userRoles.aggregateToDefaultRoles }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+    {{- end }}
+rules:
+# Full management of the namespaced custom resources. NOTE: pipelines,
+# pipelinediscoveries, and collectordiscoveries are the privileged ones —
+# pipelines write to the shared Fleet tenant, and the *discoveries can create
+# resources cross-namespace via spec.targetNamespace.
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - pipelines
+  - collectors
+  - remoteattributepolicies
+  - externalattributesyncs
+  - collectordiscoveries
+  - pipelinediscoveries
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# Read-only access to status subresources (status is controller-managed).
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - pipelines/status
+  - collectors/status
+  - remoteattributepolicies/status
+  - externalattributesyncs/status
+  - collectordiscoveries/status
+  - pipelinediscoveries/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "fleet-management-operator.fullname" . }}-viewer
+  labels:
+    {{- include "fleet-management-operator.labels" . | nindent 4 }}
+    {{- if .Values.rbac.userRoles.aggregateToDefaultRoles }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+    {{- end }}
+rules:
+- apiGroups:
+  - fleetmanagement.grafana.com
+  resources:
+  - pipelines
+  - collectors
+  - remoteattributepolicies
+  - externalattributesyncs
+  - collectordiscoveries
+  - pipelinediscoveries
+  - pipelines/status
+  - collectors/status
+  - remoteattributepolicies/status
+  - externalattributesyncs/status
+  - collectordiscoveries/status
+  - pipelinediscoveries/status
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}

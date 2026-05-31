@@ -369,6 +369,24 @@ Owner refs are intentionally avoided so cascade-delete on the CD does NOT clobbe
 
 **No watches on the discovery controller.** Discovery is purely poll-driven via `RequeueAfter`. Generation bumps (spec edits) bypass the schedule check by clearing the `observedGeneration == generation` guard.
 
+## Security Model
+
+Full trust model and hardening guidance: [`docs/security.md`](docs/security.md).
+
+Key facts when touching RBAC, webhooks, or the discovery/EAS controllers:
+- Creating any `fleetmanagement.grafana.com` CR is an **effectively-privileged**
+  action - Pipelines write to the shared org-wide Fleet credential; a
+  `PipelineDiscovery`/`CollectorDiscovery` with `spec.targetNamespace` makes the
+  operator create CRs in **other** namespaces (confused deputy).
+- Cluster-wide `secrets` read is granted only when `externalAttributeSync` is
+  enabled; cross-namespace `secretRef` is blocked at admission and reconcile.
+- The chart ships **no** aggregated user roles by default. Opt-in
+  `<release>-editor`/`-viewer` roles exist behind `rbac.userRoles.create`;
+  aggregating them into the built-in `edit` role re-opens the confused deputy
+  cluster-wide.
+- `TenantPolicy` is a guardrail, not an authorization boundary (collectorIDs
+  bypass, default-allow). Do not rely on it alone for tenancy.
+
 ## External Documentation
 
 For detailed information, use the `/fleet-api` and `/controller-patterns` skills.

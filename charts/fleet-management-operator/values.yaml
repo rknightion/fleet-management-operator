@@ -351,6 +351,28 @@ rbac:
   # Specifies whether RBAC resources should be created
   create: true
 
+  # Opt-in user-facing roles for delegating custom-resource management to
+  # non-admin subjects. The chart ships <release>-editor and <release>-viewer
+  # ClusterRoles but binds them to no one; you create the RoleBinding (a single
+  # namespace) or ClusterRoleBinding (all namespaces) to the subjects you trust.
+  #
+  # SECURITY: creating any fleetmanagement.grafana.com resource is an
+  # effectively-privileged action. A Pipeline pushes configuration to your
+  # shared, org-wide Fleet Management tenant under the operator's credential;
+  # a PipelineDiscovery/CollectorDiscovery with spec.targetNamespace makes the
+  # operator create resources in OTHER namespaces. Only bind the editor role to
+  # subjects you would trust with that authority. See docs/security.md.
+  userRoles:
+    # -- Render the <release>-editor and <release>-viewer ClusterRoles.
+    create: false
+    # -- Also label the roles so they aggregate into the built-in Kubernetes
+    # admin/edit (editor) and view (viewer) cluster roles.
+    # SECURITY: leave this false. Aggregating editor into the built-in "edit"
+    # role grants every namespace admin in the cluster the ability to create
+    # these resources, re-opening the cross-namespace confused-deputy described
+    # in docs/security.md. Only enable in single-tenant clusters.
+    aggregateToDefaultRoles: false
+
 # Webhook TLS configuration.
 # Fail-closed validating webhooks require a CA trusted by the Kubernetes API
 # server. The production default uses cert-manager CA injection. To run without
