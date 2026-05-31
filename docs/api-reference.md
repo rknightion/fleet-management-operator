@@ -884,6 +884,29 @@ _Appears in:_
 | `Unspecified` | SourceTypeUnspecified indicates pipeline source is not specified<br /> |
 
 
+#### SubjectAccessReviewer
+
+_Underlying type:_ _interface{Create(ctx context.Context, sar *k8s.io/api/authorization/v1.SubjectAccessReview) (*k8s.io/api/authorization/v1.SubjectAccessReview, error)}_
+
+SubjectAccessReviewer decouples the discovery webhooks from the concrete
+Kubernetes clientset. It is the consumer-side interface for the
+SubjectAccessReview check that closes the cross-namespace "confused
+deputy" escalation: the operator must confirm that the user creating a
+PipelineDiscovery / CollectorDiscovery may itself write the mirrored CRs
+into the requested target namespace, rather than borrowing the operator's
+cluster-wide ServiceAccount permissions.
+
+Implementations must treat a nil receiver as a no-op so callers can pass
+nil when cross-namespace authorization enforcement is disabled, mirroring
+the existing MatcherChecker nil pattern.
+
+
+
+_Appears in:_
+- [PipelineDiscoveryValidator](#pipelinediscoveryvalidator)
+
+
+
 #### TenantPolicy
 
 
