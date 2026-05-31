@@ -89,7 +89,7 @@ controls, a user who can create a discovery CR in namespace A can make the
 operator write CRs into **any** namespace B. This is a classic confused-deputy.
 
 **Mitigation — `--enforce-cross-namespace-discovery-authz`** (Helm:
-`controllers.discovery.enforceCrossNamespaceAuthz`). When enabled, the discovery
+`controllers.crossNamespaceDiscoveryAuthz.enabled`). When enabled, the discovery
 webhooks issue a `SubjectAccessReview` for the *requesting user* and reject the
 CR unless that user can `create` the target resource (`pipelines`/`collectors`)
 in the target namespace. Enable this whenever you delegate discovery-CR creation
@@ -119,7 +119,8 @@ Defenses and reductions:
   false` removes the cluster-wide secret grant entirely.
 
 The Fleet Management credentials `Secret` is delivered to the pod via the
-kubelet (`envFrom`/`secretKeyRef`), **not** through the operator's API client, so
+kubelet (`env[].valueFrom.secretKeyRef`), **not** through the operator's API
+client, so
 it does not require — and is unaffected by — the secret cache scoping above.
 
 ## External sources (SSRF)
@@ -145,16 +146,21 @@ so the operator can only reach approved destinations at the network layer.
 ## TenantPolicy is a guardrail, not an authorization boundary
 
 When `--enable-tenant-policy-enforcement` is set, the validating webhooks for
-`Pipeline`, `RemoteAttributePolicy`, `ExternalAttributeSync`,
-`CollectorDiscovery`, and `PipelineDiscovery` require that a matched subject's
-required matchers appear in the CR's matcher set. This is a useful guardrail, but
-**not** a complete authorization boundary. Known residual gaps:
+`Pipeline`, `RemoteAttributePolicy`, `ExternalAttributeSync`, and
+`CollectorDiscovery` require that a matched subject's required matchers appear in
+the CR's matcher set. This is a useful guardrail, but **not** a complete
+authorization boundary. Known residual gaps:
 
 - `selector.collectorIDs` bypasses matcher checks (a selector by collector ID is
   not constrained by required matchers).
 - Required-matcher semantics do not reason about negation/regex matchers.
 - It is default-allow when no policy matches the requesting subject.
 - `Collector` is not covered.
+- `PipelineDiscovery` is **not** matcher-scoped — its selector filters by
+  `configType`/`enabled`, so matcher enforcement does not apply. Its
+  cross-namespace protection is the
+  [`--enforce-cross-namespace-discovery-authz`](#cross-namespace-authority)
+  SubjectAccessReview, not TenantPolicy.
 
 Use it together with — not instead of — the RBAC controls above. See
 [tenant-policy.md](tenant-policy.md) for details.
