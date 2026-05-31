@@ -47,6 +47,7 @@ additive-then-remove window.
 | `SyncFailed`       | Ready, Synced  | Fleet API call failed (network, 5xx, rate-limit).                    |
 | `ValidationError`  | Ready, Synced  | Spec failed pre-API validation (configType/contents, matchers).      |
 | `DeleteFailed`     | Ready, Synced  | DeletePipeline returned an error other than 404.                     |
+| `ReadOnly`         | Ready, Synced  | Pipeline is read-only (Grafana-sourced or imported via PipelineDiscovery); Fleet state was observed without applying spec changes. Both stay True. |
 
 ### Collector (`internal/controller/collector_controller.go`)
 

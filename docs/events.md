@@ -67,11 +67,13 @@ Source: [internal/controller/pipeline_controller.go](../internal/controller/pipe
 | --- | --- | --- |
 | `DeleteFailed` | Warning | Failed to delete pipeline from Fleet Management: %v |
 | `RateLimited` | Warning | Rate limited by Fleet Management API, will retry in 10 seconds |
+| `ReadOnly` | Warning | %v |
 | `Recreated` | Warning | Pipeline was deleted externally, recreating in Fleet Management |
 | `SyncFailed` | Warning | Failed to recreate pipeline after external deletion |
 | `ValidationFailed` | Warning | Fleet Management API validation failed: %s |
 | `Created` | Normal | Pipeline created in Fleet Management (ID: %s) |
 | `Deleted` | Normal | Pipeline already deleted from Fleet Management |
+| `ReadOnly` | Normal | Observed read-only pipeline from Fleet Management |
 | `Synced` | Normal | Pipeline successfully synced to Fleet Management |
 | `Updated` | Normal | Pipeline updated in Fleet Management (ID: %s) |
 

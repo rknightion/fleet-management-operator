@@ -516,6 +516,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              createdAt:
+                description: |-
+                  CreatedAt is the timestamp when the collector was created in Fleet
+                  Management.
+                format: date-time
+                type: string
               effectiveRemoteAttributes:
                 additionalProperties:
                   type: string
@@ -525,6 +531,11 @@ spec:
                   1 this is exactly spec.remoteAttributes; later phases add policy and
                   external-sync layers.
                 type: object
+              enabled:
+                description: |-
+                  Enabled is the remote configuration enabled state observed from Fleet
+                  Management. nil means Fleet did not return the field.
+                type: boolean
               lastPing:
                 description: |-
                   LastPing is the most recent ping timestamp as reported by Fleet
@@ -539,6 +550,15 @@ spec:
                   (e.g. collector.os=linux). Read-only — set by the collector, not the
                   operator.
                 type: object
+              markedInactiveAt:
+                description: |-
+                  MarkedInactiveAt is the timestamp when Fleet Management marked the
+                  collector inactive.
+                format: date-time
+                type: string
+              name:
+                description: Name is the display name observed from Fleet Management.
+                type: string
               observedGeneration:
                 description: |-
                   ObservedGeneration reflects the generation of the most recently
@@ -550,6 +570,12 @@ spec:
                   Registered is true if the collector has been observed in Fleet
                   Management (i.e. it has called RegisterCollector at least once).
                 type: boolean
+              updatedAt:
+                description: |-
+                  UpdatedAt is the timestamp when the collector was last updated in Fleet
+                  Management.
+                format: date-time
+                type: string
             type: object
         required:
         - spec
@@ -1001,7 +1027,7 @@ spec:
                   ImportMode controls whether discovered Pipeline CRs are immediately
                   managed (Adopt) or held read-only (ReadOnly). Individual Pipeline CRs
                   can override this via the fleetmanagement.grafana.com/import-mode=adopt
-                  annotation.
+                  annotation, except Grafana-sourced pipelines which remain read-only.
                 enum:
                 - Adopt
                 - ReadOnly
@@ -1216,6 +1242,9 @@ spec:
     - jsonPath: .spec.configType
       name: Config Type
       type: string
+    - jsonPath: .spec.source.type
+      name: Source
+      type: string
     - jsonPath: .status.id
       name: Fleet ID
       type: string
@@ -1291,14 +1320,14 @@ spec:
               paused:
                 default: false
                 description: |-
-                  Paused suspends reconciliation. When true, the Pipeline controller does not
-                  sync this resource to Fleet Management. Set by PipelineDiscovery when
-                  importMode=ReadOnly; users may set the import-mode annotation to "adopt" on
-                  individual Pipeline CRs to resume management without clearing this field.
+                  Paused suspends operator reconciliation. When true, the Pipeline
+                  controller does not create or update this resource in Fleet Management.
+                  Read-only ownership for discovered pipelines is represented by the
+                  fleetmanagement.grafana.com/import-mode annotation, not by this field.
                 type: boolean
               source:
                 description: |-
-                  Source specifies the origin of the pipeline (Git, Terraform, Kubernetes, etc.)
+                  Source specifies the origin of the pipeline (Git, Terraform, Grafana, etc.)
                   Used for tracking and grouping pipelines by their source
                 properties:
                   namespace:
@@ -1306,15 +1335,16 @@ spec:
                       Namespace provides additional context about the source
                       For Git: repository name or URL
                       For Terraform: workspace or module name
-                      For Kubernetes: cluster name or context
+                      For Grafana: automated workflow namespace
                     type: string
                   type:
-                    default: Kubernetes
-                    description: Type specifies the source type (Git, Terraform, Kubernetes,
-                      Unspecified)
+                    description: |-
+                      Type specifies the source type (Git, Terraform, Grafana, Kubernetes, Unspecified).
+                      Kubernetes is deprecated and kept only for backwards compatibility.
                     enum:
                     - Git
                     - Terraform
+                    - Grafana
                     - Kubernetes
                     - Unspecified
                     type: string
@@ -1408,6 +1438,28 @@ spec:
               revisionId:
                 description: RevisionID is the current revision ID from Fleet Management
                 type: string
+              source:
+                description: Source is the source observed from Fleet Management.
+                properties:
+                  namespace:
+                    description: |-
+                      Namespace provides additional context about the source
+                      For Git: repository name or URL
+                      For Terraform: workspace or module name
+                      For Grafana: automated workflow namespace
+                    type: string
+                  type:
+                    description: |-
+                      Type specifies the source type (Git, Terraform, Grafana, Kubernetes, Unspecified).
+                      Kubernetes is deprecated and kept only for backwards compatibility.
+                    enum:
+                    - Git
+                    - Terraform
+                    - Grafana
+                    - Kubernetes
+                    - Unspecified
+                    type: string
+                type: object
               updatedAt:
                 description: UpdatedAt is the timestamp when the pipeline was last
                   updated in Fleet Management

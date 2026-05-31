@@ -279,7 +279,14 @@ var _ = Describe("CollectorDiscovery Controller", func() {
 			return len(crs) == 1 && crs[0].Annotations[fleetmanagementv1alpha1.DiscoveryStaleAnnotation] == ""
 		}, discoveryTimeout, discoveryInterval).Should(BeTrue())
 
-		Expect(getDiscovery(ctx).Status.StaleCollectors).To(BeEmpty())
+		// The stale annotation (on the Collector CR) and StaleCollectors (on
+		// the CollectorDiscovery status) are written by two separate API calls
+		// within the same reconcile, and the status write defers to the next
+		// reconcile on conflict. Poll so the assertion tolerates that window
+		// instead of racing the controller.
+		Eventually(func() []string {
+			return getDiscovery(ctx).Status.StaleCollectors
+		}, discoveryTimeout, discoveryInterval).Should(BeEmpty())
 	})
 
 	It("skips a manually-managed CR with the same name and records a conflict", func() {
