@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -267,7 +268,7 @@ func validCollectorDiscovery() *CollectorDiscovery {
 // the registration call.
 func TestCollectorDiscovery_ValidateCreate(t *testing.T) {
 	ctx := context.Background()
-	r := &CollectorDiscovery{}
+	r := &collectorDiscoveryValidator{}
 
 	t.Run("valid spec passes", func(t *testing.T) {
 		obj := validCollectorDiscovery()
@@ -300,7 +301,7 @@ func TestCollectorDiscovery_ValidateCreate(t *testing.T) {
 // create (and gets the same warnings).
 func TestCollectorDiscovery_ValidateUpdate(t *testing.T) {
 	ctx := context.Background()
-	r := &CollectorDiscovery{}
+	r := &collectorDiscoveryValidator{}
 
 	t.Run("valid update passes", func(t *testing.T) {
 		oldObj := validCollectorDiscovery()
@@ -326,8 +327,192 @@ func TestCollectorDiscovery_ValidateUpdate(t *testing.T) {
 // interface and must not produce errors or warnings.
 func TestCollectorDiscovery_ValidateDelete(t *testing.T) {
 	ctx := context.Background()
-	r := &CollectorDiscovery{}
+	r := &collectorDiscoveryValidator{}
 	warnings, err := r.ValidateDelete(ctx, validCollectorDiscovery())
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
+}
+
+// TestCollectorDiscovery_TenantCheck pins matcher-based TenantPolicy
+// enforcement on the discovery selector. Unlike PipelineDiscovery,
+// CollectorDiscovery's selector is a PolicySelector (matchers + collectorIDs),
+// so the shared runTenantChecks helper applies exactly as it does for
+// Pipeline / RemoteAttributePolicy / ExternalAttributeSync.
+func TestCollectorDiscovery_TenantCheck(t *testing.T) {
+	const ownNS = "team-a"
+
+	cd := func() *CollectorDiscovery {
+		obj := validCollectorDiscovery()
+		obj.Namespace = ownNS
+		obj.Spec.TargetNamespace = ownNS // same-ns: keep SAR out of the picture
+		return obj
+	}
+
+	t.Run("nil checker skips tenant step", func(t *testing.T) {
+		v := &collectorDiscoveryValidator{checker: nil}
+		if _, err := v.ValidateCreate(context.Background(), cd()); err != nil {
+			t.Fatalf("nil checker should pass, got %v", err)
+		}
+	})
+
+	t.Run("checker error rejects and receives selector matchers", func(t *testing.T) {
+		deny := errors.New("denied by tenant policy")
+		c := &fakeChecker{err: deny}
+		v := &collectorDiscoveryValidator{checker: c}
+
+		obj := cd()
+		obj.Spec.Selector = PolicySelector{Matchers: []string{"team=other"}}
+		_, err := v.ValidateCreate(context.Background(), obj)
+		if !errors.Is(err, deny) {
+			t.Fatalf("expected tenant denial, got %v", err)
+		}
+		if !c.called {
+			t.Fatalf("checker should have been consulted")
+		}
+		if c.calledNs != ownNS {
+			t.Errorf("checker namespace = %q, want %q", c.calledNs, ownNS)
+		}
+		if len(c.calledMatchers) != 1 || c.calledMatchers[0] != "team=other" {
+			t.Errorf("checker matchers = %v, want [team=other]", c.calledMatchers)
+		}
+	})
+
+	t.Run("collectorIDs rejected under a matching TenantPolicy", func(t *testing.T) {
+		c := &fakeChecker{matches: true}
+		v := &collectorDiscoveryValidator{checker: c}
+
+		obj := cd()
+		obj.Spec.Selector = PolicySelector{
+			Matchers:     []string{"team=a"},
+			CollectorIDs: []string{"col-1"},
+		}
+		_, err := v.ValidateCreate(context.Background(), obj)
+		require.Error(t, err, "tenanted user must not escape matcher scope via collectorIDs")
+		assert.Contains(t, err.Error(), "collectorIDs")
+	})
+
+	t.Run("tenant check runs on update", func(t *testing.T) {
+		deny := errors.New("denied by tenant policy")
+		c := &fakeChecker{err: deny}
+		v := &collectorDiscoveryValidator{checker: c}
+
+		oldObj := cd()
+		newObj := cd()
+		newObj.Spec.Selector = PolicySelector{Matchers: []string{"team=other"}}
+		_, err := v.ValidateUpdate(context.Background(), oldObj, newObj)
+		if !errors.Is(err, deny) {
+			t.Fatalf("expected tenant denial on update, got %v", err)
+		}
+	})
+}
+
+// TestCollectorDiscovery_CrossNamespaceSAR pins the cross-namespace
+// SubjectAccessReview that closes the confused-deputy escalation for
+// CollectorDiscovery: a user may only make the operator mirror Fleet
+// collectors into a namespace they are themselves authorized to write
+// Collector CRs in.
+func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
+	const ownNS = "team-a"
+
+	own := func(target string) *CollectorDiscovery {
+		obj := validCollectorDiscovery()
+		obj.Namespace = ownNS
+		obj.Spec.TargetNamespace = target
+		return obj
+	}
+
+	t.Run("nil reviewer skips SAR even cross-namespace", func(t *testing.T) {
+		v := &collectorDiscoveryValidator{reviewer: nil}
+		ctx := ctxWithUser("alice", []string{"dev"})
+		if _, err := v.ValidateCreate(ctx, own("team-b")); err != nil {
+			t.Fatalf("nil reviewer must skip the SAR (back-compat), got %v", err)
+		}
+	})
+
+	t.Run("empty targetNamespace does not consult reviewer", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := &collectorDiscoveryValidator{reviewer: r}
+		ctx := ctxWithUser("alice", nil)
+		if _, err := v.ValidateCreate(ctx, own("")); err != nil {
+			t.Fatalf("empty targetNamespace must not trigger a SAR, got %v", err)
+		}
+		if r.called {
+			t.Errorf("reviewer must NOT be consulted for same-namespace (empty target) writes")
+		}
+	})
+
+	t.Run("targetNamespace equal to own namespace does not consult reviewer", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := &collectorDiscoveryValidator{reviewer: r}
+		ctx := ctxWithUser("alice", nil)
+		if _, err := v.ValidateCreate(ctx, own(ownNS)); err != nil {
+			t.Fatalf("target == own namespace must not trigger a SAR, got %v", err)
+		}
+		if r.called {
+			t.Errorf("reviewer must NOT be consulted when target equals own namespace")
+		}
+	})
+
+	t.Run("cross-namespace allowed passes and asks for collectors", func(t *testing.T) {
+		r := &fakeReviewer{allow: true}
+		v := &collectorDiscoveryValidator{reviewer: r}
+		ctx := ctxWithUser("alice", []string{"dev"})
+		if _, err := v.ValidateCreate(ctx, own("team-b")); err != nil {
+			t.Fatalf("cross-namespace create should pass when SAR allows, got %v", err)
+		}
+		if !r.called {
+			t.Fatalf("reviewer should have been consulted for a foreign targetNamespace")
+		}
+		ra := r.gotSAR.Spec.ResourceAttributes
+		if ra.Namespace != "team-b" || ra.Resource != "collectors" {
+			t.Errorf("SAR should ask for create collectors in team-b, got %+v", ra)
+		}
+	})
+
+	t.Run("cross-namespace denied is rejected", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := &collectorDiscoveryValidator{reviewer: r}
+		ctx := ctxWithUser("mallory", nil)
+		_, err := v.ValidateCreate(ctx, own("team-b"))
+		require.Error(t, err, "cross-namespace create must be rejected when SAR denies")
+		assert.Contains(t, err.Error(), "team-b")
+		assert.Contains(t, err.Error(), "collectors")
+	})
+
+	t.Run("reviewer error is surfaced", func(t *testing.T) {
+		r := &fakeReviewer{err: errSAR}
+		v := &collectorDiscoveryValidator{reviewer: r}
+		ctx := ctxWithUser("alice", nil)
+		_, err := v.ValidateCreate(ctx, own("team-b"))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errSAR)
+	})
+
+	t.Run("tenant check precedes SAR: tenant deny wins", func(t *testing.T) {
+		// When both layers are active and the tenant matcher check fails, the
+		// request is rejected before the SAR is even issued.
+		deny := errors.New("denied by tenant policy")
+		c := &fakeChecker{err: deny}
+		r := &fakeReviewer{allow: true}
+		v := &collectorDiscoveryValidator{checker: c, reviewer: r}
+		ctx := ctxWithUser("alice", nil)
+
+		obj := own("team-b")
+		obj.Spec.Selector = PolicySelector{Matchers: []string{"team=other"}}
+		_, err := v.ValidateCreate(ctx, obj)
+		if !errors.Is(err, deny) {
+			t.Fatalf("expected tenant denial to take precedence, got %v", err)
+		}
+		if r.called {
+			t.Errorf("SAR must not be issued once the tenant check has already denied")
+		}
+	})
+
+	t.Run("update path is also gated", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := &collectorDiscoveryValidator{reviewer: r}
+		ctx := ctxWithUser("mallory", nil)
+		_, err := v.ValidateUpdate(ctx, own("team-b"), own("team-b"))
+		require.Error(t, err, "cross-namespace update must be rejected when SAR denies")
+	})
 }

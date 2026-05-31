@@ -144,6 +144,10 @@ func (r *CollectorDiscoveryReconciler) emitEventf(object runtime.Object, eventty
 // +kubebuilder:rbac:groups=fleetmanagement.grafana.com,resources=collectordiscoveries,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=fleetmanagement.grafana.com,resources=collectordiscoveries/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=fleetmanagement.grafana.com,resources=collectors,verbs=get;list;watch;create;update;patch;delete
+// The discovery validating webhooks issue a SubjectAccessReview to confirm the
+// requester may write Pipeline/Collector CRs into a foreign spec.targetNamespace
+// (cross-namespace confused-deputy guard, --enforce-cross-namespace-discovery-authz).
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 
 // Reconcile lists collectors from Fleet and reconciles the matching set
 // of Collector CRs in the target namespace.

@@ -102,6 +102,7 @@ spec:
         - --enable-collector-discovery-controller={{ .Values.controllers.collectorDiscovery.enabled }}
         - --enable-pipeline-discovery-controller={{ .Values.controllers.pipelineDiscovery.enabled }}
         - --enable-tenant-policy-enforcement={{ .Values.controllers.tenantPolicy.enabled }}
+        - --enforce-cross-namespace-discovery-authz={{ .Values.controllers.crossNamespaceDiscoveryAuthz.enabled }}
         - --fleet-api-rps={{ .Values.fleetManagement.apiRatePerSecond }}
         - --fleet-api-burst={{ .Values.fleetManagement.apiRateBurst }}
         - --controller-policy-max-concurrent={{ .Values.controllers.remoteAttributePolicy.maxConcurrent }}

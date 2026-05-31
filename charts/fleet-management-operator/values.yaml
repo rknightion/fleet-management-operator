@@ -487,10 +487,19 @@ controllers:
     maxConcurrent: 1
   tenantPolicy:
     # -- Enable TenantPolicy enforcement. When set, validating webhooks for
-    # Pipeline / RemoteAttributePolicy / ExternalAttributeSync require K8s
-    # subjects matched by a TenantPolicy CR to include at least one of the
-    # policy's required matchers. Default-allow when no policy matches; the
+    # Pipeline / RemoteAttributePolicy / ExternalAttributeSync / CollectorDiscovery
+    # require K8s subjects matched by a TenantPolicy CR to include at least one of
+    # the policy's required matchers. Default-allow when no policy matches; the
     # CRD is always installed so policies can be authored ahead of enforcement.
+    enabled: false
+  crossNamespaceDiscoveryAuthz:
+    # -- Enforce that a user creating a PipelineDiscovery or CollectorDiscovery
+    # with a spec.targetNamespace different from the CR's own namespace is itself
+    # authorized (via SubjectAccessReview at admission) to create Pipelines /
+    # Collectors in that target namespace. Closes the cross-namespace
+    # confused-deputy escalation where the operator's cluster-wide ServiceAccount
+    # would otherwise be borrowed to write CRs into any namespace. Default-allow
+    # (false) so existing installs see no behavior change until enabled.
     enabled: false
 
 # Grafana dashboard ConfigMap. Picked up automatically by the Grafana sidecar

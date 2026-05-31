@@ -30,8 +30,11 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -90,6 +93,7 @@ func main() {
 	var enableCollectorDiscoveryController bool
 	var enablePipelineDiscoveryController bool
 	var enableTenantPolicyEnforcement bool
+	var enforceCrossNamespaceDiscoveryAuthz bool
 	var fleetAPIRPS float64
 	var fleetAPIBurst int
 	var policyMaxConcurrent int
@@ -131,10 +135,17 @@ func main() {
 		"Enable the PipelineDiscovery controller (polls Fleet Management ListPipelines and creates Pipeline CRs).")
 	flag.BoolVar(&enableTenantPolicyEnforcement, "enable-tenant-policy-enforcement", false,
 		"Enable TenantPolicy CRD validation and enforcement. When set, validating webhooks for "+
-			"Pipeline, RemoteAttributePolicy, and ExternalAttributeSync require that K8s subjects "+
-			"matched by a TenantPolicy include at least one of the policy's required matchers in "+
-			"the CR's matcher set. Default false; existing installs see no behavior change until "+
-			"this flag is set.")
+			"Pipeline, RemoteAttributePolicy, ExternalAttributeSync, and CollectorDiscovery require "+
+			"that K8s subjects matched by a TenantPolicy include at least one of the policy's required "+
+			"matchers in the CR's matcher set. Default false; existing installs see no behavior change "+
+			"until this flag is set.")
+	flag.BoolVar(&enforceCrossNamespaceDiscoveryAuthz, "enforce-cross-namespace-discovery-authz", false,
+		"Enforce that the user creating a PipelineDiscovery or CollectorDiscovery with a "+
+			"spec.targetNamespace different from the CR's own namespace is itself authorized to create "+
+			"Pipelines / Collectors in that target namespace, via a SubjectAccessReview at admission "+
+			"time. Closes the cross-namespace confused-deputy escalation where the operator's "+
+			"cluster-wide ServiceAccount would otherwise be borrowed to write CRs into any namespace. "+
+			"Default false (default-allow) so existing installs see no behavior change until set.")
 	flag.Float64Var(&fleetAPIRPS, "fleet-api-rps", 3,
 		"Fleet Management API sustained rate limit in requests per second. "+
 			"Match this to your Fleet Management server-side api: rate setting. "+
@@ -454,6 +465,31 @@ func main() {
 		tenantChecker = tenant.NewChecker(mgr.GetClient())
 	}
 
+	// Cross-namespace discovery authorization is opt-in and default-off. When
+	// disabled, discoveryReviewer stays nil and the discovery webhooks skip the
+	// SubjectAccessReview entirely (default-allow, back-compat). When enabled,
+	// the discovery webhooks issue a SubjectAccessReview against the API server
+	// for any spec.targetNamespace that differs from the CR's own namespace,
+	// confirming the requester may write the mirrored CRs there rather than
+	// borrowing the operator's cluster-wide ServiceAccount. SARs need a
+	// non-cached client; construct a clientset from the manager's rest.Config.
+	var discoveryReviewer fleetmanagementv1alpha1.SubjectAccessReviewer
+	if enforceCrossNamespaceDiscoveryAuthz {
+		clientset, csErr := kubernetes.NewForConfig(mgr.GetConfig())
+		if csErr != nil {
+			setupLog.Error(csErr, "unable to build clientset for cross-namespace discovery authorization")
+			os.Exit(1)
+		}
+		sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
+		discoveryReviewer = fleetmanagementv1alpha1.NewSubjectAccessReviewer(
+			func(ctx context.Context, sar *authorizationv1.SubjectAccessReview, opts metav1.CreateOptions) (*authorizationv1.SubjectAccessReview, error) {
+				return sarClient.Create(ctx, sar, opts)
+			},
+		)
+		setupLog.Info("cross-namespace discovery authorization enforcement enabled; " +
+			"PipelineDiscovery/CollectorDiscovery with a foreign spec.targetNamespace require a SubjectAccessReview")
+	}
+
 	// fleetClient.Close() is best-effort. controller-runtime cancels every
 	// Runnable's context simultaneously on shutdown, so this hook races
 	// with in-flight reconcilers that may still hold the client. Close()
@@ -561,7 +597,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := fleetmanagementv1alpha1.SetupCollectorDiscoveryWebhookWithManager(mgr); err != nil {
+		if err := fleetmanagementv1alpha1.SetupCollectorDiscoveryWebhookWithManager(mgr, tenantChecker, discoveryReviewer); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "CollectorDiscovery")
 			os.Exit(1)
 		}
@@ -580,7 +616,7 @@ func main() {
 		}
 	}
 
-	if err = (&fleetmanagementv1alpha1.PipelineDiscoveryValidator{}).SetupWebhookWithManager(mgr); err != nil {
+	if err = fleetmanagementv1alpha1.NewPipelineDiscoveryValidator(discoveryReviewer).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "PipelineDiscovery")
 		os.Exit(1)
 	}

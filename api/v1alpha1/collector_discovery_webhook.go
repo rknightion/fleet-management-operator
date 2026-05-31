@@ -37,43 +37,91 @@ var collectordiscoverylog = logf.Log.WithName("collectordiscovery-resource")
 // BulkUpdateCollectors path that the Collector reconciler depends on.
 const discoveryMinPollInterval = 1 * time.Minute
 
-// SetupCollectorDiscoveryWebhookWithManager registers the
-// CollectorDiscovery webhook with the manager.
-func SetupCollectorDiscoveryWebhookWithManager(mgr ctrl.Manager) error {
+// SetupCollectorDiscoveryWebhookWithManager registers the CollectorDiscovery
+// webhook with the manager.
+//
+// checker layers matcher-based TenantPolicy enforcement on top of spec
+// validation (nil when --enable-tenant-policy-enforcement is off). reviewer
+// closes the cross-namespace confused-deputy escalation (nil when
+// --enforce-cross-namespace-discovery-authz is off).
+func SetupCollectorDiscoveryWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker, reviewer SubjectAccessReviewer) error {
 	return ctrl.NewWebhookManagedBy(mgr, &CollectorDiscovery{}).
-		WithValidator(&CollectorDiscovery{}).
+		WithValidator(&collectorDiscoveryValidator{checker: checker, reviewer: reviewer}).
 		Complete()
 }
 
 // +kubebuilder:webhook:path=/validate-fleetmanagement-grafana-com-v1alpha1-collectordiscovery,mutating=false,failurePolicy=fail,sideEffects=None,groups=fleetmanagement.grafana.com,resources=collectordiscoveries,verbs=create;update,versions=v1alpha1,name=vcollectordiscovery.kb.io,admissionReviewVersions=v1,timeoutSeconds=5
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type.
-//
-// The receiver `r` is the empty skeleton registered via WithValidator and is
-// shared across every admission call; the incoming user object is `obj`.
-// Validation MUST run against obj — running against r would validate the
-// empty skeleton, silently allowing malformed CRs through admission.
-func (r *CollectorDiscovery) ValidateCreate(ctx context.Context, obj *CollectorDiscovery) (admission.Warnings, error) {
+// collectorDiscoveryValidator is the production webhook validator. It runs the
+// type's spec validation and, when its dependencies are non-nil, layers
+// matcher-based TenantPolicy enforcement and the cross-namespace
+// SubjectAccessReview on top.
+type collectorDiscoveryValidator struct {
+	checker  MatcherChecker
+	reviewer SubjectAccessReviewer
+}
+
+var _ admission.Validator[*CollectorDiscovery] = &collectorDiscoveryValidator{}
+
+// ValidateCreate implements admission.Validator.
+func (v *collectorDiscoveryValidator) ValidateCreate(ctx context.Context, obj *CollectorDiscovery) (admission.Warnings, error) {
 	collectordiscoverylog.Info("validate create", "name", obj.Name)
-
-	return obj.validateCollectorDiscovery()
+	warnings, err := obj.validateCollectorDiscovery()
+	if err != nil {
+		return warnings, err
+	}
+	if err := v.runDiscoveryAuthz(ctx, obj); err != nil {
+		return warnings, err
+	}
+	return warnings, nil
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *CollectorDiscovery) ValidateUpdate(ctx context.Context, oldObj, newObj *CollectorDiscovery) (admission.Warnings, error) {
+// ValidateUpdate implements admission.Validator.
+func (v *collectorDiscoveryValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *CollectorDiscovery) (admission.Warnings, error) {
 	collectordiscoverylog.Info("validate update", "name", newObj.Name)
-
 	// All fields are mutable; re-run the full validation suite against the
-	// incoming newObj (not the empty receiver — see ValidateCreate godoc).
-	return newObj.validateCollectorDiscovery()
+	// incoming newObj.
+	warnings, err := newObj.validateCollectorDiscovery()
+	if err != nil {
+		return warnings, err
+	}
+	if err := v.runDiscoveryAuthz(ctx, newObj); err != nil {
+		return warnings, err
+	}
+	return warnings, nil
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (r *CollectorDiscovery) ValidateDelete(ctx context.Context, obj *CollectorDiscovery) (admission.Warnings, error) {
+// ValidateDelete implements admission.Validator.
+func (v *collectorDiscoveryValidator) ValidateDelete(ctx context.Context, obj *CollectorDiscovery) (admission.Warnings, error) {
 	collectordiscoverylog.Info("validate delete", "name", obj.Name)
-
-	// No validation needed for delete
+	// No validation needed for delete.
 	return nil, nil
+}
+
+// runDiscoveryAuthz layers the two authorization checks on top of spec
+// validation:
+//
+//   - matcher-based TenantPolicy enforcement (when checker is non-nil) over
+//     the discovery selector, reusing the shared runTenantChecks helper.
+//     CollectorDiscovery's selector is a PolicySelector (matchers AND'd, OR'd
+//     with collectorIDs), so the same matcher scoping that governs Pipeline /
+//     RemoteAttributePolicy / ExternalAttributeSync applies here.
+//   - cross-namespace SubjectAccessReview (when reviewer is non-nil) for a
+//     spec.targetNamespace that differs from the CR's own namespace, closing
+//     the confused-deputy escalation where a user makes the operator create
+//     Collectors in a namespace they cannot write to themselves.
+func (v *collectorDiscoveryValidator) runDiscoveryAuthz(ctx context.Context, obj *CollectorDiscovery) error {
+	if err := runTenantChecks(ctx, v.checker, obj.Namespace, obj.Spec.Selector.Matchers, obj.Spec.Selector.CollectorIDs); err != nil {
+		return err
+	}
+
+	target := strings.TrimSpace(obj.Spec.TargetNamespace)
+	if target == "" || target == obj.Namespace {
+		// Same-namespace (or default-to-own) writes are already governed by
+		// the RBAC that allowed the user to create this CollectorDiscovery.
+		return nil
+	}
+	return checkCrossNamespaceCreate(ctx, v.reviewer, target, "collectors")
 }
 
 // validateCollectorDiscovery performs comprehensive validation of the

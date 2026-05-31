@@ -22,8 +22,8 @@ scoped to *their* collectors".
 
 When the manager is run with `--enable-tenant-policy-enforcement=true`
 (Helm: `controllers.tenantPolicy.enabled: true`), the validating
-webhooks for `Pipeline`, `RemoteAttributePolicy`, and
-`ExternalAttributeSync` gain a final step:
+webhooks for `Pipeline`, `RemoteAttributePolicy`,
+`ExternalAttributeSync`, and `CollectorDiscovery` gain a final step:
 
 1. Read `UserInfo` from the admission request (the K8s API server
    includes this with every admission webhook call).
@@ -126,17 +126,39 @@ until you both create at least one `TenantPolicy` *and* enable the flag.
 
 ## Coverage and v1 limits
 
-Covered:
+Matcher-based enforcement covers:
 - `Pipeline.spec.matchers`
 - `RemoteAttributePolicy.spec.selector.matchers`
 - `ExternalAttributeSync.spec.selector.matchers`
+- `CollectorDiscovery.spec.selector.matchers` — `CollectorDiscovery`'s
+  selector is a matcher/collectorID selector (the same `PolicySelector`
+  shape), so the required-matcher check applies exactly as it does for
+  the three CRDs above, plus the same `collectorIDs` guard.
 
-Not covered in v1 (deliberate):
-- `Collector` and `CollectorDiscovery` CRs use a different model (bind
-  to a specific collector ID rather than selecting by matchers).
-- `spec.selector.collectorIDs` on `RemoteAttributePolicy` /
-  `ExternalAttributeSync` bypasses the matcher check. A future revision
-  may add an `allowedCollectorIDs` field on `TenantPolicy`.
+Residual gaps (deliberate in v1):
+- **`spec.selector.collectorIDs` bypass — NOT closed.** On
+  `RemoteAttributePolicy`, `ExternalAttributeSync`, and
+  `CollectorDiscovery`, a request whose selector lists explicit
+  `collectorIDs` escapes the matcher check entirely. The webhooks apply a
+  partial guard: when a `TenantPolicy` matches the requesting user, a
+  selector that uses `collectorIDs` is *rejected* (the user must scope by
+  matchers instead). But a user to whom **no** `TenantPolicy` applies is
+  default-allowed, and the matcher semantics still do not reason about the
+  IDs themselves. A future revision may add an `allowedCollectorIDs` field
+  on `TenantPolicy`. Do not rely on `TenantPolicy` alone to fence off
+  collector IDs.
+- **`PipelineDiscovery` is NOT constrained by matcher enforcement.** Its
+  selector (`PipelineDiscoverySelector`) filters by `configType` /
+  `enabled`, not by matchers, so there is no matcher scope for a
+  `TenantPolicy` to require. A `PipelineDiscovery` imports Fleet pipelines
+  fleet-wide and creates `Pipeline` CRs locally; the control that protects
+  it is the **cross-namespace discovery authorization** check below (a
+  user can only mirror into a namespace they may themselves write
+  `Pipeline` CRs in), plus standard K8s RBAC on who may create
+  `PipelineDiscovery` at all. Imported `Pipeline` CRs are themselves
+  matcher-checked on any subsequent edit by a tenanted user.
+- **`Collector`** CRs bind to a specific collector ID rather than
+  selecting by matchers and are not matcher-checked.
 - The matcher check is **required-matcher** semantics: the CR's matcher
   list must contain at least one matcher equal to one of the policy's
   required matchers. It does **not** reason about negation or regex —
@@ -144,6 +166,49 @@ Not covered in v1 (deliberate):
   passes, and `team=billing` AND `team=~.*` (matches everything) also
   passes. A future strict mode (subset semantics) is a
   CRD-compatible upgrade.
+
+## Cross-namespace discovery authorization
+
+`PipelineDiscovery` and `CollectorDiscovery` are namespaced CRDs with a
+`spec.targetNamespace` field. When set, the operator creates the mirrored
+`Pipeline` / `Collector` CRs in that namespace using its own cluster-wide
+ServiceAccount. Without a guard this is a classic **confused-deputy**
+escalation: anyone permitted to create a discovery CR in namespace A could
+name `targetNamespace: B` and have the operator write CRs into namespace B
+on their behalf, even if they have no RBAC there.
+
+The `--enforce-cross-namespace-discovery-authz` manager flag (Helm:
+`controllers.crossNamespaceDiscoveryAuthz.enabled: true`) closes this.
+When enabled, both discovery webhooks — on create **and** update — perform
+a `SubjectAccessReview` whenever `spec.targetNamespace` is non-empty and
+differs from the discovery CR's own namespace. The review asks the API
+server whether the **requesting user** (taken from the admission request's
+`UserInfo`) may `create` `pipelines` (for `PipelineDiscovery`) or
+`collectors` (for `CollectorDiscovery`) in the target namespace. If the
+answer is not an explicit allow, the request is rejected with an error
+naming the user, the target namespace, and the required permission.
+
+A same-namespace target (empty, or equal to the CR's own namespace) is
+never reviewed — it is already governed by the RBAC that let the user
+create the discovery CR in the first place.
+
+```yaml
+controllers:
+  crossNamespaceDiscoveryAuthz:
+    enabled: true
+```
+
+This sets `--enforce-cross-namespace-discovery-authz=true`. The flag is
+**off by default** (default-allow) so existing installs see no behavior
+change until it is set. The chart grants the operator
+`create` on `subjectaccessreviews.authorization.k8s.io` whenever
+`rbac.create` is true, so the check works the moment the flag is flipped.
+
+This control is independent of TenantPolicy enforcement: you can enable
+either flag without the other. For `PipelineDiscovery` it is the *primary*
+tenancy control (see the coverage note above); for `CollectorDiscovery` it
+layers underneath the matcher check (the matcher check runs first, so a
+tenant denial short-circuits before any `SubjectAccessReview` is issued).
 
 ## Status conditions
 

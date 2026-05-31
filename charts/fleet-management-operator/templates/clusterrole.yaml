@@ -257,4 +257,16 @@ rules:
   verbs:
   - create
   - patch
+# The PipelineDiscovery / CollectorDiscovery validating webhooks issue a
+# SubjectAccessReview to confirm the requester may create Pipeline / Collector
+# CRs in a foreign spec.targetNamespace, closing the cross-namespace
+# confused-deputy escalation (gated by --enforce-cross-namespace-discovery-authz).
+# Granted unconditionally so the check works whenever the flag is enabled and
+# rbac.create is true.
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
 {{- end }}

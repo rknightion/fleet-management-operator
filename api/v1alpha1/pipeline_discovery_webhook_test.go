@@ -439,3 +439,99 @@ func TestPipelineDiscovery_ValidateDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 }
+
+// TestPipelineDiscovery_CrossNamespaceSAR pins the cross-namespace
+// SubjectAccessReview that closes the confused-deputy escalation: a user may
+// only make the operator mirror Fleet pipelines into a namespace they are
+// themselves authorized to write Pipelines in. PipelineDiscovery is NOT
+// matcher-scoped, so this SAR (not a TenantPolicy matcher check) is the control
+// protecting it.
+func TestPipelineDiscovery_CrossNamespaceSAR(t *testing.T) {
+	const ownNS = "team-a"
+
+	// own returns a valid PipelineDiscovery living in ownNS with the given
+	// targetNamespace.
+	own := func(target string) *PipelineDiscovery {
+		pd := validPipelineDiscovery()
+		pd.Namespace = ownNS
+		pd.Spec.TargetNamespace = target
+		return pd
+	}
+
+	t.Run("nil reviewer skips SAR even cross-namespace", func(t *testing.T) {
+		v := NewPipelineDiscoveryValidator(nil)
+		ctx := ctxWithUser("alice", []string{"dev"})
+		if _, err := v.ValidateCreate(ctx, own("team-b")); err != nil {
+			t.Fatalf("nil reviewer must skip the SAR (back-compat), got %v", err)
+		}
+	})
+
+	t.Run("empty targetNamespace does not consult reviewer", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := NewPipelineDiscoveryValidator(r)
+		ctx := ctxWithUser("alice", nil)
+		if _, err := v.ValidateCreate(ctx, own("")); err != nil {
+			t.Fatalf("empty targetNamespace must not trigger a SAR, got %v", err)
+		}
+		if r.called {
+			t.Errorf("reviewer must NOT be consulted for same-namespace (empty target) writes")
+		}
+	})
+
+	t.Run("targetNamespace equal to own namespace does not consult reviewer", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := NewPipelineDiscoveryValidator(r)
+		ctx := ctxWithUser("alice", nil)
+		if _, err := v.ValidateCreate(ctx, own(ownNS)); err != nil {
+			t.Fatalf("target == own namespace must not trigger a SAR, got %v", err)
+		}
+		if r.called {
+			t.Errorf("reviewer must NOT be consulted when target equals own namespace")
+		}
+	})
+
+	t.Run("cross-namespace allowed passes and asks for pipelines", func(t *testing.T) {
+		r := &fakeReviewer{allow: true}
+		v := NewPipelineDiscoveryValidator(r)
+		ctx := ctxWithUser("alice", []string{"dev"})
+		if _, err := v.ValidateCreate(ctx, own("team-b")); err != nil {
+			t.Fatalf("cross-namespace create should pass when SAR allows, got %v", err)
+		}
+		if !r.called {
+			t.Fatalf("reviewer should have been consulted for a foreign targetNamespace")
+		}
+		ra := r.gotSAR.Spec.ResourceAttributes
+		if ra.Namespace != "team-b" || ra.Resource != "pipelines" {
+			t.Errorf("SAR should ask for create pipelines in team-b, got %+v", ra)
+		}
+	})
+
+	t.Run("cross-namespace denied is rejected", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := NewPipelineDiscoveryValidator(r)
+		ctx := ctxWithUser("mallory", nil)
+		_, err := v.ValidateCreate(ctx, own("team-b"))
+		require.Error(t, err, "cross-namespace create must be rejected when SAR denies")
+		assert.Contains(t, err.Error(), "team-b")
+		assert.Contains(t, err.Error(), "pipelines")
+	})
+
+	t.Run("reviewer error is surfaced", func(t *testing.T) {
+		r := &fakeReviewer{err: errSAR}
+		v := NewPipelineDiscoveryValidator(r)
+		ctx := ctxWithUser("alice", nil)
+		_, err := v.ValidateCreate(ctx, own("team-b"))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errSAR)
+	})
+
+	t.Run("update path is also gated", func(t *testing.T) {
+		r := &fakeReviewer{allow: false}
+		v := NewPipelineDiscoveryValidator(r)
+		ctx := ctxWithUser("mallory", nil)
+		oldObj := own("team-b")
+		newObj := own("team-b")
+		_, err := v.ValidateUpdate(ctx, oldObj, newObj)
+		require.Error(t, err, "cross-namespace update must be rejected when SAR denies")
+	})
+}

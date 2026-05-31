@@ -39,9 +39,28 @@ const pipelineDiscoveryMinPollInterval = 1 * time.Minute
 
 // PipelineDiscoveryValidator is the webhook validator for PipelineDiscovery.
 // It is constructed in cmd/main.go and wired via SetupWebhookWithManager.
-type PipelineDiscoveryValidator struct{}
+//
+// reviewer closes the cross-namespace confused-deputy escalation: when set and
+// spec.targetNamespace names a foreign namespace, the requester must itself be
+// authorized to create Pipelines there (nil when
+// --enforce-cross-namespace-discovery-authz is off). It nil-checks before use,
+// mirroring the other CRD webhooks.
+//
+// PipelineDiscovery carries NO MatcherChecker: its selector filters by
+// configType / enabled, not matchers, so matcher-based TenantPolicy
+// enforcement does not apply (see runDiscoveryAuthz and docs/tenant-policy.md).
+type PipelineDiscoveryValidator struct {
+	reviewer SubjectAccessReviewer
+}
 
 var _ admission.Validator[*PipelineDiscovery] = &PipelineDiscoveryValidator{}
+
+// NewPipelineDiscoveryValidator builds a PipelineDiscoveryValidator with the
+// given SubjectAccessReviewer. Pass nil to disable cross-namespace
+// authorization enforcement (default-allow, back-compat).
+func NewPipelineDiscoveryValidator(reviewer SubjectAccessReviewer) *PipelineDiscoveryValidator {
+	return &PipelineDiscoveryValidator{reviewer: reviewer}
+}
 
 // SetupWebhookWithManager registers the PipelineDiscovery webhook with the
 // manager.
@@ -56,7 +75,14 @@ func (v *PipelineDiscoveryValidator) SetupWebhookWithManager(mgr ctrl.Manager) e
 // ValidateCreate implements admission.Validator.
 func (v *PipelineDiscoveryValidator) ValidateCreate(ctx context.Context, obj *PipelineDiscovery) (admission.Warnings, error) {
 	pipelinediscoverylog.Info("validate create", "name", obj.Name)
-	return obj.validatePipelineDiscovery()
+	warnings, err := obj.validatePipelineDiscovery()
+	if err != nil {
+		return warnings, err
+	}
+	if err := v.runDiscoveryAuthz(ctx, obj); err != nil {
+		return warnings, err
+	}
+	return warnings, nil
 }
 
 // ValidateUpdate implements admission.Validator.
@@ -64,7 +90,35 @@ func (v *PipelineDiscoveryValidator) ValidateUpdate(ctx context.Context, oldObj,
 	pipelinediscoverylog.Info("validate update", "name", newObj.Name)
 	// All fields are mutable; re-run the full validation suite against the
 	// incoming newObj.
-	return newObj.validatePipelineDiscovery()
+	warnings, err := newObj.validatePipelineDiscovery()
+	if err != nil {
+		return warnings, err
+	}
+	if err := v.runDiscoveryAuthz(ctx, newObj); err != nil {
+		return warnings, err
+	}
+	return warnings, nil
+}
+
+// runDiscoveryAuthz runs the cross-namespace authorization check on top of
+// spec validation.
+//
+// TenantPolicy coverage note: unlike Pipeline / RemoteAttributePolicy /
+// ExternalAttributeSync (and unlike CollectorDiscovery), PipelineDiscovery's
+// selector (PipelineDiscoverySelector) filters by configType / enabled — it
+// has NO matcher or collectorID scope, so matcher-based TenantPolicy
+// enforcement does not apply. Tenant protection for PipelineDiscovery reduces
+// to the cross-namespace SubjectAccessReview below: a user can only mirror
+// Fleet pipelines into a namespace they are themselves authorized to write
+// Pipelines in. See docs/tenant-policy.md for this documented residual gap.
+func (v *PipelineDiscoveryValidator) runDiscoveryAuthz(ctx context.Context, obj *PipelineDiscovery) error {
+	target := strings.TrimSpace(obj.Spec.TargetNamespace)
+	if target == "" || target == obj.Namespace {
+		// Same-namespace (or default-to-own) writes are already governed by
+		// the RBAC that allowed the user to create this PipelineDiscovery.
+		return nil
+	}
+	return checkCrossNamespaceCreate(ctx, v.reviewer, target, "pipelines")
 }
 
 // ValidateDelete implements admission.Validator.
