@@ -1021,3 +1021,40 @@ var _ = Describe("ExternalAttributeSync owned-key cap", func() {
 			"Ready must be True after recovery")
 	})
 })
+
+var _ = Describe("ExternalAttributeSyncReconciler resolveSecret label-scope hint", func() {
+	newSync := func() *fleetmanagementv1alpha1.ExternalAttributeSync {
+		return &fleetmanagementv1alpha1.ExternalAttributeSync{
+			ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "team-a"},
+			Spec: fleetmanagementv1alpha1.ExternalAttributeSyncSpec{
+				Source: fleetmanagementv1alpha1.ExternalSource{
+					SecretRef: &corev1.SecretReference{Name: "missing-secret"},
+				},
+			},
+		}
+	}
+
+	It("hints at the label requirement when the cache is scoped and the Secret is missing", func() {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		r := &ExternalAttributeSyncReconciler{
+			Client:              fakeClient,
+			Scheme:              scheme.Scheme,
+			SecretLabelSelector: "fleetmanagement.grafana.com/external-source=true",
+		}
+		_, err := r.resolveSecret(context.Background(), newSync())
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("fleetmanagement.grafana.com/external-source=true"))
+		Expect(err.Error()).To(ContainSubstring("matching label"))
+	})
+
+	It("returns a plain not-found error when the cache is not scoped", func() {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		r := &ExternalAttributeSyncReconciler{
+			Client: fakeClient,
+			Scheme: scheme.Scheme,
+		}
+		_, err := r.resolveSecret(context.Background(), newSync())
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).NotTo(ContainSubstring("matching label"))
+	})
+})

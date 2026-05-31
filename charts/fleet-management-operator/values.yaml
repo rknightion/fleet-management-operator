@@ -466,6 +466,21 @@ controllers:
     # concurrency generation passes through immediately, then refills at
     # `sourceTargetRate` per second.
     sourceTargetBurst: 4
+    # -- Optional label selector that scopes the operator's Secret informer
+    # cache (manager flag --external-source-secret-label-selector). When set
+    # (e.g. "fleetmanagement.grafana.com/external-source=true"), the operator
+    # only watches and reads Secrets carrying a matching label, shrinking the
+    # blast radius of its cluster-wide secret read and ensuring EAS can only use
+    # Secrets an admin has explicitly labelled. Empty (default) watches all
+    # Secrets (back-compat); existing installs must label their source Secrets
+    # before setting this. See docs/security.md.
+    secretLabelSelector: ""
+    # -- Grant the operator cluster-wide read (get/list/watch) on Secrets, the
+    # auth material EAS sources reference. Set to false to drop the ClusterRole
+    # secret rule entirely when you instead provision namespaced Roles for the
+    # specific namespaces that hold EAS Secrets (least-privilege; see
+    # docs/security.md). True (default) preserves current behavior.
+    clusterWideSecretAccess: true
   collectorDiscovery:
     # -- Enable the CollectorDiscovery reconciler and its admission webhook.
     # **REQUIRES `controllers.collector.enabled: true`.** The manager refuses

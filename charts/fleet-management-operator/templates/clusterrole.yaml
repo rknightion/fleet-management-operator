@@ -134,6 +134,12 @@ rules:
   - get
   - list
   - watch
+{{- if .Values.controllers.externalAttributeSync.clusterWideSecretAccess }}
+# Cluster-wide Secret read is the auth material ExternalAttributeSync sources
+# reference. Set controllers.externalAttributeSync.clusterWideSecretAccess=false
+# to drop this rule and instead provision namespaced Roles for the namespaces
+# that hold EAS Secrets (least-privilege; see docs/security.md). Pair with
+# --external-source-secret-label-selector to also scope the informer cache.
 - apiGroups:
   - ""
   resources:
@@ -142,6 +148,7 @@ rules:
   - get
   - list
   - watch
+{{- end }}
 {{- end }}
 {{- if .Values.controllers.collectorDiscovery.enabled }}
 - apiGroups:

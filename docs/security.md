@@ -109,12 +109,22 @@ Defenses and reductions:
   `Secret` in its own namespace; a cross-namespace `secretRef` is rejected at
   both admission and reconcile time. The operator never reads a foreign-namespace
   secret on behalf of a CR.
-- **Label-scoped cache** (recommended). Set the external-source secret label
-  selector so the operator's informer only watches/caches `Secret`s carrying the
-  opt-in label `fleetmanagement.grafana.com/external-source: "true"`. This shrinks
-  both memory and the accidental-exposure surface, and means an `ExternalAttributeSync`
-  can only use a `Secret` an admin has explicitly labelled. Label the secrets you
-  intend EAS to read.
+- **Label-scoped cache** (recommended). Set
+  `controllers.externalAttributeSync.secretLabelSelector` (manager flag
+  `--external-source-secret-label-selector`) to e.g.
+  `fleetmanagement.grafana.com/external-source=true` so the operator's informer
+  only watches/caches `Secret`s carrying a matching label. This shrinks both
+  memory and the accidental-exposure surface, and means an
+  `ExternalAttributeSync` can only use a `Secret` an admin has explicitly
+  labelled. Label the secrets you intend EAS to read **before** setting this —
+  an empty selector (default) watches all Secrets for backward compatibility.
+- **Drop the cluster-wide grant.** Set
+  `controllers.externalAttributeSync.clusterWideSecretAccess: false` to remove
+  the `secrets` rule from the ClusterRole entirely, and instead provision your
+  own namespaced `Role`/`RoleBinding` granting `get` on `secrets` only in the
+  namespaces that actually hold EAS source Secrets. This is the true
+  least-privilege posture (the label-scoped cache reduces what the operator
+  *reads*, but RBAC still permits cluster-wide reads until you drop this grant).
 - **Disable EAS if unused.** Setting `controllers.externalAttributeSync.enabled:
   false` removes the cluster-wide secret grant entirely.
 

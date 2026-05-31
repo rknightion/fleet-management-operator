@@ -143,6 +143,13 @@ type ExternalAttributeSyncReconciler struct {
 	// SourceTargetRate per second).
 	SourceTargetBurst int
 
+	// SecretLabelSelector is the label selector (if any) the manager's Secret
+	// informer cache is scoped to (--external-source-secret-label-selector).
+	// Empty means the cache is unscoped. It is used only to enrich the
+	// "secret not found" error with a hint that a referenced Secret may be
+	// missing the required label; it does not itself filter anything.
+	SecretLabelSelector string
+
 	// targetLimitersMu guards targetLimiters. The map is created lazily
 	// on first access so tests that don't exercise the rate-limit path
 	// pay nothing. The std-lib sync import is aliased to gosync so it
@@ -631,6 +638,12 @@ func (r *ExternalAttributeSyncReconciler) resolveSecret(ctx context.Context, syn
 	secret := &corev1.Secret{}
 	key := types.NamespacedName{Namespace: ns, Name: ref.Name}
 	if err := r.Get(ctx, key, secret); err != nil {
+		if apierrors.IsNotFound(err) && r.SecretLabelSelector != "" {
+			return nil, fmt.Errorf(
+				"get secret %s: %w (the operator's Secret cache is scoped to label selector %q; "+
+					"ensure the referenced Secret carries a matching label)",
+				key, err, r.SecretLabelSelector)
+		}
 		return nil, fmt.Errorf("get secret %s: %w", key, err)
 	}
 	return secret, nil

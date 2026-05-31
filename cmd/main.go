@@ -32,11 +32,14 @@ import (
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
@@ -94,6 +97,7 @@ func main() {
 	var enablePipelineDiscoveryController bool
 	var enableTenantPolicyEnforcement bool
 	var enforceCrossNamespaceDiscoveryAuthz bool
+	var externalSourceSecretLabelSelector string
 	var fleetAPIRPS float64
 	var fleetAPIBurst int
 	var policyMaxConcurrent int
@@ -146,6 +150,13 @@ func main() {
 			"time. Closes the cross-namespace confused-deputy escalation where the operator's "+
 			"cluster-wide ServiceAccount would otherwise be borrowed to write CRs into any namespace. "+
 			"Default false (default-allow) so existing installs see no behavior change until set.")
+	flag.StringVar(&externalSourceSecretLabelSelector, "external-source-secret-label-selector", "",
+		"Optional Kubernetes label selector (e.g. fleetmanagement.grafana.com/external-source=true) "+
+			"that scopes the operator's Secret informer cache. When set, the operator only watches and "+
+			"can read Secrets carrying matching labels, shrinking the blast radius of its cluster-wide "+
+			"secret read and ensuring ExternalAttributeSync can only use Secrets an admin has explicitly "+
+			"labelled. Empty (default) watches all Secrets (back-compat); existing installs must label "+
+			"their external-source Secrets before setting this.")
 	flag.Float64Var(&fleetAPIRPS, "fleet-api-rps", 3,
 		"Fleet Management API sustained rate limit in requests per second. "+
 			"Match this to your Fleet Management server-side api: rate setting. "+
@@ -273,6 +284,29 @@ func main() {
 	//
 	// Production recommendation: Keep SyncPeriod unset (nil) for watch-driven controllers with
 	// no external drift concerns.
+	// Optionally scope the Secret informer cache to a label selector so the
+	// operator only watches and caches the Secrets it is meant to read (the
+	// auth material referenced by ExternalAttributeSync sources). This shrinks
+	// both the cache footprint and the accidental-exposure surface of the
+	// cluster-wide secret read, and means EAS can only use Secrets an admin has
+	// explicitly labelled. An empty selector (default) caches all Secrets,
+	// preserving prior behavior. The Fleet Management credentials Secret is read
+	// by the kubelet via env secretKeyRef (not this cache), so it is unaffected.
+	cacheOpts := cache.Options{}
+	if externalSourceSecretLabelSelector != "" {
+		secretSelector, selErr := labels.Parse(externalSourceSecretLabelSelector)
+		if selErr != nil {
+			setupLog.Error(selErr, "invalid --external-source-secret-label-selector",
+				"value", externalSourceSecretLabelSelector)
+			os.Exit(1)
+		}
+		cacheOpts.ByObject = map[client.Object]cache.ByObject{
+			&corev1.Secret{}: {Label: secretSelector},
+		}
+		setupLog.Info("scoping Secret informer cache to label selector",
+			"selector", externalSourceSecretLabelSelector)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                        scheme,
 		Metrics:                       metricsServerOptions,
@@ -284,6 +318,7 @@ func main() {
 		LeaseDuration:                 &leaderElectionLeaseDuration,
 		RenewDeadline:                 &leaderElectionRenewDeadline,
 		RetryPeriod:                   &leaderElectionRetryPeriod,
+		Cache:                         cacheOpts,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -574,6 +609,7 @@ func main() {
 			MaxConcurrentReconciles: syncMaxConcurrent,
 			SourceTargetRate:        syncSourceTargetRate,
 			SourceTargetBurst:       syncSourceTargetBurst,
+			SecretLabelSelector:     externalSourceSecretLabelSelector,
 		}).SetupWithManager(context.Background(), mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "ExternalAttributeSync")
 			os.Exit(1)
