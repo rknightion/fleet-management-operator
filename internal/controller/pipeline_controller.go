@@ -105,6 +105,7 @@ const (
 	eventReasonRateLimited    = "RateLimited"
 	eventReasonRecreated      = "Recreated"
 	eventReasonReadOnly       = "ReadOnly"
+	eventReasonMigrated       = "Migrated"
 )
 
 // FleetPipelineClient defines the interface for interacting with Fleet Management API
@@ -120,6 +121,11 @@ type PipelineReconciler struct {
 	Scheme      *runtime.Scheme
 	FleetClient FleetPipelineClient
 	Recorder    events.EventRecorder
+
+	// NameScope is the cluster-wide default Fleet-name scope: "none" (default)
+	// or "namespace". A per-Pipeline annotation can override it. See
+	// api/v1alpha1.DesiredFleetName.
+	NameScope string
 }
 
 // Ensure PipelineReconciler implements reconcile.Reconciler at compile time
@@ -216,10 +222,22 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	readOnly := isReadOnly(pipeline)
 
+	// Backfill SyncedName for pipelines that synced before the field existed so
+	// a name-scope change is detected below even though it does not bump
+	// metadata.generation.
+	backfillSyncedName(pipeline)
+
+	// A pending name-scope migration must bypass the observedGeneration skip:
+	// toggling --pipeline-name-scope (or the name-scope annotation) changes the
+	// desired Fleet name without bumping metadata.generation, so the normal
+	// "already reconciled" guard would otherwise never let the migration run.
+	namePending := !readOnly && pipeline.Status.ID != "" && pipeline.Status.SyncedName != "" &&
+		fleetmanagementv1alpha1.DesiredFleetName(pipeline, r.NameScope) != pipeline.Status.SyncedName
+
 	// 5. Check if reconciliation is needed (observedGeneration pattern).
 	// import-mode is an annotation, so ownership-mode changes do not bump
 	// metadata.generation. Include the last observed mode in the skip decision.
-	if pipeline.Status.ObservedGeneration == pipeline.Generation && pipelineReconcileModeObserved(pipeline, readOnly) {
+	if !namePending && pipeline.Status.ObservedGeneration == pipeline.Generation && pipelineReconcileModeObserved(pipeline, readOnly) {
 		log.V(1).Info("pipeline already reconciled, skipping", "namespace", pipeline.Namespace, "name", pipeline.Name, "generation", pipeline.Generation)
 		outcome = outcomeNoOp
 		return ctrl.Result{}, nil
@@ -247,6 +265,14 @@ func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 // 404-recreate recursion in handleAPIError) read it via pointer so the
 // deferred counter increment sees the exact terminal reason.
 func (r *PipelineReconciler) reconcileNormal(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline, outcome *string) (ctrl.Result, error) {
+	// If name scoping changed the desired Fleet name, migrate first: delete the
+	// old pipeline by ID, then fall through to recreate it under the new name.
+	// (SyncedName was backfilled in Reconcile before the observedGeneration
+	// guard so the migration is reached.)
+	if _, err := r.migratePipelineName(ctx, pipeline); err != nil {
+		return r.handleAPIError(ctx, pipeline, err, outcome)
+	}
+
 	// Build the upsert request
 	req := r.buildUpsertRequest(pipeline)
 
@@ -258,6 +284,59 @@ func (r *PipelineReconciler) reconcileNormal(ctx context.Context, pipeline *flee
 
 	// Update status with successful sync
 	return r.updateStatusSuccess(ctx, pipeline, apiPipeline, outcome)
+}
+
+// backfillSyncedName populates Status.SyncedName for pipelines that synced
+// before the field existed. The pipeline's current Fleet name equals the
+// unscoped base (spec.name or metadata.name) — exactly what the pre-scoping code
+// produced — so this is a safe one-time backfill that enables migration
+// detection on upgraded installs.
+func backfillSyncedName(pipeline *fleetmanagementv1alpha1.Pipeline) {
+	if pipeline.Status.ID == "" || pipeline.Status.SyncedName != "" {
+		return
+	}
+	base := pipeline.Spec.Name
+	if base == "" {
+		base = pipeline.Name
+	}
+	pipeline.Status.SyncedName = base
+}
+
+// migratePipelineName re-keys a pipeline in Fleet Management when name scoping
+// changes its desired name. Fleet's upsert is name-keyed, so upserting under a
+// new name would create a duplicate and orphan the old pipeline. Instead we
+// dry-run the new name, delete the old pipeline by its server ID, and clear
+// Status.ID so the caller recreates it under the new name. Returns whether a
+// migration was performed. Crash-safe: every step is idempotent (a re-run
+// dry-runs again, a 404 delete is treated as success, the recreate is
+// name-keyed), so an interrupted migration converges on the next reconcile.
+func (r *PipelineReconciler) migratePipelineName(ctx context.Context, pipeline *fleetmanagementv1alpha1.Pipeline) (bool, error) {
+	desired := fleetmanagementv1alpha1.DesiredFleetName(pipeline, r.NameScope)
+	if pipeline.Status.ID == "" || pipeline.Status.SyncedName == "" || desired == pipeline.Status.SyncedName {
+		return false, nil
+	}
+
+	// Dry-run the recreate first so we never delete a pipeline we cannot rebuild.
+	dryReq := r.buildUpsertRequest(pipeline)
+	dryReq.ValidateOnly = true
+	if _, err := r.FleetClient.UpsertPipeline(ctx, dryReq); err != nil {
+		r.emitEventf(pipeline, corev1.EventTypeWarning, eventReasonMigrated,
+			"name-scope migration dry-run failed (%q -> %q): %v", pipeline.Status.SyncedName, desired, err)
+		return false, fmt.Errorf("name-scope migration dry-run failed: %w", err)
+	}
+
+	// Delete the old pipeline by its server ID (404 = already gone = success).
+	if err := r.FleetClient.DeletePipeline(ctx, pipeline.Status.ID); err != nil {
+		return false, fmt.Errorf("name-scope migration delete of pipeline %q failed: %w", pipeline.Status.ID, err)
+	}
+
+	fleetPipelineNameMigrationsTotal.Inc()
+	r.emitEventf(pipeline, corev1.EventTypeNormal, eventReasonMigrated,
+		"migrating Fleet pipeline name %q -> %q", pipeline.Status.SyncedName, desired)
+
+	// Clear the server ID so the subsequent upsert creates the pipeline fresh.
+	pipeline.Status.ID = ""
+	return true, nil
 }
 
 // reconcileReadOnly observes a Fleet pipeline without applying spec changes.
@@ -350,11 +429,9 @@ func (r *PipelineReconciler) reconcileDelete(ctx context.Context, pipeline *flee
 
 // buildUpsertRequest builds an UpsertPipelineRequest from a Pipeline CRD
 func (r *PipelineReconciler) buildUpsertRequest(pipeline *fleetmanagementv1alpha1.Pipeline) *fleetclient.UpsertPipelineRequest {
-	// Determine pipeline name
-	pipelineName := pipeline.Spec.Name
-	if pipelineName == "" {
-		pipelineName = pipeline.Name
-	}
+	// Determine the Fleet pipeline name, applying opt-in namespace scoping
+	// (discovered/read-only pipelines keep their Fleet-assigned name).
+	pipelineName := fleetmanagementv1alpha1.DesiredFleetName(pipeline, r.NameScope)
 
 	// Build the pipeline object
 	fleetPipeline := &fleetclient.Pipeline{
@@ -518,6 +595,7 @@ func (r *PipelineReconciler) updateStatusSuccess(ctx context.Context, pipeline *
 
 	// Update status fields
 	pipeline.Status.ID = apiPipeline.ID
+	pipeline.Status.SyncedName = apiPipeline.Name
 	pipeline.Status.ObservedGeneration = pipeline.Generation
 
 	if apiPipeline.CreatedAt != nil {
@@ -752,19 +830,10 @@ func isPaused(pipeline *fleetmanagementv1alpha1.Pipeline) bool {
 	return pipeline.Spec.Paused
 }
 
+// isReadOnly delegates to the single source of truth on the Pipeline type so
+// the naming helpers and the controller agree on what "read-only" means.
 func isReadOnly(pipeline *fleetmanagementv1alpha1.Pipeline) bool {
-	if pipeline.Spec.Source != nil && pipeline.Spec.Source.Type == fleetmanagementv1alpha1.SourceTypeGrafana {
-		return true
-	}
-	annotations := pipeline.GetAnnotations()
-	if annotations == nil {
-		return false
-	}
-	mode := annotations[fleetmanagementv1alpha1.PipelineImportModeAnnotation]
-	if mode == fleetmanagementv1alpha1.PipelineImportModeAnnotationAdopt {
-		return false
-	}
-	return mode == fleetmanagementv1alpha1.PipelineImportModeAnnotationReadOnly
+	return pipeline.IsReadOnly()
 }
 
 func readOnlyPipelineID(pipeline *fleetmanagementv1alpha1.Pipeline) string {
