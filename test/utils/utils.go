@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
 )
@@ -81,19 +82,41 @@ func UninstallCertManager() {
 	}
 }
 
-// InstallCertManager installs the cert manager bundle.
+// InstallCertManager installs the cert manager bundle and waits for it to be
+// fully ready.
+//
+// The apply is retried: the bundle ships CRDs alongside the resources that use
+// them in a single manifest, and a remote fetch + apply against a cold cluster
+// can transiently fail before the CRDs are established.
+//
+// We then wait for ALL cert-manager deployments -- not just the webhook --
+// because the webhook only reports Available once cainjector has injected its
+// CA, so the full set is the reliable readiness signal. The timeout is generous
+// for resource-constrained CI runners, where a 5m wait on the webhook alone has
+// flaked.
 func InstallCertManager() error {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "apply", "-f", url)
-	if _, err := Run(cmd); err != nil {
-		return err
+
+	const applyAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= applyAttempts; attempt++ {
+		cmd := exec.Command("kubectl", "apply", "-f", url)
+		if _, lastErr = Run(cmd); lastErr == nil {
+			break
+		}
+		warnError(lastErr)
+		if attempt < applyAttempts {
+			time.Sleep(10 * time.Second)
+		}
 	}
-	// Wait for cert-manager-webhook to be ready, which can take time if cert-manager
-	// was re-installed after uninstalling on a cluster.
-	cmd = exec.Command("kubectl", "wait", "deployment.apps/cert-manager-webhook",
+	if lastErr != nil {
+		return lastErr
+	}
+
+	cmd := exec.Command("kubectl", "wait", "deployment", "--all",
 		"--for", "condition=Available",
 		"--namespace", "cert-manager",
-		"--timeout", "5m",
+		"--timeout", "8m",
 	)
 
 	_, err := Run(cmd)

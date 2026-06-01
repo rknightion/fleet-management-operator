@@ -143,6 +143,20 @@ var _ = BeforeSuite(func() {
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get webhook endpoint")
 		g.Expect(output).NotTo(BeEmpty(), "Webhook endpoint should have an IP address")
 	}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+	By("waiting for the validating webhook to actually serve requests")
+	// An endpoint IP existing does not mean the webhook's TLS listener is
+	// accepting connections yet (kube-proxy route programming + serving-cert
+	// load lag). With failurePolicy=Fail, the first real Pipeline apply then
+	// dies with "connection refused". A server-side dry-run routes through the
+	// vpipeline.kb.io webhook without persisting anything, so it is a faithful
+	// readiness gate: it succeeds only once the webhook is genuinely serving.
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "apply", "--dry-run=server",
+			"-f", "test/e2e/fixtures/valid-alloy-pipeline.yaml", "-n", namespace)
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Validating webhook should accept requests")
+	}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
 })
 
 var _ = AfterSuite(func() {
