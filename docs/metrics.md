@@ -35,6 +35,7 @@ Per-CRD reconcile outcome counters and gauges that track owned attributes / disc
 | --- | --- | --- | --- | --- | --- |
 | `fleet_discovery_list_collectors_result_size` | GaugeVec | `namespace`, `name` | — | Number of collectors returned by the last ListCollectors call. | [internal/controller/metrics.go:82](../internal/controller/metrics.go:82) |
 | `fleet_external_sync_owned_keys` | GaugeVec | `namespace`, `name` | — | Number of attribute keys currently owned by an ExternalAttributeSync CR. | [internal/controller/metrics.go:72](../internal/controller/metrics.go:72) |
+| `fleet_pipeline_name_migrations_total` | Counter | — | — | Total Fleet pipeline name-scope migrations (old pipeline deleted and recreated under the scoped name). | [internal/controller/metrics.go:92](../internal/controller/metrics.go:92) |
 | `fleet_resource_sync_age_seconds` | HistogramVec | `kind` | `0, 60, 300, 600, 1800, 3600, 7200` | Age in seconds since last successful sync, sampled at each reconcile. | [internal/controller/metrics.go:61](../internal/controller/metrics.go:61) |
 | `fleet_resource_synced_total` | CounterVec | `kind`, `reason` | — | Total reconciliation outcomes by resource kind and reason. | [internal/controller/metrics.go:50](../internal/controller/metrics.go:50) |
 

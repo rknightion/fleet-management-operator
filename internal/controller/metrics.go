@@ -86,6 +86,15 @@ var (
 		},
 		[]string{"namespace", "name"},
 	)
+
+	// fleetPipelineNameMigrationsTotal counts pipeline name-scope migrations
+	// (delete-old-and-recreate cycles) performed by the Pipeline controller.
+	fleetPipelineNameMigrationsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "fleet_pipeline_name_migrations_total",
+			Help: "Total Fleet pipeline name-scope migrations (old pipeline deleted and recreated under the scoped name).",
+		},
+	)
 )
 
 func init() {
@@ -94,5 +103,6 @@ func init() {
 		fleetResourceSyncAge,
 		fleetExternalSyncOwnedKeys,
 		fleetDiscoveryListSize,
+		fleetPipelineNameMigrationsTotal,
 	)
 }

@@ -436,6 +436,13 @@ controllers:
   pipeline:
     # -- Enable the Pipeline reconciler and its admission webhook. The core controller; default on.
     enabled: true
+    # -- Default Fleet pipeline name scope: "none" (use spec.name verbatim) or
+    # "namespace" (prefix the Fleet name with "<namespace>." so pipelines in
+    # different namespaces cannot collide on a shared Fleet name). A per-Pipeline
+    # fleetmanagement.grafana.com/name-scope annotation overrides this. Switching
+    # to "namespace" auto-migrates existing pipelines (delete-and-recreate); see
+    # docs/runbooks/pipeline-name-scope-migration.md.
+    nameScope: none
   collector:
     # -- Enable the Collector reconciler and its admission webhook. Manages
     # remote attributes on a registered collector.
