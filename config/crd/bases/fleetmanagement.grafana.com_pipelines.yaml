@@ -98,8 +98,12 @@ spec:
                 type: array
               name:
                 description: |-
-                  Name of the pipeline (unique identifier in Fleet Management)
-                  If not specified, uses metadata.name
+                  Name is the pipeline's unique identifier in Fleet Management.
+                  If not specified, metadata.name is used. The name must not contain
+                  whitespace or control characters and is capped at 253 characters
+                  (Fleet Management imposes no limit on the name itself; this is an
+                  operator-side sanity bound, double-checked by the validating webhook).
+                maxLength: 253
                 type: string
               paused:
                 default: false

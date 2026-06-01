@@ -176,7 +176,8 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: alloy-pipeline-sample
 spec:
-  # Override with valid Alloy identifier (no hyphens)
+  # Unique pipeline name in Fleet Management. Optional: defaults to
+  # metadata.name. No whitespace/control characters; max 253 characters.
   name: pipeline_sample
 
   # Alloy configuration for Prometheus self-monitoring
@@ -232,7 +233,8 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: otel-metrics-pipeline
 spec:
-  # Override with valid Alloy identifier (no hyphens)
+  # Unique pipeline name in Fleet Management. Optional: defaults to
+  # metadata.name. No whitespace/control characters; max 253 characters.
   name: otel_metrics_pipeline
 
   # OpenTelemetry Collector configuration

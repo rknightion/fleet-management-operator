@@ -91,6 +91,11 @@ func (v *pipelineValidator) ValidateDelete(ctx context.Context, obj *Pipeline) (
 func (r *Pipeline) validatePipeline() (admission.Warnings, error) {
 	var allWarnings admission.Warnings
 
+	// 0. Validate spec.name (charset/length)
+	if err := r.validateName(); err != nil {
+		return nil, err
+	}
+
 	// 1. Validate contents is not empty
 	if err := r.validateContents(); err != nil {
 		return nil, err
@@ -116,6 +121,39 @@ func (r *Pipeline) validatePipeline() (admission.Warnings, error) {
 	allWarnings = append(allWarnings, warnings...)
 
 	return allWarnings, nil
+}
+
+// maxPipelineNameLength bounds spec.name. Fleet Management imposes no limit on
+// the pipeline name (it is the unique identifier), so this is an operator-side
+// sanity cap; it is generous enough to never reject a realistic name.
+const maxPipelineNameLength = 253
+
+// validateName checks spec.name when set. An empty spec.name falls back to
+// metadata.name, which Kubernetes already constrains to a DNS-1123 subdomain,
+// so only a non-empty override is validated here. The charset rule is
+// deliberately permissive (Fleet allows arbitrary names and existing installs
+// may use dots, slashes, underscores, or mixed case); it rejects only the
+// values that are never legitimate: whitespace and control characters.
+func (r *Pipeline) validateName() error {
+	name := r.Spec.Name
+	if name == "" {
+		return nil
+	}
+	if len(name) > maxPipelineNameLength {
+		return fmt.Errorf("spec.name must be at most %d characters, got %d", maxPipelineNameLength, len(name))
+	}
+	if strings.TrimSpace(name) != name {
+		return fmt.Errorf("spec.name must not have leading or trailing whitespace")
+	}
+	for _, c := range name {
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f' {
+			return fmt.Errorf("spec.name must not contain whitespace")
+		}
+		if c < 0x20 || c == 0x7f {
+			return fmt.Errorf("spec.name must not contain control characters")
+		}
+	}
+	return nil
 }
 
 // validateContents ensures pipeline contents is not empty
