@@ -517,7 +517,11 @@ func main() {
 		}
 		sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
 		discoveryReviewer = fleetmanagementv1alpha1.NewSubjectAccessReviewer(
-			func(ctx context.Context, sar *authorizationv1.SubjectAccessReview, opts metav1.CreateOptions) (*authorizationv1.SubjectAccessReview, error) {
+			func(
+				ctx context.Context,
+				sar *authorizationv1.SubjectAccessReview,
+				opts metav1.CreateOptions,
+			) (*authorizationv1.SubjectAccessReview, error) {
 				return sarClient.Create(ctx, sar, opts)
 			},
 		)
@@ -633,7 +637,8 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := fleetmanagementv1alpha1.SetupCollectorDiscoveryWebhookWithManager(mgr, tenantChecker, discoveryReviewer); err != nil {
+		if err := fleetmanagementv1alpha1.SetupCollectorDiscoveryWebhookWithManager(
+			mgr, tenantChecker, discoveryReviewer); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "CollectorDiscovery")
 			os.Exit(1)
 		}
@@ -652,7 +657,8 @@ func main() {
 		}
 	}
 
-	if err = fleetmanagementv1alpha1.NewPipelineDiscoveryValidator(discoveryReviewer).SetupWebhookWithManager(mgr); err != nil {
+	if err = fleetmanagementv1alpha1.NewPipelineDiscoveryValidator(discoveryReviewer).
+		SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "PipelineDiscovery")
 		os.Exit(1)
 	}

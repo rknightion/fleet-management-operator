@@ -149,6 +149,16 @@ spec:
                 description: |-
                   TargetNamespace is the namespace where mirrored Collector CRs are
                   created. Defaults to this CollectorDiscovery's own namespace.
+
+                  WARNING: pointing this at a different namespace is a privileged,
+                  cross-namespace action. The operator creates the mirrored Collector CRs
+                  there using its cluster-wide ServiceAccount, so whoever can create a
+                  CollectorDiscovery can make the operator write CRs into any namespace (a
+                  confused-deputy vector). Restrict CollectorDiscovery creation to
+                  platform/admin subjects, and enable
+                  --enforce-cross-namespace-discovery-authz to require the requesting user
+                  to hold create permission on collectors in the target namespace. See
+                  docs/security.md (Cross-namespace authority).
                 type: string
             type: object
           status:
@@ -1074,6 +1084,16 @@ spec:
                 description: |-
                   TargetNamespace is the namespace where discovered Pipeline CRs are created.
                   Defaults to this PipelineDiscovery's own namespace.
+
+                  WARNING: pointing this at a different namespace is a privileged,
+                  cross-namespace action. The operator creates the mirrored Pipeline CRs
+                  there using its cluster-wide ServiceAccount, so whoever can create a
+                  PipelineDiscovery can make the operator write CRs into any namespace (a
+                  confused-deputy vector). Restrict PipelineDiscovery creation to
+                  platform/admin subjects, and enable
+                  --enforce-cross-namespace-discovery-authz to require the requesting user
+                  to hold create permission on pipelines in the target namespace. See
+                  docs/security.md (Cross-namespace authority).
                 type: string
             type: object
           status:
@@ -1314,8 +1334,12 @@ spec:
                 type: array
               name:
                 description: |-
-                  Name of the pipeline (unique identifier in Fleet Management)
-                  If not specified, uses metadata.name
+                  Name is the pipeline's unique identifier in Fleet Management.
+                  If not specified, metadata.name is used. The name must not contain
+                  whitespace or control characters and is capped at 253 characters
+                  (Fleet Management imposes no limit on the name itself; this is an
+                  operator-side sanity bound, double-checked by the validating webhook).
+                maxLength: 253
                 type: string
               paused:
                 default: false
@@ -2010,6 +2034,12 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
 - apiGroups:
   - fleetmanagement.grafana.com
   resources:
