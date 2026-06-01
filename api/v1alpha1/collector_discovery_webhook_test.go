@@ -413,6 +413,7 @@ func TestCollectorDiscovery_TenantCheck(t *testing.T) {
 // Collector CRs in.
 func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
 	const ownNS = "team-a"
+	const targetNS = "team-b"
 
 	own := func(target string) *CollectorDiscovery {
 		obj := validCollectorDiscovery()
@@ -424,7 +425,7 @@ func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
 	t.Run("nil reviewer skips SAR even cross-namespace", func(t *testing.T) {
 		v := &collectorDiscoveryValidator{reviewer: nil}
 		ctx := ctxWithUser("alice", []string{"dev"})
-		if _, err := v.ValidateCreate(ctx, own("team-b")); err != nil {
+		if _, err := v.ValidateCreate(ctx, own(targetNS)); err != nil {
 			t.Fatalf("nil reviewer must skip the SAR (back-compat), got %v", err)
 		}
 	})
@@ -457,14 +458,14 @@ func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
 		r := &fakeReviewer{allow: true}
 		v := &collectorDiscoveryValidator{reviewer: r}
 		ctx := ctxWithUser("alice", []string{"dev"})
-		if _, err := v.ValidateCreate(ctx, own("team-b")); err != nil {
+		if _, err := v.ValidateCreate(ctx, own(targetNS)); err != nil {
 			t.Fatalf("cross-namespace create should pass when SAR allows, got %v", err)
 		}
 		if !r.called {
 			t.Fatalf("reviewer should have been consulted for a foreign targetNamespace")
 		}
 		ra := r.gotSAR.Spec.ResourceAttributes
-		if ra.Namespace != "team-b" || ra.Resource != "collectors" {
+		if ra.Namespace != targetNS || ra.Resource != "collectors" {
 			t.Errorf("SAR should ask for create collectors in team-b, got %+v", ra)
 		}
 	})
@@ -473,9 +474,9 @@ func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
 		r := &fakeReviewer{allow: false}
 		v := &collectorDiscoveryValidator{reviewer: r}
 		ctx := ctxWithUser("mallory", nil)
-		_, err := v.ValidateCreate(ctx, own("team-b"))
+		_, err := v.ValidateCreate(ctx, own(targetNS))
 		require.Error(t, err, "cross-namespace create must be rejected when SAR denies")
-		assert.Contains(t, err.Error(), "team-b")
+		assert.Contains(t, err.Error(), targetNS)
 		assert.Contains(t, err.Error(), "collectors")
 	})
 
@@ -483,7 +484,7 @@ func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
 		r := &fakeReviewer{err: errSAR}
 		v := &collectorDiscoveryValidator{reviewer: r}
 		ctx := ctxWithUser("alice", nil)
-		_, err := v.ValidateCreate(ctx, own("team-b"))
+		_, err := v.ValidateCreate(ctx, own(targetNS))
 		require.Error(t, err)
 		assert.ErrorIs(t, err, errSAR)
 	})
@@ -497,7 +498,7 @@ func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
 		v := &collectorDiscoveryValidator{checker: c, reviewer: r}
 		ctx := ctxWithUser("alice", nil)
 
-		obj := own("team-b")
+		obj := own(targetNS)
 		obj.Spec.Selector = PolicySelector{Matchers: []string{"team=other"}}
 		_, err := v.ValidateCreate(ctx, obj)
 		if !errors.Is(err, deny) {
@@ -512,7 +513,7 @@ func TestCollectorDiscovery_CrossNamespaceSAR(t *testing.T) {
 		r := &fakeReviewer{allow: false}
 		v := &collectorDiscoveryValidator{reviewer: r}
 		ctx := ctxWithUser("mallory", nil)
-		_, err := v.ValidateUpdate(ctx, own("team-b"), own("team-b"))
+		_, err := v.ValidateUpdate(ctx, own(targetNS), own(targetNS))
 		require.Error(t, err, "cross-namespace update must be rejected when SAR denies")
 	})
 }
