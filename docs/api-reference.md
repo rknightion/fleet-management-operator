@@ -729,7 +729,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name of the pipeline (unique identifier in Fleet Management)<br />If not specified, uses metadata.name |  | Optional: \{\} <br /> |
+| `name` _string_ | Name is the pipeline's unique identifier in Fleet Management.<br />If not specified, metadata.name is used. The name must not contain<br />whitespace or control characters and is capped at 253 characters<br />(Fleet Management imposes no limit on the name itself; this is an<br />operator-side sanity bound, double-checked by the validating webhook). |  | MaxLength: 253 <br />Optional: \{\} <br /> |
 | `contents` _string_ | Contents of the pipeline configuration (Alloy or OpenTelemetry Collector config) |  | MinLength: 1 <br />Required: \{\} <br /> |
 | `matchers` _string array_ | Matchers to assign pipeline to collectors. Uses Prometheus Alertmanager<br />syntax: key=value, key!=value, key=~regex, key!~regex. A maximum of<br />100 matchers may be set per pipeline; the cap exists to bound<br />validation and matching cost across the fleet (Fleet Management<br />evaluates matchers on every collector poll). Each matcher is<br />independently capped at 200 characters by the API server (OpenAPI<br />maxLength) and double-checked by the validating webhook. |  | MaxItems: 100 <br />items:MaxLength: 200 <br />items:MinLength: 1 <br />Optional: \{\} <br /> |
 | `enabled` _boolean_ | Enabled indicates whether the pipeline is enabled for collectors | true | Optional: \{\} <br /> |

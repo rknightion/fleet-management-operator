@@ -160,9 +160,13 @@ func SourceTypeFromFleetAPI(apiType string) SourceType {
 
 // PipelineSpec defines the desired state of Pipeline
 type PipelineSpec struct {
-	// Name of the pipeline (unique identifier in Fleet Management)
-	// If not specified, uses metadata.name
+	// Name is the pipeline's unique identifier in Fleet Management.
+	// If not specified, metadata.name is used. The name must not contain
+	// whitespace or control characters and is capped at 253 characters
+	// (Fleet Management imposes no limit on the name itself; this is an
+	// operator-side sanity bound, double-checked by the validating webhook).
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	Name string `json:"name,omitempty"`
 
 	// Contents of the pipeline configuration (Alloy or OpenTelemetry Collector config)
