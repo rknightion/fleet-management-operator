@@ -49,6 +49,14 @@ const pipelineDiscoveryMinPollInterval = 1 * time.Minute
 // PipelineDiscovery carries NO MatcherChecker: its selector filters by
 // configType / enabled, not matchers, so matcher-based TenantPolicy
 // enforcement does not apply (see runDiscoveryAuthz and docs/tenant-policy.md).
+//
+// +kubebuilder:object:generate=false
+// PipelineDiscoveryValidator holds an interface-typed field (SubjectAccessReviewer)
+// and is not a CRD object, so it must be excluded from deepcopy generation. The
+// package-level marker in groupversion_info.go opts every exported type in; the
+// four other webhook validators avoid this only because they are unexported (and
+// controller-gen skips unexported types). This one is exported, so the opt-out is
+// explicit -- matching MatcherChecker and SubjectAccessReviewer.
 type PipelineDiscoveryValidator struct {
 	reviewer SubjectAccessReviewer
 }
