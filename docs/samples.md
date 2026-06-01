@@ -83,6 +83,12 @@ spec:
 
   # Where to create mirrored Collector CRs. Defaults to this
   # CollectorDiscovery's own namespace if omitted.
+  #
+  # Setting it to ANOTHER namespace is a privileged, cross-namespace action:
+  # the operator uses its cluster-wide ServiceAccount to write Collector CRs
+  # there (a confused-deputy vector). Restrict who can create CollectorDiscovery
+  # CRs to platform/admin subjects, and consider enabling the manager flag
+  # --enforce-cross-namespace-discovery-authz. See docs/security.md.
   # targetNamespace: fleet-mirror
 
   # Mirror collectors marked inactive in Fleet. Default false.
@@ -298,8 +304,13 @@ spec:
     configType: Alloy
     enabled: true
   # Omit targetNamespace to create Pipeline CRs in this
-  # PipelineDiscovery's own namespace. Set it only when intentionally
-  # mirroring into another namespace.
+  # PipelineDiscovery's own namespace.
+  #
+  # Setting it to ANOTHER namespace is a privileged, cross-namespace action:
+  # the operator uses its cluster-wide ServiceAccount to write Pipeline CRs
+  # there (a confused-deputy vector). Restrict who can create PipelineDiscovery
+  # CRs to platform/admin subjects, and consider enabling the manager flag
+  # --enforce-cross-namespace-discovery-authz. See docs/security.md.
   # targetNamespace: fleet-pipelines
   policy:
     onPipelineRemoved: Keep

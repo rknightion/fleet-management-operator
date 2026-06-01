@@ -10,8 +10,13 @@ spec:
     configType: Alloy
     enabled: true
   # Omit targetNamespace to create Pipeline CRs in this
-  # PipelineDiscovery's own namespace. Set it only when intentionally
-  # mirroring into another namespace.
+  # PipelineDiscovery's own namespace.
+  #
+  # Setting it to ANOTHER namespace is a privileged, cross-namespace action:
+  # the operator uses its cluster-wide ServiceAccount to write Pipeline CRs
+  # there (a confused-deputy vector). Restrict who can create PipelineDiscovery
+  # CRs to platform/admin subjects, and consider enabling the manager flag
+  # --enforce-cross-namespace-discovery-authz. See docs/security.md.
   # targetNamespace: fleet-pipelines
   policy:
     onPipelineRemoved: Keep

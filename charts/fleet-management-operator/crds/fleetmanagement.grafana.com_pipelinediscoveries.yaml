@@ -118,6 +118,16 @@ spec:
                 description: |-
                   TargetNamespace is the namespace where discovered Pipeline CRs are created.
                   Defaults to this PipelineDiscovery's own namespace.
+
+                  WARNING: pointing this at a different namespace is a privileged,
+                  cross-namespace action. The operator creates the mirrored Pipeline CRs
+                  there using its cluster-wide ServiceAccount, so whoever can create a
+                  PipelineDiscovery can make the operator write CRs into any namespace (a
+                  confused-deputy vector). Restrict PipelineDiscovery creation to
+                  platform/admin subjects, and enable
+                  --enforce-cross-namespace-discovery-authz to require the requesting user
+                  to hold create permission on pipelines in the target namespace. See
+                  docs/security.md (Cross-namespace authority).
                 type: string
             type: object
           status:
