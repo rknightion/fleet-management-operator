@@ -17,6 +17,12 @@ spec:
 
   # Where to create mirrored Collector CRs. Defaults to this
   # CollectorDiscovery's own namespace if omitted.
+  #
+  # Setting it to ANOTHER namespace is a privileged, cross-namespace action:
+  # the operator uses its cluster-wide ServiceAccount to write Collector CRs
+  # there (a confused-deputy vector). Restrict who can create CollectorDiscovery
+  # CRs to platform/admin subjects, and consider enabling the manager flag
+  # --enforce-cross-namespace-discovery-authz. See docs/security.md.
   # targetNamespace: fleet-mirror
 
   # Mirror collectors marked inactive in Fleet. Default false.

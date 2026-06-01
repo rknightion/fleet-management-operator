@@ -88,6 +88,12 @@ only that the value is a syntactically valid namespace name — so without extra
 controls, a user who can create a discovery CR in namespace A can make the
 operator write CRs into **any** namespace B. This is a classic confused-deputy.
 
+**Recommended posture: treat creating a `PipelineDiscovery` or `CollectorDiscovery`
+as a platform/admin operation.** Because cross-namespace mirroring is the point of
+the feature, only cluster-admins or platform teams should be granted the ability to
+create these CRs. Do not delegate discovery-CR creation to per-namespace tenants
+unless you also enable the SubjectAccessReview gate below.
+
 **Mitigation — `--enforce-cross-namespace-discovery-authz`** (Helm:
 `controllers.crossNamespaceDiscoveryAuthz.enabled`). When enabled, the discovery
 webhooks issue a `SubjectAccessReview` for the *requesting user* and reject the

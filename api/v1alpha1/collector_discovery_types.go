@@ -128,6 +128,16 @@ type CollectorDiscoverySpec struct {
 
 	// TargetNamespace is the namespace where mirrored Collector CRs are
 	// created. Defaults to this CollectorDiscovery's own namespace.
+	//
+	// WARNING: pointing this at a different namespace is a privileged,
+	// cross-namespace action. The operator creates the mirrored Collector CRs
+	// there using its cluster-wide ServiceAccount, so whoever can create a
+	// CollectorDiscovery can make the operator write CRs into any namespace (a
+	// confused-deputy vector). Restrict CollectorDiscovery creation to
+	// platform/admin subjects, and enable
+	// --enforce-cross-namespace-discovery-authz to require the requesting user
+	// to hold create permission on collectors in the target namespace. See
+	// docs/security.md (Cross-namespace authority).
 	// +optional
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
