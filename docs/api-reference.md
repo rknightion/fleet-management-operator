@@ -729,7 +729,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name is the pipeline's unique identifier in Fleet Management.<br />If not specified, metadata.name is used. The name must not contain<br />whitespace or control characters and is capped at 253 characters<br />(Fleet Management imposes no limit on the name itself; this is an<br />operator-side sanity bound, double-checked by the validating webhook). |  | MaxLength: 253 <br />Optional: \{\} <br /> |
+| `name` _string_ | Name is the pipeline's unique identifier in Fleet Management.<br />If not specified, metadata.name is used. The name must not contain<br />whitespace or control characters and is capped at 253 characters<br />(Fleet Management imposes no limit on the name itself; this is an<br />operator-side sanity bound, double-checked by the validating webhook).<br />When the operator runs with name scoping enabled<br />(--pipeline-name-scope=namespace, or the<br />fleetmanagement.grafana.com/name-scope=namespace annotation on this<br />Pipeline), the Fleet name is prefixed with "<namespace>." so that<br />pipelines in different namespaces cannot collide. Discovered and read-only<br />pipelines keep their Fleet-assigned name. See<br />docs/runbooks/pipeline-name-scope-migration.md. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
 | `contents` _string_ | Contents of the pipeline configuration (Alloy or OpenTelemetry Collector config) |  | MinLength: 1 <br />Required: \{\} <br /> |
 | `matchers` _string array_ | Matchers to assign pipeline to collectors. Uses Prometheus Alertmanager<br />syntax: key=value, key!=value, key=~regex, key!~regex. A maximum of<br />100 matchers may be set per pipeline; the cap exists to bound<br />validation and matching cost across the fleet (Fleet Management<br />evaluates matchers on every collector poll). Each matcher is<br />independently capped at 200 characters by the API server (OpenAPI<br />maxLength) and double-checked by the validating webhook. |  | MaxItems: 100 <br />items:MaxLength: 200 <br />items:MinLength: 1 <br />Optional: \{\} <br /> |
 | `enabled` _boolean_ | Enabled indicates whether the pipeline is enabled for collectors | true | Optional: \{\} <br /> |
@@ -752,6 +752,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `id` _string_ | ID is the server-assigned pipeline ID from Fleet Management |  | Optional: \{\} <br /> |
+| `syncedName` _string_ | SyncedName is the pipeline name currently present in Fleet Management.<br />It is used to detect a name change (e.g. when name scoping is toggled) so<br />the controller can migrate the pipeline instead of orphaning it. |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed Pipeline spec |  | Optional: \{\} <br /> |
 | `createdAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | CreatedAt is the timestamp when the pipeline was created in Fleet Management |  | Optional: \{\} <br /> |
 | `updatedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta)_ | UpdatedAt is the timestamp when the pipeline was last updated in Fleet Management |  | Optional: \{\} <br /> |

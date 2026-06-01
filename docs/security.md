@@ -96,6 +96,19 @@ in the target namespace. Enable this whenever you delegate discovery-CR creation
 to anyone who is not a cluster admin. It is default-off for backward
 compatibility; turning it on is strongly recommended for multi-tenant clusters.
 
+## Pipeline name collisions across namespaces
+
+A Fleet Management pipeline name is a single org-wide identifier. Two `Pipeline`
+CRs in different namespaces that pick the same `spec.name` therefore fight over
+one Fleet pipeline. Enable **name scoping** (`controllers.pipeline.nameScope:
+namespace`, manager flag `--pipeline-name-scope=namespace`) to prefix the Fleet
+name with `<namespace>.`, so a namespace can only ever write names within its own
+prefix. It is default-off; switching it on auto-migrates existing pipelines (see
+[pipeline-name-scope-migration.md](runbooks/pipeline-name-scope-migration.md)).
+In a scoping cluster the admission webhook also stops a pipeline that opts out
+(`fleetmanagement.grafana.com/name-scope: none`) from using a `<label>.`-prefixed
+name that could impersonate another namespace's scoped pipeline.
+
 ## Cluster-wide Secret access
 
 When `controllers.externalAttributeSync.enabled` (default `true`), the operator

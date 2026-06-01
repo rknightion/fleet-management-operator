@@ -35,9 +35,9 @@ var pipelinelog = logf.Log.WithName("pipeline-resource")
 // webhook with the manager. Pass a non-nil MatcherChecker (e.g. a
 // *tenant.Checker) to layer tenant-policy enforcement on top of the spec
 // validation; pass nil to skip the tenant check.
-func SetupPipelineWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker) error {
+func SetupPipelineWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker, nameScopeDefault string) error {
 	return ctrl.NewWebhookManagedBy(mgr, &Pipeline{}).
-		WithValidator(&pipelineValidator{checker: checker}).
+		WithValidator(&pipelineValidator{checker: checker, nameScopeDefault: nameScopeDefault}).
 		Complete()
 }
 
@@ -48,7 +48,15 @@ func SetupPipelineWebhookWithManager(mgr ctrl.Manager, checker MatcherChecker) e
 // policy check on top.
 type pipelineValidator struct {
 	checker MatcherChecker
+	// nameScopeDefault is the cluster-wide Fleet-name scope ("none" or
+	// "namespace"); it gates the reserved-prefix impersonation check.
+	nameScopeDefault string
 }
+
+// reservedScopePrefixRe matches names that begin with "<dns1123-label>." — the
+// shape of a namespace-scoped Fleet name. Used to stop an opted-out pipeline
+// from impersonating another namespace's scoped name.
+var reservedScopePrefixRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?\.`)
 
 var _ admission.Validator[*Pipeline] = &pipelineValidator{}
 
@@ -57,6 +65,9 @@ func (v *pipelineValidator) ValidateCreate(ctx context.Context, obj *Pipeline) (
 	pipelinelog.Info("validate create", "name", obj.Name)
 	warnings, err := obj.validatePipeline()
 	if err != nil {
+		return warnings, err
+	}
+	if err := v.validateNameScope(obj); err != nil {
 		return warnings, err
 	}
 	if v.checker != nil {
@@ -74,6 +85,9 @@ func (v *pipelineValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *
 	if err != nil {
 		return warnings, err
 	}
+	if err := v.validateNameScope(newObj); err != nil {
+		return warnings, err
+	}
 	if v.checker != nil {
 		if err := v.checker.Check(ctx, newObj.Namespace, newObj.Spec.Matchers); err != nil {
 			return warnings, err
@@ -85,6 +99,29 @@ func (v *pipelineValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *
 // ValidateDelete implements admission.Validator.
 func (v *pipelineValidator) ValidateDelete(ctx context.Context, obj *Pipeline) (admission.Warnings, error) {
 	return nil, nil
+}
+
+// validateNameScope validates the name-scope annotation value and, in a cluster
+// that scopes by default, stops an explicitly opted-out pipeline from using a
+// spec.name that could impersonate another namespace's scoped name. The guard
+// only fires for opted-out CRs under a namespace default — the sole way to
+// produce an unscoped name in a scoping cluster; a CR that is scoped has its own
+// namespace prepended by the operator, so it cannot impersonate anything.
+func (v *pipelineValidator) validateNameScope(obj *Pipeline) error {
+	if raw, ok := obj.GetAnnotations()[PipelineNameScopeAnnotation]; ok {
+		if raw != NameScopeNamespace && raw != NameScopeNone {
+			return fmt.Errorf("annotation %s must be %q or %q, got %q",
+				PipelineNameScopeAnnotation, NameScopeNamespace, NameScopeNone, raw)
+		}
+	}
+	if v.nameScopeDefault == NameScopeNamespace &&
+		EffectiveNameScope(obj, v.nameScopeDefault) == NameScopeNone &&
+		obj.Spec.Name != "" && reservedScopePrefixRe.MatchString(obj.Spec.Name) {
+		return fmt.Errorf("spec.name %q is not allowed for a name-scope=none pipeline in a namespace-scoped cluster: "+
+			"it could collide with another namespace's scoped name; remove the leading \"<label>.\" prefix or omit the name-scope override",
+			obj.Spec.Name)
+	}
+	return nil
 }
 
 // validatePipeline performs comprehensive validation of the Pipeline resource

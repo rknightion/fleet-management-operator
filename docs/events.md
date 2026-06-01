@@ -66,6 +66,7 @@ Source: [internal/controller/pipeline_controller.go](../internal/controller/pipe
 | Reason | Type | Trigger |
 | --- | --- | --- |
 | `DeleteFailed` | Warning | Failed to delete pipeline from Fleet Management: %v |
+| `Migrated` | Warning | name-scope migration dry-run failed (%q -> %q): %v |
 | `RateLimited` | Warning | Rate limited by Fleet Management API, will retry in 10 seconds |
 | `ReadOnly` | Warning | %v |
 | `Recreated` | Warning | Pipeline was deleted externally, recreating in Fleet Management |
@@ -73,6 +74,7 @@ Source: [internal/controller/pipeline_controller.go](../internal/controller/pipe
 | `ValidationFailed` | Warning | Fleet Management API validation failed: %s |
 | `Created` | Normal | Pipeline created in Fleet Management (ID: %s) |
 | `Deleted` | Normal | Pipeline already deleted from Fleet Management |
+| `Migrated` | Normal | migrating Fleet pipeline name %q -> %q |
 | `ReadOnly` | Normal | Observed read-only pipeline from Fleet Management |
 | `Synced` | Normal | Pipeline successfully synced to Fleet Management |
 | `Updated` | Normal | Pipeline updated in Fleet Management (ID: %s) |

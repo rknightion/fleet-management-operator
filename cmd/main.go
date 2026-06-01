@@ -98,6 +98,7 @@ func main() {
 	var enableTenantPolicyEnforcement bool
 	var enforceCrossNamespaceDiscoveryAuthz bool
 	var externalSourceSecretLabelSelector string
+	var pipelineNameScope string
 	var fleetAPIRPS float64
 	var fleetAPIBurst int
 	var policyMaxConcurrent int
@@ -150,6 +151,12 @@ func main() {
 			"time. Closes the cross-namespace confused-deputy escalation where the operator's "+
 			"cluster-wide ServiceAccount would otherwise be borrowed to write CRs into any namespace. "+
 			"Default false (default-allow) so existing installs see no behavior change until set.")
+	flag.StringVar(&pipelineNameScope, "pipeline-name-scope", "none",
+		"Default Fleet pipeline name scope: \"none\" (use spec.name verbatim, the default) or "+
+			"\"namespace\" (prefix the Fleet name with \"<namespace>.\" so pipelines in different "+
+			"namespaces cannot collide). A per-Pipeline fleetmanagement.grafana.com/name-scope "+
+			"annotation overrides this. Enabling \"namespace\" auto-migrates existing pipelines "+
+			"(delete-and-recreate); see docs/runbooks/pipeline-name-scope-migration.md.")
 	flag.StringVar(&externalSourceSecretLabelSelector, "external-source-secret-label-selector", "",
 		"Optional Kubernetes label selector (e.g. fleetmanagement.grafana.com/external-source=true) "+
 			"that scopes the operator's Secret informer cache. When set, the operator only watches and "+
@@ -204,6 +211,13 @@ func main() {
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if pipelineNameScope != fleetmanagementv1alpha1.NameScopeNone &&
+		pipelineNameScope != fleetmanagementv1alpha1.NameScopeNamespace {
+		setupLog.Error(fmt.Errorf("invalid --pipeline-name-scope %q", pipelineNameScope),
+			"must be \"none\" or \"namespace\"")
+		os.Exit(1)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -553,12 +567,13 @@ func main() {
 			Scheme:      mgr.GetScheme(),
 			FleetClient: fleetClient,
 			Recorder:    mgr.GetEventRecorder("pipeline-controller"),
+			NameScope:   pipelineNameScope,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Pipeline")
 			os.Exit(1)
 		}
 
-		if err := fleetmanagementv1alpha1.SetupPipelineWebhookWithManager(mgr, tenantChecker); err != nil {
+		if err := fleetmanagementv1alpha1.SetupPipelineWebhookWithManager(mgr, tenantChecker, pipelineNameScope); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Pipeline")
 			os.Exit(1)
 		}

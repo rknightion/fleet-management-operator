@@ -165,6 +165,14 @@ type PipelineSpec struct {
 	// whitespace or control characters and is capped at 253 characters
 	// (Fleet Management imposes no limit on the name itself; this is an
 	// operator-side sanity bound, double-checked by the validating webhook).
+	//
+	// When the operator runs with name scoping enabled
+	// (--pipeline-name-scope=namespace, or the
+	// fleetmanagement.grafana.com/name-scope=namespace annotation on this
+	// Pipeline), the Fleet name is prefixed with "<namespace>." so that
+	// pipelines in different namespaces cannot collide. Discovered and read-only
+	// pipelines keep their Fleet-assigned name. See
+	// docs/runbooks/pipeline-name-scope-migration.md.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	Name string `json:"name,omitempty"`
@@ -226,6 +234,12 @@ type PipelineStatus struct {
 	// ID is the server-assigned pipeline ID from Fleet Management
 	// +optional
 	ID string `json:"id,omitempty"`
+
+	// SyncedName is the pipeline name currently present in Fleet Management.
+	// It is used to detect a name change (e.g. when name scoping is toggled) so
+	// the controller can migrate the pipeline instead of orphaning it.
+	// +optional
+	SyncedName string `json:"syncedName,omitempty"`
 
 	// ObservedGeneration reflects the generation of the most recently observed Pipeline spec
 	// +optional

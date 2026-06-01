@@ -103,6 +103,14 @@ spec:
                   whitespace or control characters and is capped at 253 characters
                   (Fleet Management imposes no limit on the name itself; this is an
                   operator-side sanity bound, double-checked by the validating webhook).
+
+                  When the operator runs with name scoping enabled
+                  (--pipeline-name-scope=namespace, or the
+                  fleetmanagement.grafana.com/name-scope=namespace annotation on this
+                  Pipeline), the Fleet name is prefixed with "<namespace>." so that
+                  pipelines in different namespaces cannot collide. Discovered and read-only
+                  pipelines keep their Fleet-assigned name. See
+                  docs/runbooks/pipeline-name-scope-migration.md.
                 maxLength: 253
                 type: string
               paused:
@@ -248,6 +256,12 @@ spec:
                     - Unspecified
                     type: string
                 type: object
+              syncedName:
+                description: |-
+                  SyncedName is the pipeline name currently present in Fleet Management.
+                  It is used to detect a name change (e.g. when name scoping is toggled) so
+                  the controller can migrate the pipeline instead of orphaning it.
+                type: string
               updatedAt:
                 description: UpdatedAt is the timestamp when the pipeline was last
                   updated in Fleet Management
