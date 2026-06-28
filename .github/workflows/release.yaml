@@ -108,8 +108,8 @@ jobs:
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "chart_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "chart_version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Update Chart.yaml version
         run: |
