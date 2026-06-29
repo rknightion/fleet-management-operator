@@ -178,7 +178,7 @@ jobs:
           NEEDS_BUILD_AND_PUSH_OUTPUTS_IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2 # zizmor: ignore[superfluous-actions] action handles prerelease detection, release-note generation, and multi-glob artifact upload which gh release does not replicate cleanly
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1 # zizmor: ignore[superfluous-actions] action handles prerelease detection, release-note generation, and multi-glob artifact upload which gh release does not replicate cleanly
         with:
           generate_release_notes: true
           draft: false
