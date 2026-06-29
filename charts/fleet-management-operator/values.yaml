@@ -29,8 +29,8 @@ image:
   repository: ghcr.io/rknightion/fleet-management-operator
   # -- Image pull policy.
   pullPolicy: IfNotPresent
-  # -- Image tag. Ignored when `image.digest` is set.
-  tag: "dev"
+  # -- Image tag. Ignored when `image.digest` is set. Defaults to Chart.AppVersion when empty.
+  tag: ""
   # -- (string) Image digest pin (e.g. `sha256:<hex>`). Recommended for production.
   # digest: ""
 
