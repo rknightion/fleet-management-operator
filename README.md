@@ -1,5 +1,7 @@
 # Fleet Management Operator
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/rknightion/fleet-management-operator/badge)](https://scorecard.dev/viewer/?uri=github.com/rknightion/fleet-management-operator)
+
 A Kubernetes operator for managing [Grafana Cloud Fleet Management](https://grafana.com/docs/grafana-cloud/send-data/fleet-management/) Pipelines as native Kubernetes resources.
 
 > **Disclaimer**: This is not an official Grafana Labs product and is not officially supported by Grafana Labs. This is a community project provided as-is. For official Grafana Cloud Fleet Management support, please contact [Grafana Support](https://grafana.com/support/).
