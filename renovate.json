@@ -1,5 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Local overrides for fleet-management-operator. prConcurrentLimit/prHourlyLimit throttle Renovate so it doesn't open a batch of PRs at once — this repo's CI matrix is heavy and a burst saturates the account-wide Actions concurrency limit, starving other rknightion repos.",
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
   "packageRules": [
     {
       "description": "OpenTelemetry Go modules release in lockstep — group across all update types so a bump is never a partial set.",
