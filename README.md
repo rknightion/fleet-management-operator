@@ -49,10 +49,6 @@ Get credentials from your Grafana Cloud Fleet Management interface:
 ### Install with Helm
 
 ```bash
-# Add the Helm repository
-helm repo add fleet-management https://YOUR_USERNAME.github.io/fleet-management-operator/charts
-helm repo update
-
 # Ensure the default webhook issuer exists, or override webhook.certManager.issuerRef
 kubectl apply -f - <<'EOF'
 apiVersion: cert-manager.io/v1
@@ -64,7 +60,8 @@ spec:
 EOF
 
 # Install the operator
-helm install fleet-management-operator fleet-management/fleet-management-operator \
+helm install fleet-management-operator \
+  oci://ghcr.io/rknightion/charts/fleet-management-operator \
   --namespace fleet-management-system \
   --create-namespace \
   --set fleetManagement.baseUrl='https://fleet-management-<CLUSTER>.grafana.net/pipeline.v1.PipelineService/' \
@@ -72,19 +69,18 @@ helm install fleet-management-operator fleet-management/fleet-management-operato
   --set fleetManagement.password='<API_TOKEN>'
 ```
 
-### Install with kubectl
+### Supplying credentials from an existing Secret
+
+Prefer this over inline `--set` values for anything beyond a quick test; point
+`fleetManagement.existingSecret` at it.
 
 ```bash
-# Create the namespace and credentials secret before starting the manager
 kubectl create namespace fleet-management-system
 kubectl create secret generic fleet-management-operator-credentials \
   -n fleet-management-system \
   --from-literal=base-url='https://fleet-management-<CLUSTER>.grafana.net/pipeline.v1.PipelineService/' \
   --from-literal=username='<STACK_ID>' \
   --from-literal=password='<API_TOKEN>'
-
-# Download and apply the installation manifest
-kubectl apply -f https://github.com/YOUR_USERNAME/fleet-management-operator/releases/latest/download/install.yaml
 ```
 
 ## Usage
@@ -229,10 +225,6 @@ helm uninstall fleet-management-operator -n fleet-management-system
 kubectl delete namespace fleet-management-system
 ```
 
-**With kubectl:**
-```bash
-kubectl delete -f https://github.com/YOUR_USERNAME/fleet-management-operator/releases/latest/download/install.yaml
-```
 
 ## Contributing
 
