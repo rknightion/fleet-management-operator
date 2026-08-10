@@ -39,8 +39,22 @@ jobs:
       - name: Run lint
         run: make lint
 
+  # Everything below gates on lint. Lint is the cheapest job (~35s) and the one
+  # most likely to fail on a dependency bump, so running the expensive jobs
+  # alongside it spends five runners to learn what one already knows.
+  #
+  # On 2026-08-10, twenty stuck Renovate PRs each failed lint on an untidy
+  # go.sum while simultaneously queueing ~11 jobs apiece — a ~114-run Actions
+  # queue, almost all of it computing results that were already determined.
+  # Gated, that is one short job per PR.
+  #
+  # The trade is real and accepted: a healthy PR waits lint's ~35s before the
+  # rest start, and a red lint no longer reports the other failures in the same
+  # run. Cross-workflow jobs (e2e, CodeQL) cannot be gated this way — `needs`
+  # does not span workflows.
   test:
     name: Test
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -77,6 +91,7 @@ jobs:
 
   build:
     name: Build
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -102,6 +117,7 @@ jobs:
 
   verify-installer:
     name: Verify Installer Bundle
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -124,6 +140,7 @@ jobs:
 
   verify-docs:
     name: Verify Documentation
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -142,6 +159,7 @@ jobs:
 
   verify-helm:
     name: Verify Helm Chart
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -197,8 +215,14 @@ jobs:
     if: always()
     needs: [lint, test, build, verify-installer, verify-docs, verify-helm]
     steps:
+      # 'skipped' counts as failure. Now that the other jobs gate on lint, a
+      # failing lint SKIPS them rather than failing them, and skipped is
+      # neither failure nor cancelled — without this a red lint could report
+      # ci-success green and let automerge merge it. lint's own 'failure'
+      # happens to catch today's case because lint is in this needs list, but
+      # relying on that would break the moment a job gains an `if:`.
       - name: Fail if any required job did not pass
-        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
         run: |
           echo "A required job failed or was cancelled: ${{ join(needs.*.result, ', ') }}"
           exit 1
