@@ -90,7 +90,7 @@ to the namespace that should own the CR. ` + "`TenantPolicy`" + ` is cluster-sco
 and must not carry a namespace.
 
 For invalid-spec fixtures used by webhook tests, see
-[config/samples/invalid/README.md](https://github.com/rknightion/fleet-management-operator/blob/main/config/samples/invalid/README.md).
+[config/samples/invalid/README.md]({{ srcURL "config/samples/invalid/README.md" }}).
 
 ## Index
 
