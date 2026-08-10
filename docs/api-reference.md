@@ -909,7 +909,7 @@ the existing MatcherChecker nil pattern.
 
 
 _Appears in:_
-- PipelineDiscoveryValidator
+- [PipelineDiscoveryValidator](#pipelinediscoveryvalidator)
 
 
 

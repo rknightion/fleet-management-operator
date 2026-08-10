@@ -114,22 +114,32 @@ chart-docs-check: helm-docs ## Verify the chart README is up to date with values
 		exit 1; \
 	}
 
+# crd-ref-docs cannot emit the front matter the docs site needs, so both targets
+# below prepend hack/api-reference-front-matter.md. Without this the generator
+# stripped it and api-docs-check failed on every branch.
+API_DOCS_FRONT_MATTER := hack/api-reference-front-matter.md
+
 .PHONY: api-docs
 api-docs: crd-ref-docs ## Regenerate docs/api-reference.md from api/v1alpha1 godoc and CRD bases.
-	"$(CRD_REF_DOCS)" \
-		--source-path=api/v1alpha1 \
-		--config=.crd-ref-docs.yaml \
-		--renderer=markdown \
-		--output-path=docs/api-reference.md
-
-.PHONY: api-docs-check
-api-docs-check: crd-ref-docs ## Verify docs/api-reference.md is up to date with API types.
 	@tmp=$$(mktemp); \
 	"$(CRD_REF_DOCS)" \
 		--source-path=api/v1alpha1 \
 		--config=.crd-ref-docs.yaml \
 		--renderer=markdown \
-		--output-path="$$tmp" >/dev/null; \
+		--output-path="$$tmp"; \
+	cat "$(API_DOCS_FRONT_MATTER)" "$$tmp" > docs/api-reference.md; \
+	rm -f "$$tmp"
+
+.PHONY: api-docs-check
+api-docs-check: crd-ref-docs ## Verify docs/api-reference.md is up to date with API types.
+	@tmp=$$(mktemp); gen=$$(mktemp); \
+	"$(CRD_REF_DOCS)" \
+		--source-path=api/v1alpha1 \
+		--config=.crd-ref-docs.yaml \
+		--renderer=markdown \
+		--output-path="$$gen" >/dev/null; \
+	cat "$(API_DOCS_FRONT_MATTER)" "$$gen" > "$$tmp"; \
+	rm -f "$$gen"; \
 	diff -q "$$tmp" docs/api-reference.md > /dev/null 2>&1 || { \
 		echo "docs/api-reference.md is out of date. Run 'make api-docs'."; \
 		rm -f "$$tmp"; \
