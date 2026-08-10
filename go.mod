@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	connectrpc.com/connect v1.16.1
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/go-sql-driver/mysql v1.9.3
+	github.com/go-sql-driver/mysql v1.10.0
 	github.com/grafana/fleet-management-api v1.2.0
 	github.com/lib/pq v1.12.3
 	github.com/onsi/ginkgo/v2 v2.27.2
@@ -30,7 +30,7 @@ require (
 
 require (
 	cel.dev/expr v0.24.0 // indirect
-	filippo.io/edwards25519 v1.1.0 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
