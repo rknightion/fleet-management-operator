@@ -1,3 +1,8 @@
+---
+title: Upgrade Guide
+description: CRD, webhook, and rollback checklist for production upgrades of fleet-management-operator.
+---
+
 # Upgrade Guide
 
 Use this checklist for production upgrades that include CRD, webhook, or chart

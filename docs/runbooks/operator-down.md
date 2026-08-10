@@ -1,3 +1,8 @@
+---
+title: "Runbook: Operator Down"
+description: Diagnose the FleetOperatorDown alert, covering OOMKills, crash loops, and leader-election contention.
+---
+
 # FleetOperatorDown Runbook
 
 **Alert:** `FleetOperatorDown`

@@ -1,6 +1,11 @@
+---
+title: Troubleshooting Guide
+description: Diagnose and fix the most common fleet-management-operator failure modes, from sync failures to webhook rejections.
+---
+
 # Troubleshooting Guide
 
-Cross-reference with `docs/runbooks/` for per-alert runbooks and `docs/conditions.md`
+Cross-reference with [runbooks](runbooks/index.md) for per-alert runbooks and [conditions.md](conditions.md)
 for the full condition type/reason registry.
 
 ## Quick Diagnosis
@@ -161,7 +166,7 @@ kubectl rollout restart deployment -n <namespace> fleet-management-operator
 ```
 
 Note: self-signed is not HA-safe. The caBundle in the VWC becomes stale until the next restart.
-Migrate to cert-manager for production. See `docs/webhook-setup.md`.
+Migrate to cert-manager for production. See [webhook-setup.md](webhook-setup.md).
 
 **cert-manager mode:** Check whether cert renewal failed.
 

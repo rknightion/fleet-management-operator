@@ -1,3 +1,8 @@
+---
+title: "Runbook: Rate Limit Saturation"
+description: Diagnose the FleetRateLimitSaturation alert and distinguish operator-side queueing from Fleet API 429s.
+---
+
 # FleetRateLimitSaturation Runbook
 
 **Alert:** `FleetRateLimitSaturation` (available after OBS-02 metrics are enabled)

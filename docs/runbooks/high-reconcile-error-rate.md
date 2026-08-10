@@ -1,3 +1,8 @@
+---
+title: "Runbook: High Reconcile Error Rate"
+description: Diagnose the FleetReconcileErrorRateHigh alert and the per-controller error causes behind it.
+---
+
 # High Reconcile Error Rate Runbook
 
 **Alert:** `FleetReconcileErrorRateHigh`
@@ -50,7 +55,7 @@ curl -u "${USER}:${PASS}" "${BASE_URL}"
 ```
 
 If Fleet API is down: wait for recovery. The operator retries with exponential backoff.
-If 429s: see `docs/runbooks/rate-limit-saturation.md`.
+If 429s: see [rate-limit-saturation.md](rate-limit-saturation.md).
 
 ### ValidationError -- spec changed to invalid state
 
@@ -68,7 +73,7 @@ Fix the spec and re-apply. The webhook will validate the corrected spec before a
 ### DeleteFailed -- deletion error (not 404)
 
 Fleet API returned an error other than 404 during deletion. Usually transient; resolves
-when Fleet API recovers. If persistent after >30m, see `docs/runbooks/finalizer-stuck.md`.
+when Fleet API recovers. If persistent after >30m, see [finalizer-stuck.md](finalizer-stuck.md).
 
 ### SourceFailed -- ExternalAttributeSync source unreachable
 

@@ -1,3 +1,8 @@
+---
+title: Condition Registry
+description: Cross-CRD reference for status condition types and reasons across every fleet-management-operator CRD.
+---
+
 # Condition Registry
 
 Cross-CRD reference for the condition types and reasons emitted by

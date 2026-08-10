@@ -1,3 +1,8 @@
+---
+title: "Runbook: Finalizer Stuck"
+description: Diagnose and recover a fleet-management-operator CR whose finalizer has not been removed after deletion.
+---
+
 # Finalizer Stuck Runbook
 
 **Condition:** CR has `deletionTimestamp` but finalizer not removed after >5 minutes.

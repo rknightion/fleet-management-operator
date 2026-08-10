@@ -1,3 +1,8 @@
+---
+title: Tenant Policy
+description: Enforce per-tenant Fleet Management authorization using Kubernetes RBAC group membership and the TenantPolicy CRD.
+---
+
 # Tenant Policy
 
 `TenantPolicy` is an opt-in cluster-scoped CRD that lets you implement

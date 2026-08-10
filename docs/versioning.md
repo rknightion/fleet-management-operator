@@ -1,3 +1,8 @@
+---
+title: API Versioning and Graduation Policy
+description: How fleetmanagement.grafana.com CRDs graduate from v1alpha1, the deprecation policy, and allowed schema changes.
+---
+
 # API Versioning and Graduation Policy
 
 This document defines the rules for evolving the
@@ -18,10 +23,10 @@ versions remain served.
 A CRD is considered ready to graduate to `v1` only when **all** of the
 following hold:
 
-1. **Known design gaps closed.** Every gap documented in
-   `CLAUDE.md` ("V1 gaps", `docs/tenant-policy.md`, the production-
-   readiness audit at `docs/superpowers/audits/`) is either resolved or
-   re-classified as v2 work with a documented rationale.
+1. **Known design gaps closed.** Every gap documented in the repository's
+   `CLAUDE.md` ("V1 gaps"), [tenant-policy.md](tenant-policy.md), and the
+   internal production-readiness audit is either resolved or re-classified
+   as v2 work with a documented rationale.
 2. **Schema validation parity in CEL.** Every webhook validation rule
    that is structurally expressible (length caps, prefix bans, simple
    shape checks) is mirrored as either an OpenAPI structural rule or a

@@ -1,3 +1,8 @@
+---
+title: Webhook TLS Setup
+description: Self-signed, cert-manager, and manual certificate strategies for the fleet-management-operator admission webhook.
+---
+
 # Webhook TLS Setup
 
 The fleet-management-operator uses validating admission webhooks. The webhook server requires
@@ -208,4 +213,4 @@ kubectl get tenantpolicy -o yaml
 kubectl get tenantpolicy -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].reason}{"\n"}{end}'
 ```
 
-See `docs/tenant-policy.md` for the full TenantPolicy reference.
+See [tenant-policy.md](tenant-policy.md) for the full TenantPolicy reference.

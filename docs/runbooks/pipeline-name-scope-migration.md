@@ -1,3 +1,8 @@
+---
+title: "Runbook: Enabling Pipeline Name Scoping"
+description: How the delete-and-recreate migration works when enabling namespace-scoped Fleet Management pipeline names.
+---
+
 # Runbook: enabling Pipeline name scoping
 
 Name scoping prefixes each Fleet Management pipeline name with `<namespace>.` so

@@ -1,3 +1,8 @@
+---
+title: "Runbook: Webhook Unavailable"
+description: Diagnose FleetWebhookRejectionRateHigh, covering certificate expiry and unreachable webhook endpoints.
+---
+
 # Webhook Unavailable Runbook
 
 **Alert:** `FleetWebhookRejectionRateHigh`
@@ -12,7 +17,7 @@ CollectorDiscovery, and TenantPolicy creates and updates will be rejected**. Exi
 continue to reconcile normally -- webhooks only apply at admission time.
 
 The webhook server runs in the same process as the operator. An operator pod outage is also
-a webhook outage. Check `docs/runbooks/operator-down.md` first if the operator pod is down.
+a webhook outage. Check [operator-down.md](operator-down.md) first if the operator pod is down.
 
 ## Verification
 
@@ -74,7 +79,7 @@ kubectl rollout restart deployment -n <namespace> fleet-management-operator
 
 **Note:** Self-signed mode is not HA-safe. The caBundle in the ValidatingWebhookConfiguration
 becomes stale between restarts, causing a brief window where admissions fail. Migrate to
-cert-manager for production (see `docs/webhook-setup.md`).
+cert-manager for production (see [webhook-setup.md](../webhook-setup.md)).
 
 ### Manual cert mode
 

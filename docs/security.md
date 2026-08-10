@@ -1,3 +1,8 @@
+---
+title: Security Model and Hardening
+description: Trust boundaries, privileged-CR delegation, cross-namespace authority, and the hardening checklist for fleet-management-operator.
+---
+
 # Security model and hardening
 
 This document describes the operator's trust boundaries, the privileges it
