@@ -47,8 +47,6 @@ import (
 // Do not enable Ginkgo parallel mode -- mock state is shared.
 var pipelineMock *mockFleetClient
 
-func boolPtr(b bool) *bool { return &b }
-
 // Mock Fleet Management API client
 type mockFleetClient struct {
 	mu sync.Mutex
@@ -282,7 +280,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    boolPtr(true),
+					Enabled:    new(true),
 					Matchers:   []string{"env=prod"},
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
@@ -329,8 +327,8 @@ var _ = Describe("Pipeline Controller", func() {
 				want    bool
 			}{
 				{name: "omitted", enabled: nil, want: true},
-				{name: "explicit-true", enabled: boolPtr(true), want: true},
-				{name: "explicit-false", enabled: boolPtr(false), want: false},
+				{name: "explicit-true", enabled: new(true), want: true},
+				{name: "explicit-false", enabled: new(false), want: false},
 			}
 
 			for _, tc := range cases {
@@ -372,7 +370,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    boolPtr(true),
+					Enabled:    new(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -408,7 +406,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    boolPtr(true),
+					Enabled:    new(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -446,7 +444,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    boolPtr(true),
+					Enabled:    new(true),
 					Matchers:   []string{"env=prod"},
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
@@ -525,7 +523,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "test content",
-					Enabled:    boolPtr(true),
+					Enabled:    new(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -544,7 +542,7 @@ var _ = Describe("Pipeline Controller", func() {
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Name:       "custom-pipeline-name",
 					Contents:   "test content",
-					Enabled:    boolPtr(true),
+					Enabled:    new(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -579,8 +577,8 @@ var _ = Describe("Pipeline Controller", func() {
 				want    bool
 			}{
 				{name: "omitted before API defaulting", enabled: nil, want: true},
-				{name: "explicit true", enabled: boolPtr(true), want: true},
-				{name: "explicit false", enabled: boolPtr(false), want: false},
+				{name: "explicit true", enabled: new(true), want: true},
+				{name: "explicit false", enabled: new(false), want: false},
 			}
 
 			for _, tc := range cases {
@@ -781,7 +779,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents:   "prometheus.exporter.self \"alloy\" { }",
-					Enabled:    boolPtr(true),
+					Enabled:    new(true),
 					ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
 				},
 			}
@@ -1161,7 +1159,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents: "prometheus.exporter.self \"alloy\" { }",
-					Enabled:  boolPtr(true),
+					Enabled:  new(true),
 				},
 				Status: fleetmanagementv1alpha1.PipelineStatus{
 					ID: "fleet-id-abc",
@@ -1231,7 +1229,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents: "prometheus.exporter.self \"alloy\" { }",
-					Enabled:  boolPtr(true),
+					Enabled:  new(true),
 					Source: &fleetmanagementv1alpha1.PipelineSource{
 						Type: fleetmanagementv1alpha1.SourceTypeGrafana,
 					},
@@ -1286,7 +1284,7 @@ var _ = Describe("Pipeline Controller", func() {
 				},
 				Spec: fleetmanagementv1alpha1.PipelineSpec{
 					Contents: "prometheus.exporter.self \"alloy\" { }",
-					Enabled:  boolPtr(true),
+					Enabled:  new(true),
 				},
 				// Status.ID intentionally empty: the controller never observed this pipeline.
 			}

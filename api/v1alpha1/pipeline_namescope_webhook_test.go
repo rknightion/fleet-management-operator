@@ -30,7 +30,7 @@ func scopePipeline(specName string, annotations map[string]string) *Pipeline {
 			Name:       specName,
 			Contents:   "prometheus.scrape \"default\" { }",
 			ConfigType: ConfigTypeAlloy,
-			Enabled:    boolPtr(true),
+			Enabled:    new(true),
 		},
 	}
 }

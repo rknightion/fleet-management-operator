@@ -96,7 +96,7 @@ func TestGracefulShutdown_ReconcileObservesContextCancellation(t *testing.T) {
 		Spec: fleetmanagementv1alpha1.PipelineSpec{
 			Contents:   "prometheus.scrape \"default\" {}",
 			ConfigType: fleetmanagementv1alpha1.ConfigTypeAlloy,
-			Enabled:    boolPtr(true),
+			Enabled:    new(true),
 		},
 	}
 

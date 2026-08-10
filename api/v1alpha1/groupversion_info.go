@@ -29,6 +29,10 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "fleetmanagement.grafana.com", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
+	// scheme.Builder is marked deprecated on the grounds that it is "only useful
+	// in api packages" — which is precisely where this is. kubebuilder still
+	// scaffolds it here and there is no replacement for this use.
+	//nolint:staticcheck // SA1019: deprecation does not apply inside an api package
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
 
 	// AddToScheme adds the types in this group-version to the given scheme.

@@ -133,8 +133,8 @@ func TestPipelineSpec_GetEnabled(t *testing.T) {
 		want bool
 	}{
 		{name: "nil defaults true", in: nil, want: true},
-		{name: "explicit true", in: boolPtr(true), want: true},
-		{name: "explicit false", in: boolPtr(false), want: false},
+		{name: "explicit true", in: new(true), want: true},
+		{name: "explicit false", in: new(false), want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
