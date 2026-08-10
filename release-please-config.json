@@ -10,6 +10,7 @@
   ],
   "packages": {
     ".": {
+      "package-name": "fleet-management-operator",
       "extra-files": [
         {
           "type": "generic",
