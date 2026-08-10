@@ -5,6 +5,17 @@ All notable changes to the Fleet Management Operator will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1](https://github.com/rknightion/fleet-management-operator/compare/v1.0.0...v1.0.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **chart:** stop wearing Grafana's logo, and point home at the docs ([fa537a1](https://github.com/rknightion/fleet-management-operator/commit/fa537a1c3f9ece4ac989e4d0ce85c72a9e96b0c5))
+* **ci:** restore package-name so the pending release PR is still recognised ([7f084c3](https://github.com/rknightion/fleet-management-operator/commit/7f084c36ad50dabf86c6c6640cd570fb18408403))
+* **ci:** tag releases v1.0.0, not fleet-management-operator-v1.0.0 ([b80f64d](https://github.com/rknightion/fleet-management-operator/commit/b80f64d8a51a36bc0114b5fd1c9dc8bae7f0bde7))
+* **deps:** refresh all Go dependencies in one pass ([#56](https://github.com/rknightion/fleet-management-operator/issues/56)) ([9cb8b52](https://github.com/rknightion/fleet-management-operator/commit/9cb8b52859a4461f7959f8c05a0fb74bafe1b820))
+* **renovate:** add gomodTidy to postUpdateOptions ([0d5dee4](https://github.com/rknightion/fleet-management-operator/commit/0d5dee4f5bb5362ba2fff12182c9b7283fe94dac))
+
 ## 1.0.0 (2026-08-10)
 
 
