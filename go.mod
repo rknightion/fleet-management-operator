@@ -6,7 +6,7 @@ require (
 	connectrpc.com/connect v1.16.1
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/grafana/fleet-management-api v1.2.0
+	github.com/grafana/fleet-management-api v1.3.0
 	github.com/lib/pq v1.12.3
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
