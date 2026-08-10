@@ -1,5 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
       "description": "OpenTelemetry Go modules release in lockstep — group across all update types so a bump is never a partial set.",
