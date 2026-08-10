@@ -36,3 +36,6 @@ secrets.*
 values.yaml
 
 codexreview.txt
+
+# Superpowers scratch (specs/plans/audits) — never committed
+docs/superpowers/
