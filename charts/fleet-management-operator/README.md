@@ -1,6 +1,6 @@
 # fleet-management-operator
 
-![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.1.0](https://img.shields.io/badge/AppVersion-v0.1.0-informational?style=flat-square)
+![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square)
 
 A Kubernetes operator for managing Grafana Cloud Fleet Management Pipelines
 
@@ -206,7 +206,7 @@ sources. Empty `to` lists allow the configured port to any destination.
 | healthProbe.readiness.timeoutSeconds | int | `1` |  |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy. |
 | image.repository | string | `"ghcr.io/rknightion/fleet-management-operator"` | Container image repository. |
-| image.tag | string | `"dev"` | Image tag. Ignored when `image.digest` is set. |
+| image.tag | string | `""` | Image tag. Ignored when `image.digest` is set. Defaults to Chart.AppVersion when empty. |
 | imagePullSecrets | list | `[]` | Image pull secrets for private / air-gapped registries. |
 | leaderElection.enabled | bool | `true` |  |
 | leaderElection.leaseDuration | string | `"15s"` |  |

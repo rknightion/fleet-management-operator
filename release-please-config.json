@@ -10,7 +10,12 @@
   "packages": {
     ".": {
       "package-name": "fleet-management-operator",
-      "extra-files": ["charts/fleet-management-operator/Chart.yaml"]
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "charts/fleet-management-operator/Chart.yaml"
+        }
+      ]
     }
   }
 }
