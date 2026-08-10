@@ -6,5 +6,11 @@
     {"type": "fix", "section": "Bug Fixes"},
     {"type": "perf", "section": "Performance Improvements"},
     {"type": "deps", "section": "Dependencies", "hidden": false}
-  ]
+  ],
+  "packages": {
+    ".": {
+      "package-name": "fleet-management-operator",
+      "extra-files": ["charts/fleet-management-operator/Chart.yaml"]
+    }
+  }
 }

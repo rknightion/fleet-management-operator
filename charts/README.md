@@ -1,47 +1,22 @@
 # Helm Charts
 
-This directory contains Helm charts for the Fleet Management Operator.
+This directory contains the Helm chart for the Fleet Management Operator.
 
-## Publishing to GitHub Pages
+## Published location
 
-To make your Helm chart available via `helm repo add`, you can host it on GitHub Pages.
+The chart is published as an OCI artifact to GHCR by CI. There is no
+`helm repo add` index and no GitHub Pages site:
 
-### Setup
+```
+oci://ghcr.io/rknightion/charts/fleet-management-operator
+```
 
-1. **Package the chart:**
-   ```bash
-   cd charts
-   helm package fleet-management-operator
-   ```
-   This creates `fleet-management-operator-0.1.0.tgz`
-
-2. **Create/update the index:**
-   ```bash
-   helm repo index . --url https://YOUR_USERNAME.github.io/fm-crd/charts
-   ```
-   This creates/updates `index.yaml`
-
-3. **Commit and push:**
-   ```bash
-   git add fleet-management-operator-*.tgz index.yaml
-   git commit -m "Release Helm chart v0.1.0"
-   git push
-   ```
-
-4. **Enable GitHub Pages:**
-   - Go to your repo Settings → Pages
-   - Source: Deploy from a branch
-   - Branch: main, folder: /charts
-   - Save
-
-### Using the Helm Repository
-
-After GitHub Pages is enabled, users can install with:
+Install a released version:
 
 ```bash
-helm repo add fm-operator https://YOUR_USERNAME.github.io/fm-crd/charts
-helm repo update
-helm install fleet-management-operator fm-operator/fleet-management-operator \
+helm install fleet-management-operator \
+  oci://ghcr.io/rknightion/charts/fleet-management-operator \
+  --version 1.0.0 \
   --namespace fleet-management-system \
   --create-namespace \
   --set fleetManagement.baseUrl='https://fleet-management-prod-us-central-0.grafana.net/pipeline.v1.PipelineService/' \
@@ -49,61 +24,36 @@ helm install fleet-management-operator fm-operator/fleet-management-operator \
   --set fleetManagement.password='YOUR_TOKEN'
 ```
 
-## GitHub Actions Automation (Optional)
+Inspect what is available:
 
-Create `.github/workflows/release-chart.yaml`:
-
-```yaml
-name: Release Helm Chart
-
-on:
-  push:
-    tags:
-      - 'chart-v*'
-
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Configure Git
-        run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-
-      - name: Install Helm
-        uses: azure/setup-helm@v3
-
-      - name: Package chart
-        run: |
-          cd charts
-          helm package fleet-management-operator
-
-      - name: Update chart index
-        run: |
-          cd charts
-          helm repo index . --url https://${{ github.repository_owner }}.github.io/fm-crd/charts
-
-      - name: Commit and push
-        run: |
-          git add charts/*.tgz charts/index.yaml
-          git commit -m "Release chart ${{ github.ref_name }}"
-          git push
-```
-
-Then release with:
 ```bash
-git tag chart-v0.1.0
-git push origin chart-v0.1.0
+helm show chart oci://ghcr.io/rknightion/charts/fleet-management-operator --version 1.0.0
 ```
 
-## Local Development
+## How publishing works
 
-Install from local chart:
+`.github/workflows/release-please.yaml` runs on every push to `main`.
+
+- Conventional-commit history produces a release PR. Merging it tags `vX.Y.Z`
+  and creates the GitHub release, which sets `release_created`, which calls
+  `.github/workflows/publish.yml` with the tag.
+- `publish.yml` delegates to the shared `rknightion/.github`
+  `container-publish.yml` reusable workflow, which packages the chart with
+  `--version X.Y.Z --app-version X.Y.Z` taken from the tag, pushes it to
+  `oci://ghcr.io/rknightion/charts`, cosign-signs it, and attaches the `.tgz`
+  to the GitHub release.
+- Pushes to `main` that do *not* create a release publish a snapshot chart
+  versioned `0.0.0-main.t<epoch>.g<sha>` instead. Those are throwaway builds —
+  always install with an explicit `--version`.
+
+The `version` and `appVersion` in `Chart.yaml` carry
+`# x-release-please-version` markers so release-please keeps them in step with
+the operator release. They are overridden again at package time, so they only
+matter when installing straight from a checkout.
+
+## Local development
+
+Install from the local chart:
 
 ```bash
 cd charts/fleet-management-operator

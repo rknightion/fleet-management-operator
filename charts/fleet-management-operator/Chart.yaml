@@ -2,8 +2,11 @@ apiVersion: v2
 name: fleet-management-operator
 description: A Kubernetes operator for managing Grafana Cloud Fleet Management Pipelines
 type: application
-version: 0.1.0
-appVersion: "v0.1.0"
+# Both lines are rewritten by release-please. The publish workflow overrides them
+# again at package time with --version/--app-version from the release tag, so the
+# tracked values only matter for `helm install` straight from a checkout.
+version: 0.1.0 # x-release-please-version
+appVersion: "0.1.0" # x-release-please-version
 kubeVersion: ">=1.23.0-0"
 icon: https://grafana.com/static/img/menu/grafana-cloud.svg
 keywords:

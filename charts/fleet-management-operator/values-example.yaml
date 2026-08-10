@@ -2,9 +2,10 @@
 # Copy this file and customize for your environment
 
 image:
-  # Update with your container registry
-  repository: ghcr.io/YOUR_USERNAME/fleet-management-operator
-  tag: v0.1.0
+  # Override only if you mirror the image into your own registry.
+  repository: ghcr.io/rknightion/fleet-management-operator
+  # Empty tracks Chart.AppVersion, which is the release the chart was built from.
+  tag: ""
   pullPolicy: IfNotPresent
 
 # Fleet Management API Configuration

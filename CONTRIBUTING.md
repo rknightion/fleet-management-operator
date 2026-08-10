@@ -26,7 +26,7 @@ Thank you for your interest in contributing! This document provides guidelines a
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/fleet-management-operator.git
+git clone https://github.com/rknightion/fleet-management-operator.git
 cd fleet-management-operator
 ```
 
@@ -114,7 +114,7 @@ make lint-fix
 make docker-build-load IMG=fleet-management-operator:dev
 
 # Build multi-arch image and push
-make docker-build IMG=ghcr.io/YOUR_USERNAME/fleet-management-operator:v0.1.0
+make docker-build IMG=ghcr.io/rknightion/fleet-management-operator:v0.1.0
 ```
 
 ### Deploy to Cluster
@@ -442,7 +442,7 @@ make build-installer    # Generate install.yaml
 ## Getting Help
 
 - Check [CLAUDE.md](CLAUDE.md) for detailed development guidance
-- Review [existing issues](https://github.com/YOUR_USERNAME/fleet-management-operator/issues)
+- Review [existing issues](https://github.com/rknightion/fleet-management-operator/issues)
 - Open a new issue for bugs or feature requests
 
 ## License
