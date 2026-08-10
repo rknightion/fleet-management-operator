@@ -46,7 +46,7 @@ func TestReconcileMigratesDespiteObservedGeneration(t *testing.T) {
 			Generation: 1,
 			Finalizers: []string{pipelineFinalizer},
 		},
-		Spec: fleetmanagementv1alpha1.PipelineSpec{Name: migBaseName, Contents: "x", Enabled: boolPtr(true)},
+		Spec: fleetmanagementv1alpha1.PipelineSpec{Name: migBaseName, Contents: "x", Enabled: new(true)},
 		Status: fleetmanagementv1alpha1.PipelineStatus{
 			ID:                 migOldID,
 			SyncedName:         migBaseName, // currently unscoped in Fleet

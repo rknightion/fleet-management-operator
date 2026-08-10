@@ -33,7 +33,7 @@ func pipelineWithName(name string) *Pipeline {
 			Name:       name,
 			Contents:   "prometheus.scrape \"default\" { }",
 			ConfigType: ConfigTypeAlloy,
-			Enabled:    boolPtr(true),
+			Enabled:    new(true),
 		},
 	}
 }

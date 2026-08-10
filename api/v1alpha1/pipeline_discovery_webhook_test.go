@@ -45,8 +45,6 @@ func validPipelineDiscovery() *PipelineDiscovery {
 	}
 }
 
-func boolPtr(b bool) *bool { return &b }
-
 func TestPipelineDiscovery_validatePollInterval(t *testing.T) { //nolint:dupl
 	tests := []struct {
 		name     string
@@ -118,17 +116,17 @@ func TestPipelineDiscovery_validateSelector(t *testing.T) {
 		},
 		{
 			name:     "enabled=true is valid",
-			selector: PipelineDiscoverySelector{Enabled: boolPtr(true)},
+			selector: PipelineDiscoverySelector{Enabled: new(true)},
 			wantErr:  false,
 		},
 		{
 			name:     "enabled=false is valid",
-			selector: PipelineDiscoverySelector{Enabled: boolPtr(false)},
+			selector: PipelineDiscoverySelector{Enabled: new(false)},
 			wantErr:  false,
 		},
 		{
 			name:     "configType and enabled combined",
-			selector: PipelineDiscoverySelector{ConfigType: &alloy, Enabled: boolPtr(true)},
+			selector: PipelineDiscoverySelector{ConfigType: &alloy, Enabled: new(true)},
 			wantErr:  false,
 		},
 	}
@@ -251,7 +249,7 @@ func TestPipelineDiscovery_validatePipelineDiscovery_endToEnd(t *testing.T) {
 			PollInterval: "5m",
 			Selector: PipelineDiscoverySelector{
 				ConfigType: &ct,
-				Enabled:    boolPtr(true),
+				Enabled:    new(true),
 			},
 			TargetNamespace: "fleet-pipelines",
 			ImportMode:      PipelineDiscoveryImportModeAdopt,

@@ -4,7 +4,7 @@
 
 A Kubernetes operator for managing Grafana Cloud Fleet Management Pipelines
 
-**Homepage:** <https://github.com/rknightion/fleet-management-operator>
+**Homepage:** <https://m7kni.io/fleet-management-operator/>
 
 ## Maintainers
 

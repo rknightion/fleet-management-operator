@@ -86,7 +86,7 @@ func scopedReconciler(fc FleetPipelineClient, scope string) *PipelineReconciler 
 func migPipeline(specName, statusID, syncedName string, annotations map[string]string) *fleetmanagementv1alpha1.Pipeline {
 	return &fleetmanagementv1alpha1.Pipeline{
 		ObjectMeta: metav1.ObjectMeta{Name: "cr", Namespace: migTestNS, Annotations: annotations},
-		Spec:       fleetmanagementv1alpha1.PipelineSpec{Name: specName, Contents: "x", Enabled: boolPtr(true)},
+		Spec:       fleetmanagementv1alpha1.PipelineSpec{Name: specName, Contents: "x", Enabled: new(true)},
 		Status:     fleetmanagementv1alpha1.PipelineStatus{ID: statusID, SyncedName: syncedName},
 	}
 }

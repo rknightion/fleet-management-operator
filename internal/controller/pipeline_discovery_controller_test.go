@@ -491,7 +491,7 @@ func TestPipelineDiscovery_ConflictNotOwnedByDiscovery(t *testing.T) {
 		Spec: v1alpha1.PipelineSpec{
 			Name:     "manual-pipeline",
 			Contents: "original.content {}",
-			Enabled:  boolPtr(true),
+			Enabled:  new(true),
 		},
 	}
 
@@ -540,7 +540,7 @@ func TestPipelineDiscovery_ConflictOwnedByOtherDiscovery(t *testing.T) {
 		Spec: v1alpha1.PipelineSpec{
 			Name:     "owned-pipeline",
 			Contents: "other.content {}",
-			Enabled:  boolPtr(true),
+			Enabled:  new(true),
 		},
 	}
 
