@@ -701,8 +701,6 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#condition-v1-meta) array_ | Conditions represent the current state of the PipelineDiscovery. |  | Optional: \{\} <br /> |
 
 
-
-
 #### PipelineSource
 
 
@@ -889,27 +887,6 @@ _Appears in:_
 | `Kubernetes` | SourceTypeKubernetes indicates pipeline originated from this Kubernetes<br />operator. Deprecated: Fleet Management does not expose a Kubernetes<br />source enum; this value is accepted for compatibility but is not sent to<br />Fleet by new reconciles.<br /> |
 | `Unspecified` | SourceTypeUnspecified indicates pipeline source is not specified<br /> |
 
-
-#### SubjectAccessReviewer
-
-_Underlying type:_ _interface{Create(ctx context.Context, sar *k8s.io/api/authorization/v1.SubjectAccessReview) (*k8s.io/api/authorization/v1.SubjectAccessReview, error)}_
-
-SubjectAccessReviewer decouples the discovery webhooks from the concrete
-Kubernetes clientset. It is the consumer-side interface for the
-SubjectAccessReview check that closes the cross-namespace "confused
-deputy" escalation: the operator must confirm that the user creating a
-PipelineDiscovery / CollectorDiscovery may itself write the mirrored CRs
-into the requested target namespace, rather than borrowing the operator's
-cluster-wide ServiceAccount permissions.
-
-Implementations must treat a nil receiver as a no-op so callers can pass
-nil when cross-namespace authorization enforcement is disabled, mirroring
-the existing MatcherChecker nil pattern.
-
-
-
-_Appears in:_
-- [PipelineDiscoveryValidator](#pipelinediscoveryvalidator)
 
 
 

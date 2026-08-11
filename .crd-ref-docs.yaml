@@ -1,6 +1,13 @@
 processor:
   ignoreTypes:
     - "(List)$"
+    # Webhook validators are not CRD API types, so crd-ref-docs never renders a
+    # section for them — but it still cross-links them from the interfaces they
+    # consume, producing a dead `#pipelinediscoveryvalidator` anchor. The docs
+    # site builds the whole fleet with `strict = true`, so that one dead anchor
+    # aborted every m7kni.io deploy. Only the exported validator was affected;
+    # the rest are unexported and skipped already.
+    - "Validator$"
   ignoreFields:
     - "TypeMeta$"
 
