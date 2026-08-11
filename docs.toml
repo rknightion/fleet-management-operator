@@ -5,7 +5,7 @@
 [site]
 name = "fleet-management-operator"
 description = "Kubernetes operator for managing Grafana Cloud Fleet Management pipelines, collectors, and attribute policies as native custom resources."
-author = "Rob Knighton"
+author = "Rob Knight"
 keywords = [
     "grafana cloud",
     "fleet management",
