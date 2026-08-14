@@ -258,7 +258,7 @@ limitations under the License.
 - [Security Model & Hardening](docs/security.md) — trust boundaries, privileged-CR delegation, cross-namespace authority, and the hardening checklist
 - [Sample CRs](docs/samples.md) — runnable examples for every CRD
 - [Upgrade Guide](docs/upgrade.md) — CRD, webhook, and rollback guidance for production releases
-- [Contributor Guide](CLAUDE.md) — architecture notes, gotchas, and patterns
+- [Contributor Guide](AGENTS.md) — architecture notes, gotchas, and patterns
 
 The generated reference pages above are updated by `make docs`; CI fails the
 build if they drift from source.

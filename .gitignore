@@ -56,3 +56,17 @@ docs/assets/project-icon-solid.svg
 docs/assets/social-card.png
 docs/assets/social-card.svg
 docs/fonts/
+
+# Backlog.md tracker state is committed on purpose - `backlog/` IS the queue.
+
+# .claude/ is scoped, not wholesale-ignored. Three things are shared repo
+# contract and must travel with the checkout: the PreToolUse guard that enforces
+# the Backlog.md rules (the bare section-setting flags replace a whole section
+# silently; hand-edited task markdown loses one at exit 0), the settings.json
+# that wires it, and the two project skills AGENTS.md tells agents to invoke.
+# Everything else under .claude/ is per-machine state: worktrees, scheduler
+# locks, and settings.local.json.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/skills/

@@ -169,7 +169,7 @@ fleet-management-operator/
 - **api/v1alpha1/pipeline_types.go**: Defines the Pipeline CRD structure
 - **internal/controller/pipeline_controller.go**: Core reconciliation logic
 - **pkg/fleetclient/client.go**: Fleet Management API client
-- **CLAUDE.md**: Comprehensive development guide with API details
+- **AGENTS.md**: Comprehensive development guide with API details (Claude Code reads it via the `@AGENTS.md` import in `CLAUDE.md`)
 - **IMPLEMENTATION_STATUS.md**: Feature implementation checklist
 
 ## Development Workflow
@@ -426,7 +426,7 @@ make build-installer    # Generate install.yaml
 
 ## Resources
 
-- **CLAUDE.md**: Comprehensive development guide with:
+- **AGENTS.md**: Comprehensive development guide with:
   - Fleet Management API documentation
   - Controller patterns and best practices
   - Kubernetes controller pitfalls
@@ -441,7 +441,7 @@ make build-installer    # Generate install.yaml
 
 ## Getting Help
 
-- Check [CLAUDE.md](CLAUDE.md) for detailed development guidance
+- Check [AGENTS.md](AGENTS.md) for detailed development guidance
 - Review [existing issues](https://github.com/rknightion/fleet-management-operator/issues)
 - Open a new issue for bugs or feature requests
 

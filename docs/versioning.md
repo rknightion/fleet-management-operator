@@ -24,7 +24,7 @@ A CRD is considered ready to graduate to `v1` only when **all** of the
 following hold:
 
 1. **Known design gaps closed.** Every gap documented in the repository's
-   `CLAUDE.md` ("V1 gaps"), [tenant-policy.md](tenant-policy.md), and the
+   `AGENTS.md` ("V1 gaps"), [tenant-policy.md](tenant-policy.md), and the
    internal production-readiness audit is either resolved or re-classified
    as v2 work with a documented rationale.
 2. **Schema validation parity in CEL.** Every webhook validation rule
@@ -89,7 +89,7 @@ When the gates above are met:
 
 These items must be resolved (or explicitly punted) before any CRD
 graduates to `v1`. They are sourced from the production-readiness
-audit (2026-04-28) and `CLAUDE.md`.
+audit (2026-04-28) and `AGENTS.md`.
 
 - **TenantPolicy `selector.collectorIDs` bypass.** Required-matcher
   enforcement does not apply when a CR uses `spec.selector.collectorIDs`.
