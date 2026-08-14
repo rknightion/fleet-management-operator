@@ -62,11 +62,8 @@ docs/fonts/
 # .claude/ is scoped, not wholesale-ignored. Three things are shared repo
 # contract and must travel with the checkout: the PreToolUse guard that enforces
 # the Backlog.md rules (the bare section-setting flags replace a whole section
-# silently; hand-edited task markdown loses one at exit 0), the settings.json
 # that wires it, and the two project skills AGENTS.md tells agents to invoke.
-# Everything else under .claude/ is per-machine state: worktrees, scheduler
-# locks, and settings.local.json.
+# Track this repo's own .claude/ content below; everything else
+# under .claude/ is per-machine state.
 .claude/*
-!.claude/settings.json
-!.claude/hooks/
 !.claude/skills/

@@ -28,9 +28,7 @@ Work is tracked in `backlog/` via the Backlog.md CLI. The queue is a query, not 
 
 - **Never use `--notes` or `--plan` bare.** They *silently replace* the whole section - an open
   upstream bug that destroys another session's writes with no warning. Use `--append-notes` and
-  `--append-plan`. `.claude/hooks/backlog-guard.py` denies the bare forms - including when they
-  are quoted, which is how they used to slip past - and also denies rewriting CLI-owned markdown
-  from the shell (`sed -i`, a `>` redirect, `python3 -c`), not just via the file tools.
+  `--append-plan`. A global `PreToolUse` hook in the agent config denies the bare forms, including when they are quoted, which is how they used to slip past.
 - **Finalize in one call**, so an interrupted agent cannot leave finished work looking unfinished:
 
   ```bash
