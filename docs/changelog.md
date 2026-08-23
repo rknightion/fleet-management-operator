@@ -1,6 +1,6 @@
 ---
 title: Changelog
-description: Release history for fleet-management-operator
+description: Review Fleet Management Operator releases, custom resource changes, reconciliation fixes, and deployment updates.
 ---
 
 # Changelog
