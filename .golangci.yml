@@ -33,6 +33,12 @@ linters:
       - linters:
           - prealloc
         path: '(.+)_test\.go'
+      # Status-conflict retries intentionally use controller-runtime's
+      # rate-limited Requeue contract; RequeueAfter changes that behavior.
+      - linters:
+          - staticcheck
+        path: internal/controller/.*\.go
+        text: 'Requeue is deprecated'
       - linters:
           - lll
         path: api/*

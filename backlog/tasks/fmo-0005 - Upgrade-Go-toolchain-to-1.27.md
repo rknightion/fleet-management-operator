@@ -4,7 +4,7 @@ title: Upgrade Go toolchain to 1.27
 status: In Progress
 assignee: []
 created_date: '2026-08-23 19:06'
-updated_date: '2026-08-23 19:49'
+updated_date: '2026-08-23 20:21'
 labels: []
 dependencies: []
 ordinal: 5000
@@ -41,4 +41,6 @@ Adopt Go 1.27 consistently across the application, nested modules, build images,
 
 <!-- SECTION:NOTES:BEGIN -->
 Local Go 1.27.0 evidence: make test passed all packages and the controller envtest suite on the complete rerun; make lint passed with 0 issues using golangci-lint v2.12.2; root and mock module build, test, and vet passed. No CRD/RBAC markers, docs/ tree, or chart values changed, so conditional generation and docs gates were not required. The first envtest run hit a transient Kubernetes 409 conflict and was not counted as a pass. CodeRabbit was skipped because no application logic or branching code changed.
+
+Exact-head CI run 32662554820 exposed Linux-only analyzer behavior under Go 1.27. golangci-lint was raised to current v2.13.1. Its staticcheck update reports controller-runtime Requeue as deprecated; the repository intentionally requires rate-limited conflict retries and audits that return pattern, so a narrow internal/controller deprecation exclusion preserves behavior instead of replacing it with differently timed RequeueAfter. GOOS=linux v2.13.1 lint then passed with 0 issues.
 <!-- SECTION:NOTES:END -->
