@@ -16,7 +16,7 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.27+
 - Docker
 - kubectl
 - kind or minikube (for local testing)

@@ -1,6 +1,6 @@
 # Build the manager binary
 # Use BUILDPLATFORM to build on native architecture for faster builds
-FROM --platform=${BUILDPLATFORM} golang:1.27 AS builder
+FROM --platform=${BUILDPLATFORM} golang:1.27.0 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILDPLATFORM
