@@ -209,11 +209,52 @@ jobs:
       - name: Verify chart README is regenerated from values.yaml
         run: make chart-docs-check
 
+  # This chart published to GHCR with no schema validation against the real
+  # Kubernetes API schemas at all — `verify-helm` above only runs helm's own
+  # lint plus this repo's own render-gate assertions, never a kubeconform check.
+  # Chart.yaml declares kubeVersion >=1.23.0-0, so this validates against that
+  # floor. Reproduces verify-helm's two renders (default, and
+  # networkPolicy.enabled=true) with the same required credential --set values
+  # every render needs (templates/secret.yaml `required`s them).
+  #
+  # CAVEAT (reported, not resolved here): webhook.certManager.enabled defaults
+  # to true, so the DEFAULT render includes a cert-manager.io/v1 Certificate —
+  # a CRD-defined kind kubeconform has no built-in schema for. With
+  # schema-locations left at "default" this permutation is expected to fail
+  # kubeconform until a CRD schema catalogue (e.g. the datreeio/CRDs-catalog
+  # cert-manager.io entry) is added to schema-locations. Left as default here
+  # per instruction not to guess a schema-locations value or set
+  # ignore-missing-schemas — flagging for a follow-up decision instead.
+  helm-schema-validate:
+    name: helm schema validate (kubeconform)
+    needs: lint
+    permissions:
+      contents: read
+    uses: rknightion/.github/.github/workflows/helm-validate.yml@97f4a7ad0cd1ddd83562a30b9061ef8295242405 # v1.14.0
+    with:
+      chart-path: charts/fleet-management-operator
+      # The default render includes cert-manager.io/v1 Certificate, a CRD kind
+      # kubeconform has no built-in schema for. The fix is to give it the schema,
+      # NOT -ignore-missing-schemas: that flag would skip the Certificate and every
+      # other unschema'd kind silently, so the check could pass while validating
+      # nothing. Same catalogue codex-lb already uses for Gateway API.
+      schema-locations: >-
+        default
+        https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+      kubernetes-versions: "1.23.0"
+      lint-args: >-
+        --set fleetManagement.baseUrl=https://test
+        --set fleetManagement.username=test
+        --set fleetManagement.password=test
+      permutations: |
+        --set fleetManagement.baseUrl=https://test --set fleetManagement.username=test --set fleetManagement.password=test
+        --set fleetManagement.baseUrl=https://test --set fleetManagement.username=test --set fleetManagement.password=test --set networkPolicy.enabled=true
+
   ci-success:
     name: ci-success
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, test, build, verify-installer, verify-docs, verify-helm]
+    needs: [lint, test, build, verify-installer, verify-docs, verify-helm, helm-schema-validate]
     steps:
       # 'skipped' counts as failure. Now that the other jobs gate on lint, a
       # failing lint SKIPS them rather than failing them, and skipped is
