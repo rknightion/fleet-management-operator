@@ -5,7 +5,7 @@ kustomize_version := "v5.7.1"
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools versioning=semver
 controller_tools_version := "v0.20.0"
 # renovate: datasource=github-releases depName=golangci/golangci-lint versioning=semver
-golangci_lint_version := "v2.13.1"
+golangci_lint_version := "v2.13.2"
 # renovate: datasource=github-releases depName=norwoodj/helm-docs versioning=semver
 helm_docs_version := "v1.14.2"
 # renovate: datasource=github-releases depName=elastic/crd-ref-docs versioning=semver
