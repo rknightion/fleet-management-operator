@@ -1,10 +1,10 @@
 ---
 id: FMO-0006
 title: Migrate the repo task surface to just and retire Makefiles and ad-hoc scripts
-status: To Do
+status: Parked
 assignee: []
 created_date: '2026-08-28 19:22'
-updated_date: '2026-08-29 10:42'
+updated_date: '2026-08-29 14:07'
 labels:
   - 'wave:2-fleet'
 dependencies: []
@@ -851,6 +851,21 @@ Do not touch, in this task:
 - [ ] #3 make manifests generate && git diff --exit-code (only if CRD types or RBAC markers changed)
 - [ ] #4 make docs-check && make chart-docs-check (only if docs/ or chart values changed)
 <!-- DOD:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reconcile the live Makefile, CI, docs, hooks, and Renovate state with the frozen fleet task-surface standard.
+2. Add a standards-compliant top-level justfile, then migrate the scoped workflows, contributor references, generated-document sources, and Backlog definition of done.
+3. Validate formatting, just parsing and metadata, the local gate, workflow/security checks, and the final removal scan.
+4. Run CodeRabbit, commit named paths to main, push, prove CI at the exact head, then finalize each acceptance criterion with evidence.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-08-29: Implementation is staged but intentionally uncommitted. Local evidence passed: just check, just --fmt --check, just --dump --dump-format json, actionlint, docs/Helm checks, and a clean staged diff. CodeRabbit could not begin review: the organization allowance is exhausted and the current account has no eligible seat or API entitlement; after the service's stated cooldown, retry reported a longer wait. Resume only after review capacity is restored: run coderabbit review --agent --base main against the staged migration, address every finding, commit/push the named files, prove CI on the just-based workflows, then delete Makefile and repeat the final CI proof.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
