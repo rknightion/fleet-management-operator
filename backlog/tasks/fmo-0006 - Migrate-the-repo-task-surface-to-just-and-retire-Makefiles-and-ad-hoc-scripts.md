@@ -1,10 +1,10 @@
 ---
 id: FMO-0006
 title: Migrate the repo task surface to just and retire Makefiles and ad-hoc scripts
-status: Parked
+status: Done
 assignee: []
 created_date: '2026-08-28 19:22'
-updated_date: '2026-08-29 14:07'
+updated_date: '2026-08-29 18:20'
 labels:
   - 'wave:2-fleet'
 dependencies: []
@@ -865,6 +865,8 @@ Do not touch, in this task:
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-08-29: Implementation is staged but intentionally uncommitted. Local evidence passed: just check, just --fmt --check, just --dump --dump-format json, actionlint, docs/Helm checks, and a clean staged diff. CodeRabbit could not begin review: the organization allowance is exhausted and the current account has no eligible seat or API entitlement; after the service's stated cooldown, retry reported a longer wait. Resume only after review capacity is restored: run coderabbit review --agent --base main against the staged migration, address every finding, commit/push the named files, prove CI on the just-based workflows, then delete Makefile and repeat the final CI proof.
+
+Unparked and completed 2026-08-29. CodeRabbit returned five findings, all addressed: the contribution checklist, the tracker's definition_of_done and the wave operating model each named a subset of recipes as the gate rather than `just check`, and CI tracked Helm `latest`. The MD046 finding was a false positive (no markdownlint configured). Makefile deleted after confirming every target has a just equivalent. A follow-up fixed the E2E break the migration introduced: test/utils/Run overwrote cmd.Env, so the IMG the suite set never reached `just docker-build-load` and kind load failed; it survived under make because make took IMG as an argument. Exact-head CI green including E2E Tests.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
