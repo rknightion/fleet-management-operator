@@ -246,7 +246,7 @@ jobs:
         --set fleetManagement.baseUrl=https://test
         --set fleetManagement.username=test
         --set fleetManagement.password=test
-      permutations: |
+      permutations: |-
         --set fleetManagement.baseUrl=https://test --set fleetManagement.username=test --set fleetManagement.password=test
         --set fleetManagement.baseUrl=https://test --set fleetManagement.username=test --set fleetManagement.password=test --set networkPolicy.enabled=true
 
