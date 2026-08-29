@@ -23,7 +23,7 @@ import "testing"
 // The tests in this file are placeholders. Every entry calls t.Skip with a
 // description of the assertion it WILL make once the envtest cluster + 300-
 // Collector fixture are wired up. The build tag already excludes these from
-// `make test`; running `go test -tags=scale` surfaces a clear "not yet
+// `just test`; running `go test -tags=scale` surfaces a clear "not yet
 // implemented" message per case rather than silently passing.
 //
 // Tracking: TEST-08 in docs/superpowers/audits/2026-04-28-production-readiness-scorecard.md.

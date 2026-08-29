@@ -3,7 +3,7 @@ id: doc-0002
 title: Wave operating model
 type: guide
 created_date: '2026-08-14 16:37'
-updated_date: '2026-08-14 16:37'
+updated_date: '2026-08-29 17:34'
 ---
 Everything generic about running a wave lives in the **Agent fan-out protocol (canonical)** doc.
 This document adds only what is true of *this* repository, and deliberately restates none of it.
@@ -31,17 +31,17 @@ found, diagnosed and fixed here.
 These are regenerated from source markers, not hand-written. Two lanes both regenerating produce
 conflicting blobs that no merge resolves sensibly:
 
-- `api/v1alpha1/zz_generated.deepcopy.go` - `make generate`
-- `config/crd/bases/*.yaml` and `config/rbac/role.yaml` - `make manifests`
-- `charts/fleet-management-operator/README.md` - `helm-docs`, via `make chart-docs`
-- `docs/` API reference and `docs/events.md` - `make docs`
+- `api/v1alpha1/zz_generated.deepcopy.go` - `just generate`
+- `config/crd/bases/*.yaml` and `config/rbac/role.yaml` - `just manifests`
+- `charts/fleet-management-operator/README.md` - `helm-docs`, via `just chart-docs`
+- `docs/` API reference and `docs/events.md` - `just docs`
 
-**No lane runs `make manifests`, `make generate` or `make docs`.** The wiring pass runs them once,
+**No lane runs `just manifests`, `just generate` or `just docs`.** The wiring pass runs them once,
 after the lanes land, and commits the regenerated output as its own change. A lane that adds a
 kubebuilder marker states that fact in its final summary so the wiring pass knows to regenerate.
 
 This is the repo's most reliable way to produce a red CI on a green-looking wave: `ci.yaml` runs
-`make manifests` and `make docs-check` / `make chart-docs-check` and fails on any diff, so an
+`just manifests` and `just docs-check` / `just chart-docs-check` and fails on any diff, so an
 un-regenerated marker breaks the build for every other lane at once.
 
 ## Adding a CRD field is a five-file change, not a one-file change
@@ -153,8 +153,8 @@ Task state is the record. Nothing durable may live only in the terminal.
   unrelated lane.
 
 The gate before anything moves to `Done` is `definition_of_done` in `backlog/config.yml` -
-`make lint` and `make test` always, plus the regeneration and docs checks when their inputs
-changed. Evidence, not assertion: a lane claiming green without the output is treated as not run.
+`just check < /dev/null`, which is the whole gate CI enforces. The individual recipes are
+diagnostics while you iterate, never a substitute for it. Evidence, not assertion: a lane claiming green without the output is treated as not run.
 
 The closing message to the terminal is a covering note answering one question - **what did this run
 learn that no single task captures?** It is a terminal action, not a reply to a request. Nobody

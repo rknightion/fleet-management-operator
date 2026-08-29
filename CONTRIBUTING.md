@@ -20,7 +20,7 @@ Thank you for your interest in contributing! This document provides guidelines a
 - Docker
 - kubectl
 - kind or minikube (for local testing)
-- make
+- just
 - Grafana Cloud Fleet Management credentials
 
 ### Clone the Repository
@@ -37,7 +37,7 @@ cd fleet-management-operator
 go mod download
 
 # Install development tools (controller-gen, kustomize, etc.)
-make install-tools
+just setup
 ```
 
 ### Set Up Fleet Management Credentials
@@ -68,10 +68,10 @@ Install CRDs and run the controller locally against your kubeconfig cluster:
 
 ```bash
 # Install CRDs
-make install
+just install
 
 # Run controller locally
-make run
+just run
 ```
 
 In another terminal, create a test pipeline:
@@ -84,10 +84,10 @@ kubectl apply -n <namespace> -f config/samples/alloy_pipeline_sample.yaml
 
 ```bash
 # Run all tests
-make test
+just test
 
 # Run tests with coverage
-make test
+just test
 go tool cover -html=cover.out
 
 # Run specific test
@@ -101,31 +101,31 @@ go test -race ./...
 
 ```bash
 # Run linter
-make lint
+just lint
 
 # Auto-fix linting issues
-make lint-fix
+just lint-fix
 ```
 
 ### Build Docker Image
 
 ```bash
 # Build for local architecture
-make docker-build-load IMG=fleet-management-operator:dev
+IMG=fleet-management-operator:dev just docker-build-load
 
-# Build multi-arch image and push
-make docker-build IMG=ghcr.io/rknightion/fleet-management-operator:v0.1.0
+# Build multi-arch image and push (prompts for confirmation)
+IMG=ghcr.io/rknightion/fleet-management-operator:v0.1.0 just docker-build
 ```
 
 ### Deploy to Cluster
 
 ```bash
 # Build and load image into kind cluster
-make docker-build-load IMG=fleet-management-operator:dev
+IMG=fleet-management-operator:dev just docker-build-load
 kind load docker-image fleet-management-operator:dev
 
 # Deploy to cluster
-make deploy IMG=fleet-management-operator:dev
+IMG=fleet-management-operator:dev just deploy
 
 # Check deployment
 kubectl get pods -n fleet-management-system
@@ -159,7 +159,7 @@ fleet-management-operator/
 │   └── fleet-management-operator/
 │
 ├── cmd/main.go             # Controller entry point
-├── Makefile                # Build automation
+├── justfile                # Task surface
 ├── Dockerfile              # Multi-arch container image
 └── go.mod                  # Go module dependencies
 ```
@@ -184,7 +184,7 @@ After modifying CRD types in `api/v1alpha1/`:
 
 ```bash
 # Generate DeepCopy methods and CRD manifests
-make manifests generate
+just gen
 
 # Verify changes
 git diff config/crd/bases/
@@ -193,14 +193,14 @@ git diff config/crd/bases/
 ### 3. Run Tests
 
 ```bash
-make test
+just test
 ```
 
 ### 4. Test Locally
 
 ```bash
 # Run controller locally
-make run
+just run
 
 # In another terminal, test your changes
 kubectl apply -n <namespace> -f config/samples/alloy_pipeline_sample.yaml
@@ -212,13 +212,13 @@ kubectl describe pipeline alloy-pipeline-sample -n <namespace>
 
 ```bash
 # Build image
-make docker-build-load IMG=fleet-management-operator:dev
+IMG=fleet-management-operator:dev just docker-build-load
 
 # Load into kind
 kind load docker-image fleet-management-operator:dev
 
 # Deploy
-make deploy IMG=fleet-management-operator:dev
+IMG=fleet-management-operator:dev just deploy
 
 # Verify
 kubectl get pods -n fleet-management-system
@@ -228,10 +228,10 @@ kubectl get pods -n fleet-management-system
 
 ```bash
 # Undeploy from cluster
-make undeploy
+just undeploy
 
 # Uninstall CRDs
-make uninstall
+just uninstall
 ```
 
 ## Testing Guidelines
@@ -287,7 +287,7 @@ End-to-end tests against a real cluster:
 
 ```bash
 # Run E2E tests (requires kind)
-make test-e2e
+just test-e2e
 ```
 
 ## Code Style
@@ -337,15 +337,19 @@ meta.SetStatusCondition(&pipeline.Status.Conditions, metav1.Condition{
 
 ### Before Submitting
 
-1. **Run tests**: `make test`
-2. **Run linter**: `make lint`
-3. **Generate manifests**: `make manifests generate`
-4. **Regenerate docs**: `make docs` — required if your change touches a flag in
-   `cmd/main.go`, a Prometheus metric, an event reason, a sample CR, a CRD
-   field godoc comment, or a status condition. CI runs `make docs-check` and
-   fails on drift.
-5. **Test locally**: `make run`
-6. **Check git diff**: Ensure no unintended changes
+1. **Run the gate**: `just check < /dev/null` — this is the whole thing CI
+   enforces, and it must pass before you submit.
+2. **Check git diff**: Ensure no unintended changes
+
+While iterating, the individual recipes are faster than the full gate, but none
+of them replaces it:
+
+- `just test`, `just lint` — the usual inner loop
+- `just gen` — regenerate manifests after changing CRD types or RBAC markers
+- `just docs` — regenerate docs after changing a flag in `cmd/main.go`, a
+  Prometheus metric, an event reason, a sample CR, a CRD field godoc comment, or
+  a status condition; `just check` fails on the resulting drift
+- `just run` — run the operator against your current kubeconfig
 
 ### Commit Messages
 
@@ -394,34 +398,34 @@ Brief description of changes
 - [ ] Changelog updated (if needed)
 ```
 
-## Useful Make Commands
+## Useful Just Recipes
 
 ```bash
 # Development
-make manifests          # Generate CRD manifests
-make generate           # Generate code (DeepCopy, etc.)
-make fmt                # Format code
-make vet                # Run go vet
-make lint               # Run golangci-lint
+just manifests          # Generate CRD manifests
+just generate           # Generate code (DeepCopy, etc.)
+just fmt                # Format code and the justfile
+just typecheck          # Run go vet
+just lint               # Run golangci-lint
 
 # Testing
-make test               # Run all tests
-make test-e2e           # Run E2E tests
+just test               # Run all tests
+just test-e2e           # Run E2E tests
 
 # Building
-make build              # Build manager binary
-make docker-build       # Build multi-arch image
-make docker-build-load  # Build and load locally
+just build              # Build manager binary
+just docker-build       # Build and push a multi-arch image (prompts)
+just docker-build-load  # Build and load locally
 
 # Deployment
-make install            # Install CRDs
-make uninstall          # Remove CRDs
-make deploy             # Deploy controller
-make undeploy           # Remove controller
-make run                # Run locally
+just install            # Install CRDs
+just uninstall          # Remove CRDs (prompts)
+just deploy             # Deploy controller (prompts)
+just undeploy           # Remove controller (prompts)
+just run                # Run locally
 
 # Release
-make build-installer    # Generate install.yaml
+just build-installer    # Generate install.yaml
 ```
 
 ## Resources

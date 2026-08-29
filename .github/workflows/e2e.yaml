@@ -29,6 +29,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+
+      - name: Install dev tools
+        run: just setup
+
       - name: Create Kind cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
@@ -41,7 +49,7 @@ jobs:
           kubectl get nodes
 
       - name: Run E2E tests
-        run: make test-e2e
+        run: just test-e2e
         env:
           KIND_CLUSTER: fm-crd-e2e
         timeout-minutes: 15

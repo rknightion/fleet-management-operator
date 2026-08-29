@@ -31,13 +31,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify go.mod/go.sum are tidy
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum || (echo "go.mod/go.sum are not tidy. Run 'go mod tidy' and commit the result." && exit 1)
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+
+      - name: Install dev tools
+        run: just setup
 
       - name: Run lint
-        run: make lint
+        run: just lint
 
   # Everything below gates on lint. Lint is the cheapest job (~35s) and the one
   # most likely to fail on a dependency bump, so running the expensive jobs
@@ -68,11 +71,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+
       - name: Download dependencies
         run: go mod download
 
+      - name: Install dev tools
+        run: just setup
+
       - name: Run tests
-        run: make test
+        run: just test
 
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
@@ -105,15 +116,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+
+      - name: Install dev tools
+        run: just setup
+
       - name: Build
-        run: make build
+        run: just build
 
-      - name: Generate manifests
-        run: make manifests
-
-      - name: Check for uncommitted changes
-        run: |
-          git diff --exit-code || (echo "Uncommitted changes detected. Run 'make manifests generate' and commit." && exit 1)
+      - name: Verify generated code is committed
+        run: just gen-check
 
   verify-installer:
     name: Verify Installer Bundle
@@ -131,12 +146,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Regenerate install.yaml
-        run: make build-installer
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
 
-      - name: Verify install.yaml is committed
-        run: |
-          git diff --exit-code -- dist/install.yaml || (echo "dist/install.yaml is out of date. Run 'make build-installer' and commit the result." && exit 1)
+      - name: Install dev tools
+        run: just setup
+
+      - name: Verify installer bundle is committed
+        run: just installer-check
 
   verify-docs:
     name: Verify Documentation
@@ -154,8 +173,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+
+      - name: Install dev tools
+        run: just setup
+
       - name: Verify auto-generated documentation
-        run: make docs-check
+        run: just docs-check
 
   verify-helm:
     name: Verify Helm Chart
@@ -167,47 +194,31 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: latest
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v4.2.4
 
-      - name: Lint Helm chart
-        run: |
-          helm lint charts/fleet-management-operator \
-            --set fleetManagement.baseUrl=https://test \
-            --set fleetManagement.username=test \
-            --set fleetManagement.password=test
+      - name: Install dev tools
+        run: just setup
 
-      - name: Template Helm chart
-        run: |
-          helm template test charts/fleet-management-operator \
-            --set fleetManagement.baseUrl=https://test \
-            --set fleetManagement.username=test \
-            --set fleetManagement.password=test \
-            > /dev/null
-
-      - name: Verify NetworkPolicy render gate
-        run: |
-          helm template test charts/fleet-management-operator \
-            --set fleetManagement.baseUrl=https://test \
-            --set fleetManagement.username=test \
-            --set fleetManagement.password=test \
-            > /tmp/chart-default.yaml
-          if grep -q "kind: NetworkPolicy" /tmp/chart-default.yaml; then
-            echo "NetworkPolicy should be disabled by default"
-            exit 1
-          fi
-          helm template test charts/fleet-management-operator \
-            --set fleetManagement.baseUrl=https://test \
-            --set fleetManagement.username=test \
-            --set fleetManagement.password=test \
-            --set networkPolicy.enabled=true \
-            > /tmp/chart-networkpolicy.yaml
-          grep -q "kind: NetworkPolicy" /tmp/chart-networkpolicy.yaml
+      - name: Lint and template Helm chart
+        run: just helm-lint
 
       - name: Verify chart README is regenerated from values.yaml
-        run: make chart-docs-check
+        run: just chart-docs-check
 
   # This chart published to GHCR with no schema validation against the real
   # Kubernetes API schemas at all — `verify-helm` above only runs helm's own

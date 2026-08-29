@@ -24,7 +24,7 @@ All controller reconcilers live here. Each controller has a `_controller.go` and
 
 ```bash
 # All controller tests (uses envtest)
-make test
+just test
 
 # Specific controller
 go test ./internal/controller/... -run TestPipelineReconciler

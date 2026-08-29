@@ -135,7 +135,7 @@ for kubebuilder's conversion generation.
 
 **When v1beta1 is ready:**
 1. `kubebuilder create api --group fleetmanagement --version v1beta1 --kind <Kind>`
-2. `make generate` — produces `zz_generated.conversion.go` stubs
+2. `just generate` — produces `zz_generated.conversion.go` stubs
 3. Implement `ConvertTo(dst *v1beta1.Kind)` / `ConvertFrom(src *v1beta1.Kind)`
 4. Register the conversion webhook in `cmd/main.go`
 5. Set `storage: true` on v1beta1 in CRD; `storage: false` on v1alpha1

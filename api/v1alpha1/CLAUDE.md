@@ -30,7 +30,7 @@ go test ./api/v1alpha1/... -run TestCollector_Validate
 ## Adding a New CRD
 
 1. Create `<name>_types.go` with Spec/Status structs and kubebuilder markers.
-2. Run `make generate && make manifests` to generate deepcopy and CRD YAML.
+2. Run `just gen` to generate deepcopy and CRD YAML.
 3. Create `<name>_webhook.go` with a `*Validator` struct that implements `admission.CustomValidator`.
 4. Register the webhook in `cmd/main.go` alongside the others.
 5. Add RBAC markers to the types file or the controller (see `pipeline_types.go` as a model).

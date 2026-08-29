@@ -36,7 +36,7 @@ func srcURL(target string) string {
 
 // runGenerator executes gen and either writes the result to outPath or, in
 // check mode, fails if the bytes on disk differ from the freshly generated
-// output. The diff hint always names `make docs` so contributors get a clear
+// output. The diff hint always names `just docs` so contributors get a clear
 // remediation path on CI failure.
 func runGenerator(root, outPath string, check bool, gen generator) error {
 	if outPath == "" {
@@ -56,7 +56,7 @@ func runGenerator(root, outPath string, check bool, gen generator) error {
 			return fmt.Errorf("read existing %s: %w", outPath, err)
 		}
 		if !bytes.Equal(want, got) {
-			return fmt.Errorf("%s is out of date — run 'make docs' to regenerate", outPath)
+			return fmt.Errorf("%s is out of date — run 'just docs' to regenerate", outPath)
 		}
 		return nil
 	}

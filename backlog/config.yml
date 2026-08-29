@@ -2,10 +2,7 @@ project_name: "Fleet Management Operator"
 default_status: "To Do"
 statuses: ["To Do", "In Progress", "Parked", "Done"]
 definition_of_done:
-  - "make lint"
-  - "make test"
-  - "make manifests generate && git diff --exit-code (only if CRD types or RBAC markers changed)"
-  - "make docs-check && make chart-docs-check (only if docs/ or chart values changed)"
+  - "just check < /dev/null"
 labels: []
 date_format: yyyy-mm-dd
 max_column_width: 20

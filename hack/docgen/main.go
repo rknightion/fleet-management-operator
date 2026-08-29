@@ -1,6 +1,6 @@
 // docgen regenerates and verifies the project's auto-generated documentation.
 //
-// It is invoked from the Makefile via:
+// It is invoked from the justfile via:
 //
 //	go run ./hack/docgen <subcommand> [flags]
 //

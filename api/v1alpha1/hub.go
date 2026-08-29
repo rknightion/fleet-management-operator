@@ -23,7 +23,7 @@ package v1alpha1
 // through these types. To generate conversion stubs once v1beta1 exists:
 //
 //	kubebuilder create api --group fleetmanagement --version v1beta1 --kind <Kind>
-//	make generate
+//	just generate
 //
 // Until v1beta1 lands, these are no-ops satisfying the
 // sigs.k8s.io/controller-runtime/pkg/conversion.Hub interface prerequisite.

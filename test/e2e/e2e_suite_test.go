@@ -56,7 +56,8 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	By("building the manager image")
-	cmd := exec.Command("make", "docker-build-load", fmt.Sprintf("IMG=%s", managerImage))
+	cmd := exec.Command("just", "docker-build-load")
+	cmd.Env = append(os.Environ(), fmt.Sprintf("IMG=%s", managerImage))
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
@@ -92,7 +93,7 @@ var _ = BeforeSuite(func() {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
 	By("installing CRDs")
-	cmd = exec.Command("make", "install")
+	cmd = exec.Command("just", "install")
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
@@ -177,7 +178,7 @@ var _ = AfterSuite(func() {
 	_, _ = utils.Run(cmd)
 
 	By("uninstalling CRDs")
-	cmd = exec.Command("make", "uninstall")
+	cmd = exec.Command("just", "_uninstall-crds")
 	_, _ = utils.Run(cmd)
 
 	By("removing manager namespace")

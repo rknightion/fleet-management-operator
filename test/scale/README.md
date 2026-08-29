@@ -27,7 +27,7 @@ The scaffolding exists so:
 go test -tags=scale ./test/scale/ -v -timeout=10m
 ```
 
-Not included in `make test`. The `scale` build tag keeps these out of the
+Not included in `just test`. The `scale` build tag keeps these out of the
 default unit suite.
 
 ## Implementing the placeholders

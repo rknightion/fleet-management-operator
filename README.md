@@ -249,7 +249,7 @@ limitations under the License.
 ## Resources
 
 - [Fleet Management Documentation](https://grafana.com/docs/grafana-cloud/send-data/fleet-management/)
-- [Helm Chart Documentation](charts/fleet-management-operator/README.md) — generated from `values.yaml` via `make chart-docs`
+- [Helm Chart Documentation](charts/fleet-management-operator/README.md) — generated from `values.yaml` via `just chart-docs`
 - [CRD API Reference](docs/api-reference.md) — generated from godoc on `api/v1alpha1/*_types.go`
 - [Manager Flags](docs/flags.md) — every CLI flag, default, and chart coverage
 - [Metrics Reference](docs/metrics.md) — Prometheus metric names, labels, and bucket boundaries
@@ -260,5 +260,5 @@ limitations under the License.
 - [Upgrade Guide](docs/upgrade.md) — CRD, webhook, and rollback guidance for production releases
 - [Contributor Guide](AGENTS.md) — architecture notes, gotchas, and patterns
 
-The generated reference pages above are updated by `make docs`; CI fails the
+The generated reference pages above are updated by `just docs`; CI fails the
 build if they drift from source.

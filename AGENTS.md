@@ -67,42 +67,55 @@ Fleet Management distributes Alloy/OTEL configs to collectors using Prometheus-s
 
 ```bash
 # Generate code and manifests
-make generate && make manifests
+just gen
 
 # Run tests
-make test
+just test
 
 # Run controller locally (against current kubeconfig)
-make run
+just run
 
 # Install CRDs to cluster
-make install
+just install
 
 # Build and deploy
-make docker-build IMG=<registry>/fleet-management-operator:tag
-make docker-push IMG=<registry>/fleet-management-operator:tag
-make deploy IMG=<registry>/fleet-management-operator:tag
+IMG=<registry>/fleet-management-operator:tag just docker-build
+IMG=<registry>/fleet-management-operator:tag just deploy
 
 # Cleanup
-make undeploy
+just undeploy
 
 # Format code
-go fmt ./...
-goimports -w .
+just fmt
 
 # Lint
-make lint
-make lint-fix
+just lint
+just lint-fix
 
 # End-to-end tests (requires Kind; creates cluster fm-crd-test-e2e automatically)
-make test-e2e
+just test-e2e
 
 # Regenerate docs/events.md and other generated docs
-make docs
+just docs
 
 # Regenerate Helm chart README from README.md.gotmpl (requires helm-docs)
-helm-docs --chart-search-root charts/
+just chart-docs
 ```
+
+## Task interface
+
+This repo's task surface is a `justfile`. Discover it, don't guess it:
+
+    just --list                        # human-readable
+    just --dump --dump-format json     # machine-readable
+    just --show <recipe>               # what a recipe actually runs
+
+- `just check` is the full gate and is exactly what CI enforces. It must pass before you commit.
+- Prefer `just <recipe>` over the underlying tool. If you are typing `pytest`, you want `just test`.
+- Run `just` with stdin from /dev/null. Recipes marked `[confirm]` are destructive — stop and ask
+  before running one; never pass `--yes` or `JUST_YES=1`.
+- If a task you need does not exist, add a recipe with a `#` doc comment and a `[group(...)]`
+  rather than running a bare command.
 
 ## Code Style
 
@@ -274,7 +287,7 @@ and `CollectorDiscovery` are not covered. See `docs/tenant-policy.md`.
 Each controller emits Kubernetes events on significant reconcile outcomes.
 The full per-controller table — Reason, EventType, Trigger — lives in
 [`docs/events.md`](docs/events.md) and is regenerated from controller source
-by `make docs`. Do not maintain the table by hand here.
+by `just docs`. Do not maintain the table by hand here.
 
 **View events:**
 ```bash

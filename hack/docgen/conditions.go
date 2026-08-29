@@ -102,7 +102,7 @@ func verifyConditions(root, docPath string) error {
 		fmt.Fprint(os.Stderr, sb.String())
 		return nil
 	}
-	sb.WriteString("Run 'make docs' to regenerate flags / metrics / events / samples,\n")
+	sb.WriteString("Run 'just docs' to regenerate flags / metrics / events / samples,\n")
 	sb.WriteString("then update docs/conditions.md (Meaning column requires human authorship).\n")
 	return fmt.Errorf("%s", sb.String())
 }
