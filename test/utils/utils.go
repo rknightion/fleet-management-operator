@@ -49,7 +49,14 @@ func Run(cmd *exec.Cmd) (string, error) {
 		_, _ = fmt.Fprintf(GinkgoWriter, "chdir dir: %q\n", err)
 	}
 
-	cmd.Env = append(os.Environ(), "GO111MODULE=on")
+	// Preserve anything the caller put on cmd.Env. Overwriting it silently
+	// dropped the IMG the e2e suite sets for `just docker-build-load`, so the
+	// image was built under the default tag and `kind load` then could not
+	// find the tag the suite asked for.
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
 	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
 	output, err := cmd.CombinedOutput()
