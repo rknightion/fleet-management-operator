@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Product-specific additions to the central CodeRabbit defaults.
+# Keep inheritance enabled; shared review policy lives in the owner/coderabbit repository.
+inheritance: true
+reviews:
+  path_filters:
+  - '!api/v1alpha1/zz_generated.deepcopy.go'
+  - '!config/crd/bases/**'
+  - '!config/rbac/role.yaml'
+  - '!config/webhook/manifests.yaml'
+  - '!docs/api-reference.md'
+  - '!docs/events.md'
+  - '!docs/flags.md'
+  - '!docs/metrics.md'
+  - '!docs/samples.md'
+  - '!charts/fleet-management-operator/README.md'
+  - '!dist/install.yaml'
+  path_instructions:
+  - path: internal/controller/**/*.go
+    instructions: >-
+      Review reconciliation as an idempotent state machine. Persist finalizers before the first external
+      create and remove them only after cleanup succeeds or returns 404. Status conflicts are informer-cache
+      lag and should requeue without exponential backoff. Preserve the Collector controller as the sole
+      Fleet attribute writer, and do not add an ObservedGeneration shortcut where cross-layer watches
+      can change desired state.
+  - path: api/v1alpha1/**/*.go
+    instructions: >-
+      Check admission and CRD semantics together: opt-in controllers remain default-off; configType maps
+      exactly to the Fleet API; cross-namespace Secret references fail at admission and reconcile; TenantPolicy
+      is a guardrail rather than a complete authorization boundary. API shape changes must be compatible
+      with existing stored objects.
+  - path: pkg/**/*.go
+    instructions: >-
+      Apply the shared Fleet API limiter before every request. Preserve per-target source limits, strict
+      config syntax validation before writes, bounded external fetches and the empty-result guard that
+      retains prior owned keys unless allowEmptyResults explicitly opts out. Treat current missing SDK
+      pagination as a known constraint rather than inventing page fields.
