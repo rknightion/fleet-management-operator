@@ -30,6 +30,15 @@ root security model, and it is off unless `--enforce-cross-namespace-discovery-a
 short-circuits to allow, so a new CRD carrying a `targetNamespace` that does not call
 `checkCrossNamespaceCreate` and get wired in `cmd/main.go` reopens the escalation with no symptom.
 
+## The tenant checker is a nil interface when enforcement is off
+
+Every `*Validator` here holds a `MatcherChecker` field, and `cmd/main.go` leaves the value it
+passes nil unless `--enable-tenant-policy-enforcement` is set (Helm
+`controllers.tenantPolicy.enabled`). The interface doc says implementations treat a nil receiver as
+a no-op, but a nil interface has no method set at all, so calling one panics at admission time.
+Guard the call site as `pipeline_webhook.go` does, or go through `runTenantChecks` in
+`webhook_tenant.go`, which nil-checks for you.
+
 ## Deeper references
 
 - `reference/attributes-and-discovery.md`, section "Webhook validation rules" - the per-CRD rule
