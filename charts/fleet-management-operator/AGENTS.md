@@ -36,6 +36,9 @@ Two behaviours are deliberately implicit rather than values:
   timeout, which is 30s in `pkg/fleetclient`. Lower it and in-flight calls are killed mid-request.
 - `controllers.crossNamespaceDiscoveryAuthz.enabled` defaults to `false`, so the SubjectAccessReview
   that closes the cross-namespace confused deputy is off in a default install.
+- Nothing enforces a floor on `fleetManagement.apiRateBurst`. Do not take it below 10. The chart,
+  the manager and `pkg/fleetclient` all accept a lower value, and only `burst=1` fails in a way
+  anyone notices.
 
 ## Gate
 
