@@ -42,6 +42,10 @@ allowlist and no opt-out flag, by design.
 `buildExternalSourceFactory` in `cmd/main.go`; a kind added to the CRD but not to that switch
 compiles and fails at reconcile time with `unknown ExternalSource kind`.
 
+Unit tests here must not take a live database dependency. The SQL source accepts an injected
+`*sql.DB` and skips its driver-name check so tests can hand it `DATA-DOG/go-sqlmock`; `just check`
+runs on a bare toolchain with no Docker daemon.
+
 ## Deeper references
 
 - `reference/attributes-and-discovery.md`, section "External source plugins" - the auth Secret
