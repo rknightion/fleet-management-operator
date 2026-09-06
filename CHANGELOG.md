@@ -5,6 +5,27 @@ All notable changes to the Fleet Management Operator will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2](https://github.com/rknightion/fleet-management-operator/compare/v1.0.1...v1.0.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* author is Rob Knight, not Rob Knighton ([006d885](https://github.com/rknightion/fleet-management-operator/commit/006d88589a9304c5fa2b53f32907158a9ee5ef21))
+* **deps:** update kubernetes libraries to v0.36.4 ([#64](https://github.com/rknightion/fleet-management-operator/issues/64)) ([5bd4ba0](https://github.com/rknightion/fleet-management-operator/commit/5bd4ba0f428576854976cdc4109836fa1959f904))
+* **deps:** update module github.com/go-sql-driver/mysql to v1.10.1 ([#85](https://github.com/rknightion/fleet-management-operator/issues/85)) ([5c7fde6](https://github.com/rknightion/fleet-management-operator/commit/5c7fde6f43686a658dd12e559886612ceddc3c85))
+* **deps:** update module github.com/onsi/ginkgo/v2 to v2.32.1 ([#58](https://github.com/rknightion/fleet-management-operator/issues/58)) ([fcc6df8](https://github.com/rknightion/fleet-management-operator/commit/fcc6df895fc405acac4efd6640d27fbb69af221d))
+* **deps:** update module github.com/onsi/gomega to v1.43.0 ([#69](https://github.com/rknightion/fleet-management-operator/issues/69)) ([35c85ec](https://github.com/rknightion/fleet-management-operator/commit/35c85ec95f2de3306da00759402a6c056a7f2a97))
+* **deps:** update module github.com/prometheus/client_model to v0.6.3 ([#83](https://github.com/rknightion/fleet-management-operator/issues/83)) ([f12bd27](https://github.com/rknightion/fleet-management-operator/commit/f12bd27d9ea6ea98c7d74c761412848f7b676b4b))
+* **deps:** update module github.com/stretchr/testify to v1.12.0 ([#61](https://github.com/rknightion/fleet-management-operator/issues/61)) ([31d262b](https://github.com/rknightion/fleet-management-operator/commit/31d262bd4bed00fff952af5f474b6b1c8a594f1e))
+* **deps:** update module github.com/stretchr/testify to v1.12.1 ([#62](https://github.com/rknightion/fleet-management-operator/issues/62)) ([ef6a34a](https://github.com/rknightion/fleet-management-operator/commit/ef6a34aae8f686154b143ff6346664b3430543ba))
+* **deps:** update module k8s.io/apiextensions-apiserver to v0.36.4 ([#66](https://github.com/rknightion/fleet-management-operator/issues/66)) ([5d2665b](https://github.com/rknightion/fleet-management-operator/commit/5d2665bda374868a342ea5e4b3f69d2cac486e6b))
+* **deps:** update module k8s.io/client-go to v0.36.4 ([#65](https://github.com/rknightion/fleet-management-operator/issues/65)) ([abeff64](https://github.com/rknightion/fleet-management-operator/commit/abeff6470593a6336da238c9d9f06db1c282aec6))
+* **deps:** update opentelemetry to v1.46.0 ([#67](https://github.com/rknightion/fleet-management-operator/issues/67)) ([ff3c300](https://github.com/rknightion/fleet-management-operator/commit/ff3c300d198ced9f0b40d7e376dbcf6f79086d01))
+* **docs:** ignore webhook validators so the API reference has no dead anchor ([4a94ace](https://github.com/rknightion/fleet-management-operator/commit/4a94ace33061fe26345d0b4ec8b03909574bdedf))
+* **e2e:** stop Run discarding the caller's environment ([49efede](https://github.com/rknightion/fleet-management-operator/commit/49efede23f894d5969de8a2f061f7858fd5c1356))
+* **helm:** chomp the permutations block scalar ([540f69b](https://github.com/rknightion/fleet-management-operator/commit/540f69b500df70f5b8096f82619f6f8b27243ddc))
+* **hooks:** close three bypasses in the backlog guard ([7b6a83d](https://github.com/rknightion/fleet-management-operator/commit/7b6a83d1e963c2e45259f9e0bb0796a0c4cf3ac3))
+
 ## [1.0.1](https://github.com/rknightion/fleet-management-operator/compare/v1.0.0...v1.0.1) (2026-08-10)
 
 
