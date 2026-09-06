@@ -3,7 +3,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize versioning=semver
 kustomize_version := "v5.7.1"
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools versioning=semver
-controller_tools_version := "v0.20.0"
+controller_tools_version := "v0.22.0"
 # renovate: datasource=github-releases depName=golangci/golangci-lint versioning=semver
 golangci_lint_version := "v2.13.2"
 # renovate: datasource=github-releases depName=norwoodj/helm-docs versioning=semver
