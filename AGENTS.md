@@ -49,7 +49,8 @@ reuses the Kind cluster `fm-crd-test-e2e`. `just test` takes a filter mapping to
 `just docs` regenerates `docs/{flags,metrics,events,samples}.md`, `docs/api-reference.md` and the
 chart README from source, including the per-controller Kubernetes event table; never hand-maintain
 those. Cluster-mutating recipes are `[confirm]`-gated: run `just` with stdin from `/dev/null` and
-ask rather than passing `--yes` or `JUST_YES=1`.
+ask rather than passing `--yes` or `JUST_YES=1`. `just --show <recipe>` prints what a recipe
+actually runs.
 
 ## Fleet Management API
 
