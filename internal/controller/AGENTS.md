@@ -22,6 +22,14 @@ Adding or removing an API call means updating the counts and the marker comments
 inspecting the error at the call site, so rate-limit, validation and Fleet API errors keep their
 distinct requeue behaviour.
 
+## Metrics belong in metrics.go
+
+`just docs` builds `docs/metrics.md` by parsing exactly two files,
+`internal/controller/metrics.go` and `pkg/fleetclient/metrics.go`
+(`hack/docgen/metrics.go:41-47`). A `prometheus.New*` call anywhere else works at runtime and is
+absent from the generated table with nothing going red. Declare controller metrics here and rerun
+`just docs`.
+
 ## Tests
 
 `just test` installs setup-envtest and exports `KUBEBUILDER_ASSETS`. A bare `go test` in this
