@@ -3,7 +3,7 @@ module github.com/grafana/fleet-management-operator
 go 1.27.0
 
 require (
-	connectrpc.com/connect v1.20.0
+	connectrpc.com/connect v1.21.0
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/grafana/fleet-management-api v1.3.0
