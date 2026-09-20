@@ -88,9 +88,3 @@ Security = "security"
 "Multi-tenancy" = "multi-tenancy"
 Configuration = "config"
 Troubleshooting = "troubleshooting"
-[backlog]
-enabled = true
-title = "Backlog"
-include_completed = true
-include_docs = true
-include_decisions = true
