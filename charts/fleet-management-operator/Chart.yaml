@@ -20,11 +20,15 @@ home: https://m7kni.io/fleet-management-operator/
 sources:
   - https://github.com/rknightion/fleet-management-operator
 maintainers:
-  - name: Rob Knight
-    email: rob.knight@grafana.com
+  - name: rknightion
+    email: rob@m7kni.io
+    url: https://github.com/rknightion
 annotations:
   artifacthub.io/category: monitoring-logging
   artifacthub.io/license: Apache-2.0
+  artifacthub.io/maintainers: |
+    - name: rknightion
+      email: rob@m7kni.io
   artifacthub.io/operator: "true"
   artifacthub.io/prerelease: "false"
   artifacthub.io/links: |

@@ -10,7 +10,7 @@ A Kubernetes operator for managing Grafana Cloud Fleet Management Pipelines
 
 | Name | Email | Url |
 | ---- | ------ | --- |
-| Rob Knight | <rob.knight@grafana.com> |  |
+| rknightion | <rob@m7kni.io> | <https://github.com/rknightion> |
 
 ## Source Code
 
