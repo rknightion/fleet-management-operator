@@ -68,3 +68,6 @@ docs/fonts/
 # under .claude/ is per-machine state.
 .claude/*
 !.claude/skills/
+
+# loop-pi (pi-subagents writes .pi/subagents/)
+.pi/
